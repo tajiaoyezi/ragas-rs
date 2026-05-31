@@ -1,6 +1,12 @@
 use std::collections::BTreeMap;
 
-use crate::{InMemoryDatasetBackend, RagasError};
+use serde_json::json;
+
+use crate::{
+    DatasetBackend, EvaluationDataset, EvaluationSample, ExtractionBundle, GraphNode,
+    InMemoryDatasetBackend, KnowledgeGraph, PersonaGenerator, RagasError, attach_extractions,
+    build_chunk_relationships, split_text_into_chunks, synthesize_single_hop_sample,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
@@ -50,14 +56,125 @@ impl CliRuntime {
 }
 
 pub fn run_cli_command(
-    _runtime: &mut CliRuntime,
-    _command: CliCommand,
+    runtime: &mut CliRuntime,
+    command: CliCommand,
 ) -> Result<CliOutput, RagasError> {
+    match command {
+        CliCommand::Evaluate { input, report } => run_evaluate(runtime, input, report),
+        CliCommand::Testset {
+            source_id,
+            text,
+            output,
+        } => run_testset(runtime, source_id, text, output),
+        CliCommand::Benchmark { runs } => run_benchmark(runs),
+    }
+}
+
+fn run_evaluate(
+    runtime: &mut CliRuntime,
+    input: String,
+    report: String,
+) -> Result<CliOutput, RagasError> {
+    let dataset = runtime.datasets.load(&input)?;
+    let report_json = json!({
+        "command": "evaluate",
+        "status": "ok",
+        "input": input,
+        "report": report,
+        "sample_count": dataset.len(),
+    });
+    let report_string = serde_json::to_string(&report_json)
+        .map_err(|error| parse_error(format!("evaluate report serialization failed: {error}")))?;
+    runtime.reports.insert(report.clone(), report_string);
+
+    let stdout = json!({
+        "command": "evaluate",
+        "status": "ok",
+        "report": report,
+        "sample_count": dataset.len(),
+    });
+    cli_output(stdout)
+}
+
+fn run_testset(
+    runtime: &mut CliRuntime,
+    source_id: String,
+    text: String,
+    output: String,
+) -> Result<CliOutput, RagasError> {
+    let chunks = split_text_into_chunks(&source_id, &text, 256);
+    let first_chunk_id = chunks
+        .first()
+        .map(|chunk| chunk.id.clone())
+        .ok_or_else(|| dataset_io_error("testset source text did not produce chunks"))?;
+
+    let mut graph = chunks.iter().fold(
+        KnowledgeGraph::new().add_node(GraphNode::new(source_id.clone(), "document")),
+        |graph, chunk| graph.add_node(chunk.to_graph_node()),
+    );
+    graph = build_chunk_relationships(graph, &source_id, &chunks);
+    for chunk in &chunks {
+        graph = attach_extractions(
+            graph,
+            &chunk.id,
+            ExtractionBundle::new(Vec::new(), vec!["cli".to_string()], chunk.text.clone()),
+        );
+    }
+
+    let persona = PersonaGenerator::new("cli-testset").generate(
+        "CLI Synthesizer",
+        "evaluation engineer",
+        vec!["generate grounded test questions".to_string()],
+    );
+    let synthesized = synthesize_single_hop_sample(&graph, &first_chunk_id, &persona)
+        .ok_or_else(|| dataset_io_error("testset synthesizer could not create a sample"))?;
+    let dataset =
+        EvaluationDataset::<EvaluationSample>::from_samples(vec![EvaluationSample::SingleTurn(
+            synthesized.sample,
+        )])?;
+    runtime.datasets.save(&output, &dataset)?;
+
+    let stdout = json!({
+        "command": "testset",
+        "status": "ok",
+        "dataset": output,
+        "sample_count": dataset.len(),
+        "source_id": source_id,
+    });
+    cli_output(stdout)
+}
+
+fn run_benchmark(runs: usize) -> Result<CliOutput, RagasError> {
+    let throughput = if runs == 0 { 0.0 } else { runs as f64 * 1000.0 };
+    let stdout = json!({
+        "command": "benchmark",
+        "status": "ok",
+        "format": "json",
+        "runs": runs,
+        "mock_throughput_samples_per_sec": throughput,
+    });
+    cli_output(stdout)
+}
+
+fn cli_output(stdout: serde_json::Value) -> Result<CliOutput, RagasError> {
     Ok(CliOutput {
-        stdout: String::new(),
+        stdout: serde_json::to_string(&stdout)
+            .map_err(|error| parse_error(format!("CLI output serialization failed: {error}")))?,
         stderr: String::new(),
         exit_code: 0,
     })
+}
+
+fn parse_error(message: impl Into<String>) -> RagasError {
+    RagasError::Parse {
+        message: message.into(),
+    }
+}
+
+fn dataset_io_error(message: impl Into<String>) -> RagasError {
+    RagasError::DatasetIo {
+        message: message.into(),
+    }
 }
 
 #[cfg(test)]
