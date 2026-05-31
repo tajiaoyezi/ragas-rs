@@ -1,6 +1,6 @@
 # Task 10.3 - answer-quality
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 10
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-10.3.1 | TEST-10.3.1 | Not Started |
-| AC2 | SCEN-10.3.2 | TEST-10.3.2 | Not Started |
-| AC3 | SCEN-10.3.3 | TEST-10.3.3 | Not Started |
+| AC1 | SCEN-10.3.1 | TEST-10.3.1 | Done |
+| AC2 | SCEN-10.3.2 | TEST-10.3.2 | Done |
+| AC3 | SCEN-10.3.3 | TEST-10.3.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,19 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/metrics/rag/mod.rs`（修改）
+  - `src/metrics/mod.rs`（修改）
+  - `src/lib.rs`（修改）
+  - `docs/specs/tasks/task-10.3-answer-quality.md`（修改）
+- **commit 列表**：
+  - `4c7c726` test(metrics-rag): 加 task-10.3 RED 测试
+  - `052e8ef` feat(metrics-rag): 实现 task-10.3 answer quality
+- **§9 Verification 结果**：
+  - install: ✅ `cargo build`
+  - typecheck: ✅ `cargo check`
+  - unit-test: 67 passed / 0 failed (`cargo test`)
+  - build: ✅ `cargo build`
+- **剩余风险 / 未做项**：answer relevancy/correctness/noise sensitivity 已提供 Rust deterministic/judge-output API；Python ragas golden parity 待 task-16.1 登记。
+- **下游 task 影响**：Phase 10 可进入完成 gate；task-16.1 需要登记 answer-quality parity fixture 或 Known Gap。
