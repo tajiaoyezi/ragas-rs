@@ -1,6 +1,6 @@
 # Phase 3 - providers
 
-**Status**: Draft
+**Status**: Done
 **PRD**: docs/prds/ragas-rs.prd.md
 **Tasks**: docs/specs/tasks/task-3.1-providers.md
 
@@ -27,7 +27,7 @@ Provide LLM and embedding provider traits plus an OpenAI-compatible HTTP client 
 
 | Task | Spec | Status |
 |---|---|---|
-| 3.1 | docs/specs/tasks/task-3.1-providers.md | Draft |
+| 3.1 | docs/specs/tasks/task-3.1-providers.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 

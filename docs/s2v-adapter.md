@@ -89,7 +89,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 |---|---|---|---|---|---|
 | 1 | foundation-dataset | docs/specs/phases/phase-1-foundation-dataset.md | Done | 1 | - |
 | 2 | metric-abstractions | docs/specs/phases/phase-2-metric-abstractions.md | Done | 1 | - |
-| 3 | providers | docs/specs/phases/phase-3-providers.md | Draft | 1 | - |
+| 3 | providers | docs/specs/phases/phase-3-providers.md | Done | 1 | - |
 | 4 | evaluator-builtins | docs/specs/phases/phase-4-evaluator-builtins.md | Draft | 1 | - |
 
 ## Task 总索引
@@ -98,7 +98,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 |---|---|---|---|---|---|
 | 1.1 | dataset | docs/specs/tasks/task-1.1-foundation-dataset.md | Done | phase 1, first | - |
 | 2.1 | metric | docs/specs/tasks/task-2.1-metric-abstractions.md | Done | after task 1.1 | - |
-| 3.1 | llm | docs/specs/tasks/task-3.1-providers.md | Draft | after task 2.1 | - |
+| 3.1 | llm | docs/specs/tasks/task-3.1-providers.md | Done | after task 2.1 | - |
 | 4.1 | eval | docs/specs/tasks/task-4.1-evaluator-builtins.md | Draft | after task 3.1 | - |
 
 ## ADR 索引
