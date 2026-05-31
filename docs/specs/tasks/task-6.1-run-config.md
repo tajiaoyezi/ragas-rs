@@ -1,6 +1,6 @@
 # Task 6.1 - run-config
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 6
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-6.1.1 | TEST-6.1.1 | Not Started |
-| AC2 | SCEN-6.1.2 | TEST-6.1.2 | Not Started |
-| AC3 | SCEN-6.1.3 | TEST-6.1.3 | Not Started |
+| AC1 | SCEN-6.1.1 | TEST-6.1.1 | Done |
+| AC2 | SCEN-6.1.2 | TEST-6.1.2 | Done |
+| AC3 | SCEN-6.1.3 | TEST-6.1.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,21 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/runtime.rs`（新增 RunConfig、TimeoutConfig、RetryConfig、CancellationConfig、RunConfigBuilder、RunConfigError 与 unit tests）
+  - `src/eval.rs`（新增 EvaluationOptions::from_run_config）
+  - `src/lib.rs`（导出 runtime API）
+  - `docs/specs/tasks/task-6.1-run-config.md`（Status/traceability/Completion Notes 回填）
+- **commit 列表**：
+  - `18dc064` docs(spec): task-6.1 Ready
+  - `9a2df21` docs(spec): task-6.1 进入实施
+  - `545202d` test(runtime): 加 task-6.1 RED 测试
+  - `142fd89` feat(runtime): 实现 task-6.1 run config
+- **§9 Verification 结果**：
+  - install: pass (`cargo build`)
+  - typecheck: pass (`cargo check`)
+  - unit-test: 25 passed / 0 failed (`cargo test`)
+  - build: pass (`cargo build`)
+- **剩余风险 / 未做项**：本 task 只定义配置模型和结构化校验；实际 timeout/retry/cancellation 执行语义将在 task 6.2 executor 和 task 6.3 callbacks-cost-cache 中落地。
+- **下游 task 影响**：task 6.2 可直接用 RunConfig 驱动并发、timeout、retry 和 cancellation；task 7 provider adapters 可复用 retry/timeout 默认值；task 15 benchmarks 可使用 seed/concurrency 做可复现实验。
