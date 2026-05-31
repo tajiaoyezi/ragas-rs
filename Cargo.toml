@@ -5,6 +5,15 @@ edition = "2024"
 license = "Apache-2.0"
 description = "Rust core for embeddable RAG/LLM evaluation."
 
+[features]
+default = ["runtime-tokio"]
+runtime-tokio = []
+providers-openai = []
+integrations = []
+benchmarks = []
+parity = []
+docs-examples = []
+
 [dependencies]
 async-trait = "0.1"
 csv = "1"

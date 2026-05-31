@@ -1,5 +1,9 @@
 pub fn release_gate_files() -> Vec<&'static str> {
-    Vec::new()
+    vec![
+        "Cargo.toml",
+        ".github/workflows/ci.yml",
+        "docs/release-checklist.md",
+    ]
 }
 
 #[cfg(test)]

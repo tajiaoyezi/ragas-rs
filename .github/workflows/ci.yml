@@ -1,0 +1,20 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build
+      - name: Check
+        run: cargo check
+      - name: Test
+        run: cargo test
+      - name: Parity gate
+        run: cargo test parity::
