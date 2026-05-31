@@ -298,14 +298,6 @@ fn is_stopword(token: &str) -> bool {
     )
 }
 
-#[allow(dead_code)]
-fn zero_result(metric_name: &str) -> DetailedMetricResult {
-    DetailedMetricResult::new(metric_name, MetricValueType::Numeric)
-        .with_score(0.0, ScoreNormalizationPolicy::Reject)
-        .expect("zero score is valid")
-        .with_reason("not implemented")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
