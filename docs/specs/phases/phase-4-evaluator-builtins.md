@@ -1,6 +1,6 @@
 # Phase 4 - evaluator-builtins
 
-**Status**: Draft
+**Status**: Done
 **PRD**: docs/prds/ragas-rs.prd.md
 **Tasks**: docs/specs/tasks/task-4.1-evaluator-builtins.md
 
@@ -30,7 +30,7 @@ Implement async batch evaluation and built-in Faithfulness, ResponseRelevancy, a
 
 | Task | Spec | Status |
 |---|---|---|
-| 4.1 | docs/specs/tasks/task-4.1-evaluator-builtins.md | Draft |
+| 4.1 | docs/specs/tasks/task-4.1-evaluator-builtins.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 
