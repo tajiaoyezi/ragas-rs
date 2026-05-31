@@ -1,9 +1,14 @@
+pub mod advanced;
 pub mod base;
 pub mod rag;
 pub mod registry;
 pub mod result;
 pub mod traditional;
 
+pub use advanced::{
+    AspectCriticConfig, AspectCriticMode, DomainRubric, InstanceRubric, RubricCriterion,
+    RubricMetric, score_aspect_critic,
+};
 pub use base::{
     MetricMetadata, MetricProviderRequirement, MetricSampleKind, MultiTurnMetric,
     SingleTurnMetric,

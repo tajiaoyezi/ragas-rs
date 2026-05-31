@@ -26,18 +26,19 @@ pub use metric::{
     RankingItem, ResponseRelevancyMetric, cosine_similarity,
 };
 pub use metrics::{
-    AnswerCorrectnessWeights, ContextPrecisionVariant, DetailedMetricResult,
-    FaithfulnessJudgeContract, FactualCorrectnessCounts, MetricError, MetricErrorKind,
-    MetricEvidence, MetricMetadata, MetricProviderRequirement, MetricRegistry,
-    MetricRegistryEntry, MetricSampleKind, MetricValueType, MultiTurnMetric, ParityStatus,
-    QuotedSpan, ScoreNormalizationPolicy, SingleTurnMetric, answer_correctness,
+    AnswerCorrectnessWeights, AspectCriticConfig, AspectCriticMode, ContextPrecisionVariant,
+    DetailedMetricResult, DomainRubric, FaithfulnessJudgeContract, FactualCorrectnessCounts,
+    InstanceRubric, MetricError, MetricErrorKind, MetricEvidence, MetricMetadata,
+    MetricProviderRequirement, MetricRegistry, MetricRegistryEntry, MetricSampleKind,
+    MetricValueType, MultiTurnMetric, ParityStatus, QuotedSpan, RubricCriterion, RubricMetric,
+    ScoreNormalizationPolicy, SingleTurnMetric, answer_correctness,
     answer_relevancy_from_embedding_similarity, answer_relevancy_from_judge_output,
     bleu_unigram, chrf_score, context_entity_recall, context_precision_from_relevance,
     context_recall, context_relevance, exact_match, extract_quoted_spans, factual_correctness,
     id_based_context_precision, lexical_tokenizer_assumptions, noise_sensitivity, normalize_score,
     quoted_citation_coverage, quoted_span_overlap, response_groundedness, rouge_l_recall,
-    semantic_similarity_batch, semantic_similarity_from_vectors, string_distance_similarity,
-    threshold_semantic_similarity, SemanticThresholdPolicy,
+    score_aspect_critic, semantic_similarity_batch, semantic_similarity_from_vectors,
+    string_distance_similarity, threshold_semantic_similarity, SemanticThresholdPolicy,
 };
 pub use providers::{
     MockEmbeddingProvider, MockLlmProvider, ProviderRegistry, record_provider_usage,
