@@ -58,21 +58,47 @@ impl MultimodalPromptMessage {
         }
     }
 
-    pub fn push_text(self, _text: impl Into<String>) -> Self {
-        unimplemented!("task 8.3 RED skeleton")
+    pub fn push_text(mut self, text: impl Into<String>) -> Self {
+        self.parts.push(MultimodalPromptPart::text(text));
+        self
     }
 
     pub fn push_image_url(
-        self,
-        _url: impl Into<String>,
-        _mime_type: impl Into<String>,
+        mut self,
+        url: impl Into<String>,
+        mime_type: impl Into<String>,
     ) -> Self {
-        unimplemented!("task 8.3 RED skeleton")
+        self.parts
+            .push(MultimodalPromptPart::image_url(url, mime_type));
+        self
     }
 
     pub fn render_text_scaffold(&self) -> Result<String, RagasError> {
-        unimplemented!("task 8.3 RED skeleton")
+        let mut rendered = Vec::with_capacity(self.parts.len());
+        for (index, part) in self.parts.iter().enumerate() {
+            match part {
+                MultimodalPromptPart::Text { text } => rendered.push(format!("[text] {text}")),
+                MultimodalPromptPart::ImageUrl { url, mime_type } => {
+                    if !is_supported_image_mime_type(mime_type) {
+                        return Err(RagasError::Prompt {
+                            message: format!(
+                                "unsupported media type '{mime_type}' at part_index={index}"
+                            ),
+                        });
+                    }
+                    rendered.push(format!("[image {mime_type}] {url}"));
+                }
+            }
+        }
+        Ok(rendered.join("\n"))
     }
+}
+
+fn is_supported_image_mime_type(mime_type: &str) -> bool {
+    matches!(
+        mime_type,
+        "image/png" | "image/jpeg" | "image/webp" | "image/gif"
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
