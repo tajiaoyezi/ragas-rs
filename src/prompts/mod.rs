@@ -37,12 +37,67 @@ impl JudgeOutputParser {
         }
     }
 
-    pub fn with_repair_strategy(self, _repair_strategy: RepairStrategy) -> Self {
-        unimplemented!("task 8.2 RED skeleton")
+    pub fn with_repair_strategy(mut self, repair_strategy: RepairStrategy) -> Self {
+        self.repair_strategy = repair_strategy;
+        self
     }
 
-    pub fn parse(&self, _output: &str) -> Result<ParsedJudgeOutput, OutputParseDiagnostic> {
-        unimplemented!("task 8.2 RED skeleton")
+    pub fn parse(&self, output: &str) -> Result<ParsedJudgeOutput, OutputParseDiagnostic> {
+        let (candidate, repaired) = self.repair_output(output);
+        let raw: serde_json::Value = serde_json::from_str(candidate).map_err(|error| {
+            self.diagnostic(format!("judge output JSON parse failed: {error}"), output)
+        })?;
+
+        let score = raw
+            .get("score")
+            .and_then(serde_json::Value::as_f64)
+            .ok_or_else(|| self.diagnostic("judge output JSON missing numeric score", output))?;
+
+        let reason = match raw.get("reason") {
+            Some(value) if value.is_null() => None,
+            Some(value) => Some(value.as_str().ok_or_else(|| {
+                self.diagnostic("judge output JSON reason must be a string", output)
+            })?.to_string()),
+            None => None,
+        };
+
+        Ok(ParsedJudgeOutput {
+            score,
+            reason,
+            raw,
+            repaired,
+        })
+    }
+
+    fn repair_output<'a>(&self, output: &'a str) -> (&'a str, bool) {
+        match self.repair_strategy {
+            RepairStrategy::None => (output, false),
+            RepairStrategy::ExtractJsonObject => {
+                let Some(start) = output.find('{') else {
+                    return (output, false);
+                };
+                let Some(end) = output.rfind('}') else {
+                    return (output, false);
+                };
+                if end < start {
+                    return (output, false);
+                }
+                let repaired = &output[start..=end];
+                (repaired, repaired != output)
+            }
+        }
+    }
+
+    fn diagnostic(
+        &self,
+        message: impl Into<String>,
+        output: &str,
+    ) -> OutputParseDiagnostic {
+        OutputParseDiagnostic {
+            message: message.into(),
+            raw_excerpt: output.chars().take(80).collect(),
+            repair_strategy: self.repair_strategy,
+        }
     }
 }
 
