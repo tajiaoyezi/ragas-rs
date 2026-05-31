@@ -1,6 +1,6 @@
 # Task 1.1 - foundation-dataset
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 1 - foundation-dataset
 **PRD**: docs/prds/ragas-rs.prd.md
 
