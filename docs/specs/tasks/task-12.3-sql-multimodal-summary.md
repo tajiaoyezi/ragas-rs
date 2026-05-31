@@ -1,6 +1,6 @@
 # Task 12.3 - sql-multimodal-summary
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 12
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
