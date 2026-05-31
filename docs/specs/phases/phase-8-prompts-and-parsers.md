@@ -1,6 +1,6 @@
 # Phase 8 - prompts-and-parsers
 
-**Status**: Draft
+**Status**: In Progress
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 **Depends On**: 5,6
 
@@ -25,7 +25,7 @@ src/prompts/
 
 | Task | Spec | Status |
 |---|---|---|
-| 8.1 | docs/specs/tasks/task-8.1-prompt-core.md | Draft |
+| 8.1 | docs/specs/tasks/task-8.1-prompt-core.md | Done |
 | 8.2 | docs/specs/tasks/task-8.2-output-parser.md | Draft |
 | 8.3 | docs/specs/tasks/task-8.3-multimodal-prompt.md | Draft |
 
