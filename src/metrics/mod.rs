@@ -7,8 +7,10 @@ pub mod traditional;
 
 pub use advanced::{
     AgentGoalOutcome, AspectCriticConfig, AspectCriticMode, DomainRubric, InstanceRubric,
-    RubricCriterion, RubricMetric, ToolCallOrderPolicy, TopicAdherence, agent_goal_accuracy,
-    score_aspect_critic, tool_call_accuracy, tool_call_f1, topic_adherence,
+    MultimodalMetricKind, RubricCriterion, RubricMetric, SqlJudgeVerdict, SummarizationSignals,
+    ToolCallOrderPolicy, TopicAdherence, agent_goal_accuracy, multimodal_metric_from_prompt,
+    score_aspect_critic, sql_semantic_equivalence, summarization_score_from_judge_output,
+    tool_call_accuracy, tool_call_f1, topic_adherence,
 };
 pub use base::{
     MetricMetadata, MetricProviderRequirement, MetricSampleKind, MultiTurnMetric, SingleTurnMetric,

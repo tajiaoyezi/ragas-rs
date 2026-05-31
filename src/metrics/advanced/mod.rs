@@ -277,30 +277,114 @@ pub fn topic_adherence(topics: &[TopicAdherence]) -> DetailedMetricResult {
 }
 
 pub fn sql_semantic_equivalence(
-    _expected_sql: &str,
-    _actual_sql: &str,
-    _judge: Option<SqlJudgeVerdict>,
+    expected_sql: &str,
+    actual_sql: &str,
+    judge: Option<SqlJudgeVerdict>,
 ) -> DetailedMetricResult {
-    numeric_result("sql_semantic_equivalence", 0.0, "not implemented")
+    let expected_normalized = normalize_sql(expected_sql);
+    let actual_normalized = normalize_sql(actual_sql);
+
+    if expected_normalized == actual_normalized {
+        return numeric_result(
+            "sql_semantic_equivalence",
+            1.0,
+            "normalized_sql exact match",
+        )
+        .with_evidence(MetricEvidence::new("expected_sql", expected_normalized))
+        .with_evidence(MetricEvidence::new("actual_sql", actual_normalized));
+    }
+
+    if let Some(judge) = judge {
+        let confidence = judge.confidence.clamp(0.0, 1.0);
+        let score = if judge.equivalent { confidence } else { 0.0 };
+        return numeric_result(
+            "sql_semantic_equivalence",
+            score,
+            format!(
+                "judge equivalent={} confidence={confidence:.3}",
+                judge.equivalent
+            ),
+        )
+        .with_evidence(MetricEvidence::new("judge", judge.reason))
+        .with_evidence(MetricEvidence::new("expected_sql", expected_normalized))
+        .with_evidence(MetricEvidence::new("actual_sql", actual_normalized));
+    }
+
+    numeric_result("sql_semantic_equivalence", 0.0, "normalized_sql mismatch")
+        .with_evidence(MetricEvidence::new("expected_sql", expected_normalized))
+        .with_evidence(MetricEvidence::new("actual_sql", actual_normalized))
 }
 
 pub fn multimodal_metric_from_prompt(
-    _kind: MultimodalMetricKind,
-    _prompt: &MultimodalPromptMessage,
-    _judge_score: f64,
-    _judge_reason: impl Into<String>,
+    kind: MultimodalMetricKind,
+    prompt: &MultimodalPromptMessage,
+    judge_score: f64,
+    judge_reason: impl Into<String>,
 ) -> Result<DetailedMetricResult, RagasError> {
-    Ok(numeric_result("multimodal_metric", 0.0, "not implemented"))
+    let scaffold = prompt.render_text_scaffold()?;
+    let metric_name = match kind {
+        MultimodalMetricKind::Faithfulness => "multimodal_faithfulness",
+        MultimodalMetricKind::Relevance => "multimodal_relevance",
+    };
+    let judge_reason = judge_reason.into();
+
+    Ok(numeric_result(
+        metric_name,
+        judge_score.clamp(0.0, 1.0),
+        format!("{kind:?} judge: {judge_reason}"),
+    )
+    .with_evidence(MetricEvidence::new("multimodal_prompt_scaffold", scaffold)))
 }
 
 pub fn summarization_score_from_judge_output(
-    _output: &str,
+    output: &str,
 ) -> Result<DetailedMetricResult, MetricError> {
-    Ok(numeric_result(
+    let signals: SummarizationSignals = serde_json::from_str(output).map_err(|error| {
+        MetricError::parse(format!("summarization judge output parse failed: {error}"))
+    })?;
+    validate_signal("coverage", signals.coverage)?;
+    validate_signal("conciseness", signals.conciseness)?;
+
+    let score = (signals.coverage + signals.conciseness) / 2.0;
+    let mut result = numeric_result(
         "summarization_score",
-        0.0,
-        "not implemented",
+        score,
+        format!(
+            "coverage={:.3} conciseness={:.3}",
+            signals.coverage, signals.conciseness
+        ),
+    )
+    .with_evidence(MetricEvidence::new(
+        "coverage",
+        format!("{:.3}", signals.coverage),
     ))
+    .with_evidence(MetricEvidence::new(
+        "conciseness",
+        format!("{:.3}", signals.conciseness),
+    ));
+
+    if let Some(reason) = signals.reason {
+        result = result.with_evidence(MetricEvidence::new("reason", reason));
+    }
+
+    Ok(result)
+}
+
+fn normalize_sql(sql: &str) -> String {
+    sql.chars()
+        .filter(|ch| !ch.is_ascii_whitespace() && *ch != ';')
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn validate_signal(name: &str, value: f64) -> Result<(), MetricError> {
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Ok(())
+    } else {
+        Err(MetricError::validation(format!(
+            "{name} must be a normalized score in [0, 1]"
+        )))
+    }
 }
 
 fn strict_tool_call_matches(
