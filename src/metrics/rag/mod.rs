@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use crate::{
     DetailedMetricResult, FewShotExample, JudgeOutputParser, MetricEvidence, MetricValueType,
     OutputParseDiagnostic, PromptTemplate, PromptValueKind, PromptVariables, RagasError,
-    RenderedPrompt, ScoreNormalizationPolicy, SingleTurnSample,
+    RenderedPrompt, ScoreNormalizationPolicy, SingleTurnSample, cosine_similarity,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,13 +126,7 @@ pub fn response_groundedness(response: &str, contexts: &[String]) -> DetailedMet
 }
 
 pub fn factual_correctness(counts: FactualCorrectnessCounts) -> DetailedMetricResult {
-    let numerator = 2 * counts.true_positive;
-    let denominator = numerator + counts.false_positive + counts.false_negative;
-    let score = if denominator == 0 {
-        0.0
-    } else {
-        numerator as f64 / denominator as f64
-    };
+    let score = factual_score(&counts);
     numeric_result(
         "factual_correctness",
         score,
@@ -150,44 +144,95 @@ pub fn factual_correctness(counts: FactualCorrectnessCounts) -> DetailedMetricRe
     )
 }
 
+fn factual_score(counts: &FactualCorrectnessCounts) -> f64 {
+    let numerator = 2 * counts.true_positive;
+    let denominator = numerator + counts.false_positive + counts.false_negative;
+    if denominator == 0 {
+        0.0
+    } else {
+        numerator as f64 / denominator as f64
+    }
+}
+
 pub fn answer_relevancy_from_embedding_similarity(
-    _question_embedding: &[f32],
-    _answer_embedding: &[f32],
+    question_embedding: &[f32],
+    answer_embedding: &[f32],
 ) -> DetailedMetricResult {
+    let score = cosine_similarity(question_embedding, answer_embedding).clamp(0.0, 1.0);
     numeric_result(
         "answer_relevancy",
-        0.0,
-        "not implemented",
-        Vec::new(),
+        score,
+        "embedding cosine similarity between question and answer",
+        vec![MetricEvidence::new(
+            "embedding_similarity",
+            format!("cosine={score:.6}"),
+        )],
     )
 }
 
 pub fn answer_relevancy_from_judge_output(
-    _output: &str,
+    output: &str,
 ) -> Result<DetailedMetricResult, OutputParseDiagnostic> {
+    let parsed = JudgeOutputParser::new().parse(output)?;
+    let reason = parsed
+        .reason
+        .unwrap_or_else(|| "answer relevancy judge returned a score".to_string());
     Ok(numeric_result(
         "answer_relevancy",
-        0.0,
-        "not implemented",
+        parsed.score,
+        reason,
         Vec::new(),
     ))
 }
 
 pub fn answer_correctness(
-    _semantic_similarity: f64,
-    _factual_counts: FactualCorrectnessCounts,
-    _weights: AnswerCorrectnessWeights,
+    semantic_similarity: f64,
+    factual_counts: FactualCorrectnessCounts,
+    weights: AnswerCorrectnessWeights,
 ) -> DetailedMetricResult {
+    let semantic = semantic_similarity.clamp(0.0, 1.0);
+    let factual = factual_score(&factual_counts);
+    let total_weight = weights.semantic + weights.factual;
+    let score = if total_weight <= 0.0 {
+        0.0
+    } else {
+        ((semantic * weights.semantic) + (factual * weights.factual)) / total_weight
+    };
+
     numeric_result(
         "answer_correctness",
-        0.0,
-        "not implemented",
-        Vec::new(),
+        score,
+        format!(
+            "weighted answer correctness from semantic={semantic:.3} factual={factual:.3}"
+        ),
+        vec![
+            MetricEvidence::new("semantic_similarity", format!("{semantic:.6}")),
+            MetricEvidence::new(
+                "factual_correctness",
+                format!(
+                    "TP={} FP={} FN={} factual_f1={factual:.6}",
+                    factual_counts.true_positive,
+                    factual_counts.false_positive,
+                    factual_counts.false_negative
+                ),
+            ),
+        ],
     )
 }
 
-pub fn noise_sensitivity(_clean_score: f64, _noisy_score: f64) -> DetailedMetricResult {
-    numeric_result("noise_sensitivity", 0.0, "not implemented", Vec::new())
+pub fn noise_sensitivity(clean_score: f64, noisy_score: f64) -> DetailedMetricResult {
+    let clean = clean_score.clamp(0.0, 1.0);
+    let noisy = noisy_score.clamp(0.0, 1.0);
+    let score = (clean - noisy).max(0.0);
+    numeric_result(
+        "noise_sensitivity",
+        score,
+        format!("score drop under noise: clean={clean:.3} noisy={noisy:.3}"),
+        vec![
+            MetricEvidence::new("clean_score", format!("{clean:.6}")),
+            MetricEvidence::new("noisy_score", format!("{noisy:.6}")),
+        ],
+    )
 }
 
 impl ContextPrecisionVariant {
