@@ -1,6 +1,6 @@
 # Task 13.2 - transforms
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 13
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-13.2.1 | TEST-13.2.1 | Not Started |
-| AC2 | SCEN-13.2.2 | TEST-13.2.2 | Not Started |
-| AC3 | SCEN-13.2.3 | TEST-13.2.3 | Not Started |
+| AC1 | SCEN-13.2.1 | TEST-13.2.1 | Done |
+| AC2 | SCEN-13.2.2 | TEST-13.2.2 | Done |
+| AC3 | SCEN-13.2.3 | TEST-13.2.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,19 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/testset/mod.rs`（新增 TextChunk、ExtractionBundle、splitter/extractor/relationship builder 与 TEST-13.2.1~13.2.3）
+  - `src/lib.rs`（导出 task-13.2 public crate API）
+- **commit 列表**：
+  - `6645996` docs(spec): task-13.2 Ready
+  - `76ab3a4` docs(spec): task-13.2 进入实施
+  - `7e62242` test(testset): 加 task-13.2 RED 测试
+  - `3de98dc` feat(testset): 实现 task-13.2 transforms
+- **§9 Verification 结果**：
+  - install: ✅ `cargo build`
+  - typecheck: ✅ `cargo check`
+  - unit-test: 91 passed / 0 failed (`cargo test`)
+  - build: ✅ `cargo build`
+- **剩余风险 / 未做项**：splitter 是确定性词边界实现，不是 tokenizer-aware 或 language-aware splitter；复杂 extractor/provider 调用和 Python ragas parity 由后续 synthesizer/parity task 扩展。
+- **下游 task 影响**：task 13.3 可直接复用 TextChunk、ExtractionBundle、contains/next edges 作为 synthesizer 输入。
