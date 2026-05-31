@@ -1,6 +1,6 @@
 # Phase 11 - deterministic-and-similarity-metrics
 
-**Status**: In Progress
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 **Depends On**: 9,7
 
@@ -27,7 +27,7 @@ src/metrics/traditional/
 |---|---|---|
 | 11.1 | docs/specs/tasks/task-11.1-lexical.md | Done |
 | 11.2 | docs/specs/tasks/task-11.2-semantic.md | Done |
-| 11.3 | docs/specs/tasks/task-11.3-quoted-spans.md | Draft |
+| 11.3 | docs/specs/tasks/task-11.3-quoted-spans.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 
