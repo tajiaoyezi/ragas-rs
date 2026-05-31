@@ -26,7 +26,7 @@ src/experiments/ + src/optimizers/
 | Task | Spec | Status |
 |---|---|---|
 | 15.1 | docs/specs/tasks/task-15.1-experiments.md | Done |
-| 15.2 | docs/specs/tasks/task-15.2-optimizers.md | In Progress |
+| 15.2 | docs/specs/tasks/task-15.2-optimizers.md | Done |
 | 15.3 | docs/specs/tasks/task-15.3-benchmarks.md | Draft |
 
 ## 6. Phase Acceptance And Smoke
