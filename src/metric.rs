@@ -35,6 +35,17 @@ impl Metric for FaithfulnessMetric {
         "faithfulness"
     }
 
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![
+                SampleField::UserInput,
+                SampleField::Response,
+                SampleField::RetrievedContexts,
+            ],
+        )
+    }
+
     async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
         let prompt = format!(
             "Score whether the response is faithful to the provided contexts. Return JSON with score between 0 and 1 and reason.\nQuestion: {}\nResponse: {}\nContexts:\n{}",
@@ -70,6 +81,13 @@ impl Metric for ResponseRelevancyMetric {
         "response_relevancy"
     }
 
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::UserInput, SampleField::Response],
+        )
+    }
+
     async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
         let response = self
             .embedding
@@ -103,6 +121,13 @@ impl ContextPrecisionMetric {
 impl Metric for ContextPrecisionMetric {
     fn name(&self) -> &str {
         "context_precision"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::UserInput, SampleField::RetrievedContexts],
+        )
     }
 
     async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {

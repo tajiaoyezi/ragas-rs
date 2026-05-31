@@ -62,6 +62,10 @@ pub struct ValidationReport {
 }
 
 impl ValidationReport {
+    fn new(issues: Vec<ValidationIssue>) -> Self {
+        Self { issues }
+    }
+
     pub fn issues(&self) -> &[ValidationIssue] {
         &self.issues
     }
@@ -72,24 +76,72 @@ impl ValidationReport {
 }
 
 pub fn validate_single_turn_samples(
-    _samples: &[SingleTurnSample],
-    _requirements: &[MetricRequirements],
+    samples: &[SingleTurnSample],
+    requirements: &[MetricRequirements],
 ) -> Result<(), ValidationReport> {
-    unimplemented!("TEST-5.3.1 and TEST-5.3.2")
+    let mut issues = Vec::new();
+    for (sample_index, sample) in samples.iter().enumerate() {
+        for requirement in requirements {
+            for field in requirement.required_fields() {
+                if !field_is_present(sample, field) {
+                    let field_path = field.path();
+                    issues.push(ValidationIssue {
+                        sample_index,
+                        metric_name: requirement.metric_name().to_string(),
+                        message: format!(
+                            "metric {} requires non-empty field {}",
+                            requirement.metric_name(),
+                            field_path
+                        ),
+                        field_path,
+                    });
+                }
+            }
+        }
+    }
+
+    if issues.is_empty() {
+        Ok(())
+    } else {
+        Err(ValidationReport::new(issues))
+    }
 }
 
 pub fn validate_dataset_requirements(
-    _dataset: &EvaluationDataset,
-    _requirements: &[MetricRequirements],
+    dataset: &EvaluationDataset,
+    requirements: &[MetricRequirements],
 ) -> Result<(), ValidationReport> {
-    unimplemented!("TEST-5.3.1")
+    validate_single_turn_samples(dataset.samples(), requirements)
 }
 
 pub fn validate_before_evaluate(
-    _dataset: &EvaluationDataset,
-    _metrics: &[Arc<dyn Metric>],
+    dataset: &EvaluationDataset,
+    metrics: &[Arc<dyn Metric>],
 ) -> Result<(), ValidationReport> {
-    unimplemented!("TEST-5.3.3")
+    let requirements = metrics
+        .iter()
+        .map(|metric| metric.requirements())
+        .collect::<Vec<_>>();
+    validate_dataset_requirements(dataset, &requirements)
+}
+
+fn field_is_present(sample: &SingleTurnSample, field: &SampleField) -> bool {
+    match field {
+        SampleField::UserInput => !sample.user_input.trim().is_empty(),
+        SampleField::Response => !sample.response.trim().is_empty(),
+        SampleField::RetrievedContexts => sample
+            .retrieved_contexts
+            .iter()
+            .any(|context| !context.trim().is_empty()),
+        SampleField::Reference => sample
+            .reference
+            .as_deref()
+            .is_some_and(|reference| !reference.trim().is_empty()),
+        SampleField::Metadata(key) => sample
+            .metadata
+            .get(key)
+            .is_some_and(|value| !value.trim().is_empty()),
+    }
 }
 
 #[cfg(test)]
