@@ -1,6 +1,6 @@
 # Task 16.3 - release
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 16
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
