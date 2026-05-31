@@ -1,6 +1,6 @@
 # Task 12.1 - rubrics
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 12
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
