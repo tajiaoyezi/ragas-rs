@@ -10,7 +10,29 @@ pub struct DocExample {
 }
 
 pub fn public_workflow_examples() -> Vec<DocExample> {
-    Vec::new()
+    vec![
+        DocExample {
+            workflow: "evaluate".to_string(),
+            example_path: "examples/evaluate.rs".to_string(),
+            upstream_section: "Evaluate a RAG application".to_string(),
+            feature_flags: vec!["default".to_string(), "tokio".to_string()],
+            known_parity_gaps: vec!["no Python runtime bridge".to_string()],
+        },
+        DocExample {
+            workflow: "testset".to_string(),
+            example_path: "examples/testset.rs".to_string(),
+            upstream_section: "Generate a testset".to_string(),
+            feature_flags: vec!["default".to_string()],
+            known_parity_gaps: vec!["knowledge graph generation".to_string()],
+        },
+        DocExample {
+            workflow: "benchmark".to_string(),
+            example_path: "examples/benchmark.rs".to_string(),
+            upstream_section: "Compare and monitor evaluation cost".to_string(),
+            feature_flags: vec!["default".to_string(), "tokio".to_string()],
+            known_parity_gaps: vec!["provider latency percentiles".to_string()],
+        },
+    ]
 }
 
 #[cfg(test)]
