@@ -1,6 +1,6 @@
 # Phase 14 - backends-integrations-cli
 
-**Status**: Draft
+**Status**: In Progress
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 **Depends On**: 6,9,13
 
@@ -25,7 +25,7 @@ src/backends/ + src/integrations/ + src/cli/
 
 | Task | Spec | Status |
 |---|---|---|
-| 14.1 | docs/specs/tasks/task-14.1-backends.md | Draft |
+| 14.1 | docs/specs/tasks/task-14.1-backends.md | Done |
 | 14.2 | docs/specs/tasks/task-14.2-integrations.md | Draft |
 | 14.3 | docs/specs/tasks/task-14.3-cli.md | Draft |
 
