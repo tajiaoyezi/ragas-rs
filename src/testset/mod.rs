@@ -256,14 +256,14 @@ impl PersonaGenerator {
 
     pub fn generate(
         &self,
-        _name: impl Into<String>,
-        _role: impl Into<String>,
-        _goals: Vec<String>,
+        name: impl Into<String>,
+        role: impl Into<String>,
+        goals: Vec<String>,
     ) -> Persona {
         Persona {
-            name: String::new(),
-            role: String::new(),
-            goals: Vec::new(),
+            name: name.into(),
+            role: role.into(),
+            goals,
         }
     }
 }
@@ -276,32 +276,94 @@ pub struct SynthesizedSample {
     pub hop_count: usize,
 }
 
-impl SynthesizedSample {
-    fn placeholder(persona: Persona, hop_count: usize) -> Self {
-        Self {
-            sample: SingleTurnSample::new("", "", Vec::new()),
-            persona,
-            source_node_ids: Vec::new(),
-            hop_count,
-        }
-    }
-}
-
 pub fn synthesize_single_hop_sample(
-    _graph: &KnowledgeGraph,
-    _chunk_id: &str,
+    graph: &KnowledgeGraph,
+    chunk_id: &str,
     persona: &Persona,
 ) -> Option<SynthesizedSample> {
-    Some(SynthesizedSample::placeholder(persona.clone(), 1))
+    let node = graph.node(chunk_id)?;
+    let context = text_property(node, "text")?.to_string();
+    let summary = text_property(node, "summary")
+        .unwrap_or(&context)
+        .to_string();
+    let goal = persona
+        .goals
+        .first()
+        .map(String::as_str)
+        .unwrap_or("evaluate");
+    let sample = SingleTurnSample::new(
+        format!(
+            "As a {}, ask a grounded single-hop question to {} using {}.",
+            persona.role, goal, chunk_id
+        ),
+        summary.clone(),
+        vec![context],
+    )
+    .with_reference(summary)
+    .with_metadata("synthesis_type", "single-hop")
+    .with_metadata("persona", persona.name.clone())
+    .with_metadata("source_node_ids", chunk_id.to_string());
+
+    Some(SynthesizedSample {
+        sample,
+        persona: persona.clone(),
+        source_node_ids: vec![chunk_id.to_string()],
+        hop_count: 1,
+    })
 }
 
 pub fn synthesize_multi_hop_sample(
-    _graph: &KnowledgeGraph,
-    _start_node_id: &str,
-    _relationship: &str,
+    graph: &KnowledgeGraph,
+    start_node_id: &str,
+    relationship: &str,
     persona: &Persona,
 ) -> Option<SynthesizedSample> {
-    Some(SynthesizedSample::placeholder(persona.clone(), 2))
+    let start = graph.node(start_node_id)?;
+    let mut nodes = vec![start];
+    nodes.extend(graph.neighbors(start_node_id, relationship));
+    if nodes.len() < 2 {
+        return None;
+    }
+
+    let mut source_node_ids = Vec::with_capacity(nodes.len());
+    let mut contexts = Vec::with_capacity(nodes.len());
+    let mut summaries = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        source_node_ids.push(node.id.clone());
+        contexts.push(text_property(node, "text")?.to_string());
+        summaries.push(
+            text_property(node, "summary")
+                .unwrap_or(&contexts[contexts.len() - 1])
+                .to_string(),
+        );
+    }
+
+    let goal = persona
+        .goals
+        .first()
+        .map(String::as_str)
+        .unwrap_or("compare");
+    let response = summaries.join(" ");
+    let sample = SingleTurnSample::new(
+        format!(
+            "As a {}, ask a multi-hop question to {} across relationship {}.",
+            persona.role, goal, relationship
+        ),
+        response.clone(),
+        contexts,
+    )
+    .with_reference(response)
+    .with_metadata("synthesis_type", "multi-hop")
+    .with_metadata("persona", persona.name.clone())
+    .with_metadata("relationship", relationship.to_string())
+    .with_metadata("source_node_ids", source_node_ids.join(","));
+
+    Some(SynthesizedSample {
+        sample,
+        persona: persona.clone(),
+        hop_count: source_node_ids.len(),
+        source_node_ids,
+    })
 }
 
 fn make_chunk(source_id: &str, index: usize, text: String) -> TextChunk {
@@ -318,6 +380,13 @@ fn make_chunk(source_id: &str, index: usize, text: String) -> TextChunk {
         .metadata
         .insert("chunk_index".to_string(), index.to_string());
     chunk
+}
+
+fn text_property<'a>(node: &'a GraphNode, key: &str) -> Option<&'a str> {
+    match node.properties.get(key) {
+        Some(GraphProperty::Text(value)) => Some(value.as_str()),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
