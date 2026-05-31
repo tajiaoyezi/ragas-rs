@@ -1,6 +1,6 @@
 # Task 15.3 - benchmarks
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 15
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-15.3.1 | TEST-15.3.1 | Not Started |
-| AC2 | SCEN-15.3.2 | TEST-15.3.2 | Not Started |
-| AC3 | SCEN-15.3.3 | TEST-15.3.3 | Not Started |
+| AC1 | SCEN-15.3.1 | TEST-15.3.1 | Done |
+| AC2 | SCEN-15.3.2 | TEST-15.3.2 | Done |
+| AC3 | SCEN-15.3.3 | TEST-15.3.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,19 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/benchmarks/mod.rs`（新增 provider benchmark runner、cost summary、stable JSON DTO 与 TEST-15.3.1~15.3.3）
+  - `src/lib.rs`（导出 benchmarks public API）
+- **commit 列表**：
+  - `a4d9e98` docs(spec): task-15.3 Ready
+  - `6298c78` docs(spec): task-15.3 进入实施
+  - `a191554` test(benchmarks): 加 task-15.3 RED 测试
+  - `a44469a` feat(benchmarks): 实现 task-15.3 provider runner
+- **§9 Verification 结果**：
+  - install: ✅ `cargo build`
+  - typecheck: ✅ `cargo check`
+  - unit-test: 112 passed / 0 failed (`cargo test`)
+  - build: ✅ `cargo build`
+- **剩余风险 / 未做项**：benchmark runner 当前使用 provider 返回的 TokenUsage 聚合成本，不主动计时或采集 p50/p95 latency；真实性能基准可在 release/CI 扩展。
+- **下游 task 影响**：phase 16 parity/release 可复用 BenchmarkReport stable JSON 作为性能与成本输出格式。
