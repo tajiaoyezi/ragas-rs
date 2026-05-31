@@ -1,0 +1,6 @@
+*.sh text eol=lf
+docs/s2v/scripts/** text eol=lf
+*.md text eol=lf
+*.rs text eol=lf
+Cargo.toml text eol=lf
+Cargo.lock text eol=lf

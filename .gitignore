@@ -1,0 +1,11 @@
+target/
+*.log
+*.tmp
+.DS_Store
+
+!test/fixtures/
+!test/fixtures/**
+
+.idea/
+.vscode/
+*.swp
