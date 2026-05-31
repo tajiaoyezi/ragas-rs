@@ -1,6 +1,6 @@
 # Task 16.3 - release
 
-**Status**: Draft
+**Status**: Ready
 **Phase**: 16
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -15,7 +15,7 @@ feature flags, crate metadata, CI gates, release checklist
 ## 3. Scope And Out-of-Scope
 
 **In scope**:
-- Rust module area: $(System.Collections.Hashtable.Module).
+- Rust module area: `src/release/`, `Cargo.toml`, `.github/workflows/`, and `docs/`.
 - Behavior listed in §6 acceptance criteria.
 - Unit tests and, where applicable, parity fixtures for upstream ragas semantics.
 
