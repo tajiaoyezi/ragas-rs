@@ -1,6 +1,6 @@
 # Task 5.3 - validation
 
-**Status**: Draft
+**Status**: Ready
 **Phase**: 5
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -15,7 +15,7 @@ sample/metric compatibility validator、required column checker
 ## 3. Scope And Out-of-Scope
 
 **In scope**:
-- Rust module area: $(System.Collections.Hashtable.Module).
+- Rust module area: src/validation.rs, src/metric.rs, src/eval.rs, src/lib.rs.
 - Behavior listed in §6 acceptance criteria.
 - Unit tests and, where applicable, parity fixtures for upstream ragas semantics.
 
