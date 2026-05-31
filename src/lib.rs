@@ -26,8 +26,9 @@ pub use metric::{
     RankingItem, ResponseRelevancyMetric, cosine_similarity,
 };
 pub use metrics::{
-    MetricMetadata, MetricProviderRequirement, MetricSampleKind, MultiTurnMetric,
-    SingleTurnMetric,
+    DetailedMetricResult, MetricError, MetricErrorKind, MetricEvidence, MetricMetadata,
+    MetricProviderRequirement, MetricSampleKind, MetricValueType, MultiTurnMetric,
+    ScoreNormalizationPolicy, SingleTurnMetric, normalize_score,
 };
 pub use providers::{
     MockEmbeddingProvider, MockLlmProvider, ProviderRegistry, record_provider_usage,
