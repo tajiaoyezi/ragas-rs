@@ -100,10 +100,7 @@ pub trait SingleTurnMetric: Send + Sync {
 pub trait MultiTurnMetric: Send + Sync {
     fn metadata(&self) -> MetricMetadata;
 
-    async fn score_multi_turn(
-        &self,
-        sample: &MultiTurnSample,
-    ) -> Result<MetricResult, RagasError>;
+    async fn score_multi_turn(&self, sample: &MultiTurnSample) -> Result<MetricResult, RagasError>;
 
     async fn score_batch(
         &self,
@@ -224,7 +221,13 @@ mod tests {
             vec!["a".to_string(), "bb".to_string(), "ccc".to_string()]
         );
         assert_eq!(results.len(), 3);
-        assert_eq!(results[2].value.clone().and_then(|value| value.as_numeric()), Some(3.0));
+        assert_eq!(
+            results[2]
+                .value
+                .clone()
+                .and_then(|value| value.as_numeric()),
+            Some(3.0)
+        );
     }
 
     #[test]

@@ -119,21 +119,16 @@ impl DetailedMetricResult {
     }
 }
 
-pub fn normalize_score(
-    score: f64,
-    policy: ScoreNormalizationPolicy,
-) -> Result<f64, MetricError> {
+pub fn normalize_score(score: f64, policy: ScoreNormalizationPolicy) -> Result<f64, MetricError> {
     if !score.is_finite() {
         return Err(MetricError::validation("score must be finite"));
     }
 
     match policy {
         ScoreNormalizationPolicy::Clamp => Ok(score.clamp(0.0, 1.0)),
-        ScoreNormalizationPolicy::Reject if !(0.0..=1.0).contains(&score) => {
-            Err(MetricError::validation(format!(
-                "score out of range [0, 1]: {score}"
-            )))
-        }
+        ScoreNormalizationPolicy::Reject if !(0.0..=1.0).contains(&score) => Err(
+            MetricError::validation(format!("score out of range [0, 1]: {score}")),
+        ),
         ScoreNormalizationPolicy::Reject => Ok(score),
     }
 }
@@ -149,7 +144,10 @@ mod tests {
             .with_score(0.82, ScoreNormalizationPolicy::Reject)
             .expect("score")
             .with_reason("grounded in context")
-            .with_evidence(MetricEvidence::new("context[0]", "Ragas evaluates LLM apps"))
+            .with_evidence(MetricEvidence::new(
+                "context[0]",
+                "Ragas evaluates LLM apps",
+            ))
             .with_error(MetricError::metric("judge uncertainty recorded"));
 
         assert_eq!(result.metric_name, "faithfulness");

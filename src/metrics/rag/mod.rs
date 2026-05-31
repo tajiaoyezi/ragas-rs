@@ -202,9 +202,7 @@ pub fn answer_correctness(
     numeric_result(
         "answer_correctness",
         score,
-        format!(
-            "weighted answer correctness from semantic={semantic:.3} factual={factual:.3}"
-        ),
+        format!("weighted answer correctness from semantic={semantic:.3} factual={factual:.3}"),
         vec![
             MetricEvidence::new("semantic_similarity", format!("{semantic:.6}")),
             MetricEvidence::new(
@@ -348,7 +346,10 @@ pub fn context_recall(reference: &str, contexts: &[String]) -> DetailedMetricRes
                 .all(|token| context_tokens.contains(token))
         {
             covered += 1;
-            evidence.push(MetricEvidence::new(format!("reference[{index}]"), claim.clone()));
+            evidence.push(MetricEvidence::new(
+                format!("reference[{index}]"),
+                claim.clone(),
+            ));
         }
     }
 
@@ -407,7 +408,9 @@ pub fn context_relevance(user_input: &str, contexts: &[String]) -> DetailedMetri
         );
     }
 
-    let query_tokens = meaningful_tokens(user_input).into_iter().collect::<BTreeSet<_>>();
+    let query_tokens = meaningful_tokens(user_input)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
     if query_tokens.is_empty() {
         return numeric_result(
             "context_relevance",
@@ -420,13 +423,18 @@ pub fn context_relevance(user_input: &str, contexts: &[String]) -> DetailedMetri
     let mut overlap_ratio_sum = 0.0f64;
     let mut evidence = Vec::new();
     for (index, context) in contexts.iter().enumerate() {
-        let context_tokens = meaningful_tokens(context).into_iter().collect::<BTreeSet<_>>();
+        let context_tokens = meaningful_tokens(context)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
         let overlap = query_tokens
             .iter()
             .filter(|token| context_tokens.contains(*token))
             .count();
         if overlap > 0 {
-            evidence.push(MetricEvidence::new(format!("context[{index}]"), context.clone()));
+            evidence.push(MetricEvidence::new(
+                format!("context[{index}]"),
+                context.clone(),
+            ));
         }
         overlap_ratio_sum += overlap as f64 / query_tokens.len() as f64;
     }
@@ -469,7 +477,9 @@ fn claim_is_supported_by_context(claim: &str, context: &str) -> bool {
     if claim_tokens.is_empty() {
         return false;
     }
-    let context_tokens = meaningful_tokens(context).into_iter().collect::<BTreeSet<_>>();
+    let context_tokens = meaningful_tokens(context)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
     claim_tokens
         .iter()
         .all(|token| context_tokens.contains(token))
@@ -489,7 +499,9 @@ fn extract_entities(text: &str) -> Vec<String> {
             .chars()
             .next()
             .is_some_and(|character| character.is_ascii_uppercase());
-        let has_letter = cleaned.chars().any(|character| character.is_ascii_alphabetic());
+        let has_letter = cleaned
+            .chars()
+            .any(|character| character.is_ascii_alphabetic());
         if starts_uppercase && has_letter {
             let normalized = normalize_token(&cleaned);
             if seen.insert(normalized) {
@@ -563,14 +575,24 @@ mod tests {
         let ranked = context_precision_from_relevance(&[true, false, true, true]);
         assert_score_close(&ranked, (1.0 + 2.0 / 3.0 + 3.0 / 4.0) / 3.0);
         assert_eq!(ranked.evidence.len(), 3);
-        assert!(ranked.reason.as_deref().unwrap_or("").contains("precision@k"));
-
-        let id_based = id_based_context_precision(
-            &["doc-a", "doc-b", "doc-c"],
-            &["doc-b", "doc-c", "doc-z"],
+        assert!(
+            ranked
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("precision@k")
         );
+
+        let id_based =
+            id_based_context_precision(&["doc-a", "doc-b", "doc-c"], &["doc-b", "doc-c", "doc-z"]);
         assert_score_close(&id_based, 2.0 / 3.0);
-        assert!(id_based.reason.as_deref().unwrap_or("").contains("id overlap"));
+        assert!(
+            id_based
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("id overlap")
+        );
     }
 
     #[test]
@@ -580,16 +602,29 @@ mod tests {
             "Ragas evaluates LLM apps with metrics.".to_string(),
             "OpenAI embeddings score relevance for retrieval.".to_string(),
         ];
-        let reference = "Ragas evaluates LLM apps. OpenAI embeddings score relevance. Rust services run fast.";
+        let reference =
+            "Ragas evaluates LLM apps. OpenAI embeddings score relevance. Rust services run fast.";
 
         let recall = context_recall(reference, &contexts);
         assert_score_close(&recall, 2.0 / 3.0);
         assert_eq!(recall.evidence.len(), 2);
-        assert!(recall.reason.as_deref().unwrap_or("").contains("reference claims"));
+        assert!(
+            recall
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("reference claims")
+        );
 
         let entity_recall = context_entity_recall("Ragas uses OpenAI with Rust.", &contexts);
         assert_score_close(&entity_recall, 2.0 / 3.0);
-        assert!(entity_recall.reason.as_deref().unwrap_or("").contains("entities"));
+        assert!(
+            entity_recall
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("entities")
+        );
     }
 
     #[test]
@@ -606,7 +641,13 @@ mod tests {
         assert_eq!(relevance.metric_name, "context_relevance");
         assert_eq!(relevance.evidence[0].source, "context[0]");
         assert!(relevance.evidence[0].text.contains("Ragas evaluates"));
-        assert!(relevance.reason.as_deref().unwrap_or("").contains("lexical overlap"));
+        assert!(
+            relevance
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("lexical overlap")
+        );
     }
 
     #[test]
@@ -620,8 +661,16 @@ mod tests {
         );
 
         let rendered = contract.render_prompt(&sample).expect("rendered prompt");
-        assert!(rendered.text.contains("Question: What does ragas evaluate?"));
-        assert!(rendered.text.contains("Response: Ragas evaluates LLM applications."));
+        assert!(
+            rendered
+                .text
+                .contains("Question: What does ragas evaluate?")
+        );
+        assert!(
+            rendered
+                .text
+                .contains("Response: Ragas evaluates LLM applications.")
+        );
         assert!(rendered.text.contains("Contexts:"));
         assert_eq!(rendered.few_shot_examples.len(), 1);
 
@@ -649,7 +698,13 @@ mod tests {
         assert_eq!(result.metric_name, "response_groundedness");
         assert_eq!(result.evidence.len(), 1);
         assert_eq!(result.evidence[0].source, "context[0]");
-        assert!(result.reason.as_deref().unwrap_or("").contains("response claims"));
+        assert!(
+            result
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("response claims")
+        );
     }
 
     #[test]
@@ -669,7 +724,13 @@ mod tests {
         // SCEN-10.3.1 / AC1 / TEST-10.3.1
         let embedding = answer_relevancy_from_embedding_similarity(&[1.0, 0.0], &[0.5, 0.5]);
         assert_score_close(&embedding, 0.70710678);
-        assert!(embedding.reason.as_deref().unwrap_or("").contains("embedding"));
+        assert!(
+            embedding
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("embedding")
+        );
 
         let judge = answer_relevancy_from_judge_output(
             r#"{"score":0.82,"reason":"answer directly addresses the question"}"#,
@@ -693,8 +754,20 @@ mod tests {
 
         assert_score_close(&result, 0.7);
         assert_eq!(result.metric_name, "answer_correctness");
-        assert!(result.reason.as_deref().unwrap_or("").contains("semantic=0.800"));
-        assert!(result.reason.as_deref().unwrap_or("").contains("factual=0.667"));
+        assert!(
+            result
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("semantic=0.800")
+        );
+        assert!(
+            result
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("factual=0.667")
+        );
         assert_eq!(result.evidence.len(), 2);
     }
 
@@ -705,7 +778,19 @@ mod tests {
 
         assert_score_close(&result, 0.3);
         assert_eq!(result.metric_name, "noise_sensitivity");
-        assert!(result.reason.as_deref().unwrap_or("").contains("clean=0.800"));
-        assert!(result.reason.as_deref().unwrap_or("").contains("noisy=0.500"));
+        assert!(
+            result
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("clean=0.800")
+        );
+        assert!(
+            result
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("noisy=0.500")
+        );
     }
 }

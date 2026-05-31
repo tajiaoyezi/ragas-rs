@@ -3,8 +3,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 
-use crate::{EvaluationDataset, Metric, MetricResult};
 use crate::RunConfig;
+use crate::{EvaluationDataset, Metric, MetricResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvaluationOptions {
@@ -135,7 +135,10 @@ mod tests {
             assert_eq!(sample.results[0].metric_name, "ok");
             assert!(sample.results[0].error.is_none());
             assert_eq!(sample.results[1].metric_name, "fail");
-            assert_eq!(sample.results[1].error.as_deref(), Some("provider error: provider failed"));
+            assert_eq!(
+                sample.results[1].error.as_deref(),
+                Some("provider error: provider failed")
+            );
         }
     }
 }

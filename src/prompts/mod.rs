@@ -63,11 +63,7 @@ impl MultimodalPromptMessage {
         self
     }
 
-    pub fn push_image_url(
-        mut self,
-        url: impl Into<String>,
-        mime_type: impl Into<String>,
-    ) -> Self {
+    pub fn push_image_url(mut self, url: impl Into<String>, mime_type: impl Into<String>) -> Self {
         self.parts
             .push(MultimodalPromptPart::image_url(url, mime_type));
         self
@@ -131,9 +127,14 @@ impl JudgeOutputParser {
 
         let reason = match raw.get("reason") {
             Some(value) if value.is_null() => None,
-            Some(value) => Some(value.as_str().ok_or_else(|| {
-                self.diagnostic("judge output JSON reason must be a string", output)
-            })?.to_string()),
+            Some(value) => Some(
+                value
+                    .as_str()
+                    .ok_or_else(|| {
+                        self.diagnostic("judge output JSON reason must be a string", output)
+                    })?
+                    .to_string(),
+            ),
             None => None,
         };
 
@@ -164,11 +165,7 @@ impl JudgeOutputParser {
         }
     }
 
-    fn diagnostic(
-        &self,
-        message: impl Into<String>,
-        output: &str,
-    ) -> OutputParseDiagnostic {
+    fn diagnostic(&self, message: impl Into<String>, output: &str) -> OutputParseDiagnostic {
         OutputParseDiagnostic {
             message: message.into(),
             raw_excerpt: output.chars().take(80).collect(),
@@ -322,9 +319,12 @@ impl PromptTemplate {
     pub fn render(&self, variables: &PromptVariables) -> Result<RenderedPrompt, RagasError> {
         let mut text = self.template.clone();
         for (name, expected_kind) in &self.variables {
-            let value = variables.values.get(name).ok_or_else(|| RagasError::Prompt {
-                message: format!("missing prompt variable '{name}'"),
-            })?;
+            let value = variables
+                .values
+                .get(name)
+                .ok_or_else(|| RagasError::Prompt {
+                    message: format!("missing prompt variable '{name}'"),
+                })?;
             if value.kind() != *expected_kind {
                 return Err(RagasError::Prompt {
                     message: format!(
@@ -456,7 +456,11 @@ mod tests {
     fn test_8_2_3_repair_strategy_is_explicit_and_testable() {
         // SCEN-8.2.3 / AC3 / TEST-8.2.3
         let strict = JudgeOutputParser::new();
-        assert!(strict.parse("Answer: {\"score\":0.5,\"reason\":\"partial\"}").is_err());
+        assert!(
+            strict
+                .parse("Answer: {\"score\":0.5,\"reason\":\"partial\"}")
+                .is_err()
+        );
 
         let repaired = JudgeOutputParser::new()
             .with_repair_strategy(RepairStrategy::ExtractJsonObject)
@@ -498,7 +502,9 @@ mod tests {
             .push_image_url("https://example.test/one.jpg", "image/jpeg")
             .push_text("second");
 
-        let rendered = message.render_text_scaffold().expect("rendered multimodal scaffold");
+        let rendered = message
+            .render_text_scaffold()
+            .expect("rendered multimodal scaffold");
 
         assert_eq!(
             rendered,

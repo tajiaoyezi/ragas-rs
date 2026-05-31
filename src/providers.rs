@@ -18,11 +18,7 @@ impl ProviderRegistry {
         Self::default()
     }
 
-    pub fn register_llm(
-        mut self,
-        name: impl Into<String>,
-        provider: Arc<dyn LlmProvider>,
-    ) -> Self {
+    pub fn register_llm(mut self, name: impl Into<String>, provider: Arc<dyn LlmProvider>) -> Self {
         self.llms.insert(name.into(), provider);
         self
     }

@@ -163,8 +163,10 @@ mod tests {
             vec!["context".to_string()],
         ))
         .expect("dataset");
-        let requirements =
-            vec![MetricRequirements::new("answer_correctness", vec![SampleField::Reference])];
+        let requirements = vec![MetricRequirements::new(
+            "answer_correctness",
+            vec![SampleField::Reference],
+        )];
 
         let report =
             validate_dataset_requirements(&dataset, &requirements).expect_err("missing reference");

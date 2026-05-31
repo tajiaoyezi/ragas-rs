@@ -276,10 +276,7 @@ pub fn threshold_semantic_similarity(
     )
 }
 
-pub fn semantic_similarity_from_vectors(
-    left: &[f32],
-    right: &[f32],
-) -> DetailedMetricResult {
+pub fn semantic_similarity_from_vectors(left: &[f32], right: &[f32]) -> DetailedMetricResult {
     let has_zero = vector_is_zero(left) || vector_is_zero(right);
     let score = cosine_similarity(left, right).clamp(0.0, 1.0);
     let reason = if has_zero {
@@ -287,12 +284,7 @@ pub fn semantic_similarity_from_vectors(
     } else {
         "embedding cosine similarity".to_string()
     };
-    numeric_result(
-        "semantic_similarity",
-        score,
-        reason,
-        Vec::new(),
-    )
+    numeric_result("semantic_similarity", score, reason, Vec::new())
 }
 
 pub fn extract_quoted_spans(text: &str) -> Vec<QuotedSpan> {
@@ -393,7 +385,10 @@ pub fn quoted_citation_coverage(answer: &str, sources: &[String]) -> DetailedMet
     numeric_result(
         "quoted_citation_coverage",
         matched as f64 / spans.len() as f64,
-        format!("quoted citation coverage: matched={matched} total={}", spans.len()),
+        format!(
+            "quoted citation coverage: matched={matched} total={}",
+            spans.len()
+        ),
         evidence,
     )
 }
@@ -504,8 +499,8 @@ mod tests {
         sync::{Arc, Mutex},
     };
 
-    use async_trait::async_trait;
     use crate::{EmbeddingRequest, EmbeddingResponse};
+    use async_trait::async_trait;
 
     fn assert_score_close(result: &DetailedMetricResult, expected: f64) {
         let actual = result.score.expect("score");
@@ -520,7 +515,13 @@ mod tests {
         // SCEN-11.1.1 / AC1 / TEST-11.1.1
         let exact = exact_match("Ragas evaluates apps", "Ragas evaluates apps");
         assert_score_close(&exact, 1.0);
-        assert!(exact.reason.as_deref().unwrap_or("").contains("provider-free"));
+        assert!(
+            exact
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("provider-free")
+        );
 
         let distance = string_distance_similarity("kitten", "sitting");
         assert_score_close(&distance, 4.0 / 7.0);
@@ -536,14 +537,24 @@ mod tests {
 
         let bleu = bleu_unigram("the cat sat", "the cat slept");
         assert_score_close(&bleu, 2.0 / 3.0);
-        assert!(bleu.reason.as_deref().unwrap_or("").contains("whitespace-lowercase"));
+        assert!(
+            bleu.reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("whitespace-lowercase")
+        );
 
         let rouge = rouge_l_recall("the cat sat", "the cat slept");
         assert_score_close(&rouge, 2.0 / 3.0);
 
         let chrf = chrf_score("abc", "abd");
         assert_score_close(&chrf, 2.0 / 3.0);
-        assert!(chrf.reason.as_deref().unwrap_or("").contains("character-unigram"));
+        assert!(
+            chrf.reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("character-unigram")
+        );
     }
 
     #[test]
@@ -551,15 +562,31 @@ mod tests {
         // SCEN-11.1.3 / AC3 / TEST-11.1.3
         let exact = exact_match("", "");
         assert_score_close(&exact, 1.0);
-        assert!(exact.reason.as_deref().unwrap_or("").contains("both strings empty"));
+        assert!(
+            exact
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("both strings empty")
+        );
 
         let bleu = bleu_unigram("", "reference text");
         assert_score_close(&bleu, 0.0);
-        assert!(bleu.reason.as_deref().unwrap_or("").contains("empty candidate"));
+        assert!(
+            bleu.reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("empty candidate")
+        );
 
         let chrf = chrf_score("", "");
         assert_score_close(&chrf, 1.0);
-        assert!(chrf.reason.as_deref().unwrap_or("").contains("both strings empty"));
+        assert!(
+            chrf.reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("both strings empty")
+        );
     }
 
     struct RecordingEmbeddingProvider {
@@ -626,11 +653,23 @@ mod tests {
         // SCEN-11.2.2 / AC2 / TEST-11.2.2
         let inclusive = threshold_semantic_similarity(0.8, SemanticThresholdPolicy::inclusive(0.8));
         assert_score_close(&inclusive, 1.0);
-        assert!(inclusive.reason.as_deref().unwrap_or("").contains("inclusive"));
+        assert!(
+            inclusive
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("inclusive")
+        );
 
         let exclusive = threshold_semantic_similarity(0.8, SemanticThresholdPolicy::exclusive(0.8));
         assert_score_close(&exclusive, 0.0);
-        assert!(exclusive.reason.as_deref().unwrap_or("").contains("exclusive"));
+        assert!(
+            exclusive
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("exclusive")
+        );
     }
 
     #[test]
@@ -640,7 +679,13 @@ mod tests {
 
         assert_score_close(&result, 0.0);
         assert!(result.score.expect("score").is_finite());
-        assert!(result.reason.as_deref().unwrap_or("").contains("zero vector"));
+        assert!(
+            result
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("zero vector")
+        );
     }
 
     #[test]
@@ -649,10 +694,7 @@ mod tests {
         let spans = extract_quoted_spans("A \"猫\" and \"dog\"");
 
         assert_eq!(spans.len(), 2);
-        assert_eq!(
-            spans[0],
-            QuotedSpan::new("猫", 3, 6, 3, 4)
-        );
+        assert_eq!(spans[0], QuotedSpan::new("猫", 3, 6, 3, 4));
         assert_eq!(spans[1].text, "dog");
     }
 
@@ -665,7 +707,13 @@ mod tests {
         let result = quoted_span_overlap(&candidate, &reference);
 
         assert_score_close(&result, 1.0 / 3.0);
-        assert!(result.reason.as_deref().unwrap_or("").contains("partial overlap"));
+        assert!(
+            result
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("partial overlap")
+        );
     }
 
     #[test]
@@ -677,6 +725,12 @@ mod tests {
         );
 
         assert_score_close(&result, 0.0);
-        assert!(result.reason.as_deref().unwrap_or("").contains("missing citations"));
+        assert!(
+            result
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("missing citations")
+        );
     }
 }

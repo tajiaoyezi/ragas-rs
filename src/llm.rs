@@ -89,11 +89,7 @@ impl<P> EmbeddingAdapter<P> {
 }
 
 pub fn normalize_embedding_vector(vector: &mut [f32]) {
-    let norm = vector
-        .iter()
-        .map(|value| value * value)
-        .sum::<f32>()
-        .sqrt();
+    let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
     if norm == 0.0 {
         return;
     }
@@ -697,7 +693,10 @@ mod tests {
     #[async_trait]
     impl EmbeddingProvider for RecordingEmbeddingProvider {
         async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, RagasError> {
-            self.calls.lock().expect("calls").push(request.input.clone());
+            self.calls
+                .lock()
+                .expect("calls")
+                .push(request.input.clone());
             let embeddings = request
                 .input
                 .iter()

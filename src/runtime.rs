@@ -270,10 +270,7 @@ where
             let events = events.lock().await;
             events.clone()
         };
-        let results = ordered_results
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+        let results = ordered_results.into_iter().flatten().collect::<Vec<_>>();
 
         ExecutorReport { results, events }
     }
@@ -511,9 +508,7 @@ fn redact_value(value: &Value) -> Value {
             Value::Object(redacted)
         }
         Value::Array(values) => Value::Array(values.iter().map(redact_value).collect()),
-        Value::String(value) if looks_like_secret(value) => {
-            Value::String("[redacted]".to_string())
-        }
+        Value::String(value) if looks_like_secret(value) => Value::String("[redacted]".to_string()),
         _ => value.clone(),
     }
 }
@@ -593,7 +588,12 @@ impl RunConfigBuilder {
         self
     }
 
-    pub fn retry(mut self, max_attempts: u32, initial_backoff_ms: u64, max_backoff_ms: u64) -> Self {
+    pub fn retry(
+        mut self,
+        max_attempts: u32,
+        initial_backoff_ms: u64,
+        max_backoff_ms: u64,
+    ) -> Self {
         self.retry = Some(RetryConfig {
             max_attempts,
             initial_backoff_ms,
@@ -759,12 +759,18 @@ mod tests {
             .await;
 
         assert_eq!(report.results.len(), 3);
-        assert!(matches!(report.results[0].outcome, ExecutorOutcome::Success(10)));
+        assert!(matches!(
+            report.results[0].outcome,
+            ExecutorOutcome::Success(10)
+        ));
         assert!(matches!(
             &report.results[1].outcome,
             ExecutorOutcome::Failure(message) if message.contains("provider failed")
         ));
-        assert!(matches!(report.results[2].outcome, ExecutorOutcome::Success(30)));
+        assert!(matches!(
+            report.results[2].outcome,
+            ExecutorOutcome::Success(30)
+        ));
     }
 
     #[tokio::test]
@@ -780,18 +786,26 @@ mod tests {
             .run()
             .await;
 
-        assert!(report.events.iter().any(|event| {
-            event.job_name == "ok" && event.kind == ProgressEventKind::Started
-        }));
-        assert!(report.events.iter().any(|event| {
-            event.job_name == "ok" && event.kind == ProgressEventKind::Succeeded
-        }));
-        assert!(report.events.iter().any(|event| {
-            event.job_name == "bad" && event.kind == ProgressEventKind::Started
-        }));
-        assert!(report.events.iter().any(|event| {
-            event.job_name == "bad" && event.kind == ProgressEventKind::Failed
-        }));
+        assert!(
+            report.events.iter().any(|event| {
+                event.job_name == "ok" && event.kind == ProgressEventKind::Started
+            })
+        );
+        assert!(
+            report.events.iter().any(|event| {
+                event.job_name == "ok" && event.kind == ProgressEventKind::Succeeded
+            })
+        );
+        assert!(
+            report.events.iter().any(|event| {
+                event.job_name == "bad" && event.kind == ProgressEventKind::Started
+            })
+        );
+        assert!(
+            report.events.iter().any(|event| {
+                event.job_name == "bad" && event.kind == ProgressEventKind::Failed
+            })
+        );
     }
 
     #[test]

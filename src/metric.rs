@@ -4,11 +4,11 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::validation::{MetricRequirements, SampleField};
 use crate::{
     ChatMessage, EmbeddingProvider, EmbeddingRequest, LlmProvider, LlmRequest, RagasError,
     SingleTurnSample,
 };
-use crate::validation::{MetricRequirements, SampleField};
 
 pub type BoxMetricFuture = Pin<Box<dyn Future<Output = Result<MetricResult, RagasError>> + Send>>;
 
@@ -102,8 +102,10 @@ impl Metric for ResponseRelevancyMetric {
         }
 
         let score = cosine_similarity(&response.embeddings[0], &response.embeddings[1]);
-        Ok(MetricResult::success(self.name(), MetricValue::numeric(score))
-            .with_reason("cosine similarity between question and response embeddings"))
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score))
+                .with_reason("cosine similarity between question and response embeddings"),
+        )
     }
 }
 
@@ -132,8 +134,10 @@ impl Metric for ContextPrecisionMetric {
 
     async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
         if sample.retrieved_contexts.is_empty() {
-            return Ok(MetricResult::success(self.name(), MetricValue::numeric(0.0))
-                .with_reason("sample has no retrieved contexts"));
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(0.0))
+                    .with_reason("sample has no retrieved contexts"),
+            );
         }
 
         let mut input = Vec::with_capacity(sample.retrieved_contexts.len() + 1);
@@ -163,8 +167,10 @@ impl Metric for ContextPrecisionMetric {
             precision_sum / relevant_count as f64
         };
 
-        Ok(MetricResult::success(self.name(), MetricValue::numeric(score))
-            .with_reason("average precision over contexts with embedding similarity >= 0.5"))
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score))
+                .with_reason("average precision over contexts with embedding similarity >= 0.5"),
+        )
     }
 }
 
@@ -378,11 +384,14 @@ mod tests {
     #[test]
     fn test_2_1_2_metric_results_preserve_success_and_failure_details() {
         // SCEN-2.1.2 / AC2 / TEST-2.1.2
-        let success =
-            MetricResult::success("faithfulness", MetricValue::numeric(0.8)).with_reason("grounded");
+        let success = MetricResult::success("faithfulness", MetricValue::numeric(0.8))
+            .with_reason("grounded");
 
         assert_eq!(success.metric_name, "faithfulness");
-        assert_eq!(success.value.and_then(|value| value.as_numeric()), Some(0.8));
+        assert_eq!(
+            success.value.and_then(|value| value.as_numeric()),
+            Some(0.8)
+        );
         assert_eq!(success.reason.as_deref(), Some("grounded"));
         assert!(success.error.is_none());
 
@@ -432,10 +441,7 @@ mod tests {
 
     #[async_trait]
     impl EmbeddingProvider for MapEmbeddingProvider {
-        async fn embed(
-            &self,
-            request: EmbeddingRequest,
-        ) -> Result<EmbeddingResponse, RagasError> {
+        async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, RagasError> {
             let embeddings = request
                 .input
                 .iter()
@@ -498,7 +504,11 @@ mod tests {
         let sample = SingleTurnSample::new(
             "question",
             "answer",
-            vec!["ctx-a".to_string(), "ctx-b".to_string(), "ctx-c".to_string()],
+            vec![
+                "ctx-a".to_string(),
+                "ctx-b".to_string(),
+                "ctx-c".to_string(),
+            ],
         );
 
         let result = metric.score(&sample).await.expect("context precision");

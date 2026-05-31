@@ -141,9 +141,15 @@ mod tests {
             .register(entry("response_relevancy"))
             .register(entry("context_precision"));
 
-        assert_eq!(registry.resolve("faithfulness").expect("entry").name(), "faithfulness");
         assert_eq!(
-            registry.resolve("response_relevancy").expect("entry").name(),
+            registry.resolve("faithfulness").expect("entry").name(),
+            "faithfulness"
+        );
+        assert_eq!(
+            registry
+                .resolve("response_relevancy")
+                .expect("entry")
+                .name(),
             "response_relevancy"
         );
         assert!(registry.resolve("missing_metric").is_err());
@@ -156,7 +162,10 @@ mod tests {
             .register(entry("faithfulness"))
             .register(entry("sql_semantic_equivalence").with_feature("sql"));
 
-        assert_eq!(registry.list_visible_names(), vec!["faithfulness".to_string()]);
+        assert_eq!(
+            registry.list_visible_names(),
+            vec!["faithfulness".to_string()]
+        );
         assert!(registry.resolve("sql_semantic_equivalence").is_err());
 
         let enabled = registry.enable_feature("sql");
