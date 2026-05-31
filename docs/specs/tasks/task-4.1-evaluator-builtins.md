@@ -1,6 +1,6 @@
 # Task 4.1 - evaluator-builtins
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 4 - evaluator-builtins
 **PRD**: docs/prds/ragas-rs.prd.md
 
@@ -65,10 +65,10 @@ Uses dataset, metric, provider traits, tokio semaphore, and futures utilities.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-4.1.1 | TEST-4.1.1 | Not Started |
-| AC2 | SCEN-4.1.2 | TEST-4.1.2 | Not Started |
-| AC3 | SCEN-4.1.3 | TEST-4.1.3 | Not Started |
-| AC4 | SCEN-4.1.4 | TEST-4.1.4 | Not Started |
+| AC1 | SCEN-4.1.1 | TEST-4.1.1 | Done |
+| AC2 | SCEN-4.1.2 | TEST-4.1.2 | Done |
+| AC3 | SCEN-4.1.3 | TEST-4.1.3 | Done |
+| AC4 | SCEN-4.1.4 | TEST-4.1.4 | Done |
 
 ## 8. Risks
 
@@ -84,9 +84,20 @@ Uses dataset, metric, provider traits, tokio semaphore, and futures utilities.
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/lib.rs`（导出 evaluate 和内置指标）
+  - `src/eval.rs`（新增异步批量 evaluate、report、options、unit tests）
+  - `src/metric.rs`（新增 Faithfulness、ResponseRelevancy、ContextPrecision、cosine similarity、unit tests）
+- **commit 列表**：
+  - `8acada4` docs(spec): task-4.1 Ready
+  - `9a94d56` docs(spec): task-4.1 进入实施
+  - `2c6fa23` test(eval): 加 task-4.1 RED 测试
+  - `3bda25b` feat(eval): 实现 task-4.1 批量评估与内置指标
+- **§9 Verification 结果**：
+  - install: pass (`cargo build`)
+  - typecheck: pass (`cargo check`)
+  - unit-test: 13 passed / 0 failed (`cargo test`)
+  - build: pass (`cargo build`)
+- **剩余风险 / 未做项**：内置指标为 v1.0 启发式兼容，不声明 Python ragas 全量 parity
+- **下游 task 影响**：无
