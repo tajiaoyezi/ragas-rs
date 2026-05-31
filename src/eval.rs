@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 
 use crate::{EvaluationDataset, Metric, MetricResult};
+use crate::RunConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvaluationOptions {
@@ -13,6 +14,12 @@ pub struct EvaluationOptions {
 impl Default for EvaluationOptions {
     fn default() -> Self {
         Self { concurrency: 4 }
+    }
+}
+
+impl EvaluationOptions {
+    pub fn from_run_config(_config: &RunConfig) -> Self {
+        unimplemented!("TEST-6.1.1")
     }
 }
 

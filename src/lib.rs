@@ -3,6 +3,7 @@ pub mod error;
 pub mod eval;
 pub mod llm;
 pub mod metric;
+pub mod runtime;
 pub mod schema;
 pub mod validation;
 
@@ -18,6 +19,9 @@ pub use llm::{
 pub use metric::{
     ContextPrecisionMetric, FaithfulnessMetric, FnMetric, Metric, MetricResult, MetricValue,
     RankingItem, ResponseRelevancyMetric, cosine_similarity,
+};
+pub use runtime::{
+    CancellationConfig, RetryConfig, RunConfig, RunConfigBuilder, RunConfigError, TimeoutConfig,
 };
 pub use schema::{Message, MessageRole, MultiTurnSample, Rubric, ToolCall};
 pub use validation::{
