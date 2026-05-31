@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{EmbeddingProvider, LlmProvider, RagasError, TokenUsage};
+use crate::{
+    ChatMessage, EmbeddingProvider, EmbeddingRequest, LlmProvider, LlmRequest, RagasError,
+    TokenUsage,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BenchmarkPrompt {
@@ -77,11 +80,72 @@ pub struct BenchmarkReport {
 }
 
 pub async fn run_provider_benchmark(
-    _providers: &[BenchmarkProvider],
-    _prompts: &[BenchmarkPrompt],
-    _rates: CostRates,
+    providers: &[BenchmarkProvider],
+    prompts: &[BenchmarkPrompt],
+    rates: CostRates,
 ) -> Result<BenchmarkReport, RagasError> {
-    Ok(BenchmarkReport::default())
+    let mut measurements = Vec::new();
+    let mut cost = CostSummary::default();
+
+    for provider in providers {
+        for prompt in prompts {
+            let measurement = match provider {
+                BenchmarkProvider::Llm { name, provider } => {
+                    let response = provider
+                        .generate(LlmRequest {
+                            messages: vec![ChatMessage::user(prompt.text.clone())],
+                            temperature: Some(0.0),
+                        })
+                        .await?;
+                    BenchmarkMeasurement {
+                        provider_name: name.clone(),
+                        provider_kind: "llm".to_string(),
+                        prompt_id: prompt.id.clone(),
+                        output_units: response.content.len(),
+                        usage: response.usage,
+                    }
+                }
+                BenchmarkProvider::Embedding { name, provider } => {
+                    let response = provider
+                        .embed(EmbeddingRequest {
+                            input: vec![prompt.text.clone()],
+                        })
+                        .await?;
+                    BenchmarkMeasurement {
+                        provider_name: name.clone(),
+                        provider_kind: "embedding".to_string(),
+                        prompt_id: prompt.id.clone(),
+                        output_units: response.embeddings.iter().map(Vec::len).sum(),
+                        usage: response.usage,
+                    }
+                }
+            };
+            cost.add_usage(measurement.usage.as_ref(), rates);
+            measurements.push(measurement);
+        }
+    }
+
+    Ok(BenchmarkReport { measurements, cost })
+}
+
+impl CostSummary {
+    fn add_usage(&mut self, usage: Option<&TokenUsage>, rates: CostRates) {
+        let Some(usage) = usage else {
+            return;
+        };
+        let prompt_tokens = usage.prompt_tokens.unwrap_or(0) as u64;
+        let completion_tokens = usage.completion_tokens.unwrap_or(0) as u64;
+        let total_tokens = usage
+            .total_tokens
+            .map(u64::from)
+            .unwrap_or(prompt_tokens + completion_tokens);
+
+        self.prompt_tokens += prompt_tokens;
+        self.completion_tokens += completion_tokens;
+        self.total_tokens += total_tokens;
+        self.estimated_cost_usd += prompt_tokens as f64 / 1000.0 * rates.prompt_per_1k_tokens
+            + completion_tokens as f64 / 1000.0 * rates.completion_per_1k_tokens;
+    }
 }
 
 #[cfg(test)]
@@ -116,8 +180,7 @@ mod tests {
             BenchmarkProvider::embedding(
                 "mock-embedding",
                 Arc::new(
-                    MockEmbeddingProvider::new(vec![vec![1.0, 0.0]])
-                        .with_usage(embedding_usage),
+                    MockEmbeddingProvider::new(vec![vec![1.0, 0.0]]).with_usage(embedding_usage),
                 ),
             ),
         ]
