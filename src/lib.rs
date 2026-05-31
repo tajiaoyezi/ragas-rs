@@ -4,6 +4,7 @@ pub mod eval;
 pub mod llm;
 pub mod metric;
 pub mod schema;
+pub mod validation;
 
 pub use dataset::{
     EvaluationDataset, EvaluationDatasetBuilder, EvaluationSample, SingleTurnSample,
@@ -19,3 +20,7 @@ pub use metric::{
     RankingItem, ResponseRelevancyMetric, cosine_similarity,
 };
 pub use schema::{Message, MessageRole, MultiTurnSample, Rubric, ToolCall};
+pub use validation::{
+    MetricRequirements, SampleField, ValidationIssue, ValidationReport, validate_before_evaluate,
+    validate_dataset_requirements, validate_single_turn_samples,
+};

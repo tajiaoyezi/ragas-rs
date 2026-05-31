@@ -8,6 +8,7 @@ use crate::{
     ChatMessage, EmbeddingProvider, EmbeddingRequest, LlmProvider, LlmRequest, RagasError,
     SingleTurnSample,
 };
+use crate::validation::{MetricRequirements, SampleField};
 
 pub type BoxMetricFuture = Pin<Box<dyn Future<Output = Result<MetricResult, RagasError>> + Send>>;
 
@@ -270,6 +271,10 @@ impl MetricResult {
 pub trait Metric: Send + Sync {
     fn name(&self) -> &str;
 
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(self.name(), Vec::new())
+    }
+
     async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError>;
 }
 
@@ -279,6 +284,7 @@ where
 {
     name: String,
     scorer: F,
+    required_fields: Vec<SampleField>,
 }
 
 impl<F> FnMetric<F>
@@ -289,7 +295,13 @@ where
         Self {
             name: name.into(),
             scorer,
+            required_fields: Vec::new(),
         }
+    }
+
+    pub fn with_required_fields(mut self, fields: Vec<SampleField>) -> Self {
+        self.required_fields = fields;
+        self
     }
 }
 
@@ -300,6 +312,10 @@ where
 {
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(&self.name, self.required_fields.clone())
     }
 
     async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
