@@ -1,6 +1,6 @@
 # Task 12.1 - rubrics
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 12
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-12.1.1 | TEST-12.1.1 | Not Started |
-| AC2 | SCEN-12.1.2 | TEST-12.1.2 | Not Started |
-| AC3 | SCEN-12.1.3 | TEST-12.1.3 | Not Started |
+| AC1 | SCEN-12.1.1 | TEST-12.1.1 | Done |
+| AC2 | SCEN-12.1.2 | TEST-12.1.2 | Done |
+| AC3 | SCEN-12.1.3 | TEST-12.1.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,19 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/metrics/advanced/mod.rs`（新增）
+  - `src/metrics/mod.rs`（修改）
+  - `src/lib.rs`（修改）
+  - `docs/specs/tasks/task-12.1-rubrics.md`（修改）
+- **commit 列表**：
+  - `8bfa9aa` test(metrics-advanced): 加 task-12.1 RED 测试
+  - `0c5c45e` feat(metrics-advanced): 实现 task-12.1 rubrics
+- **§9 Verification 结果**：
+  - install: ✅ `cargo build`
+  - typecheck: ✅ `cargo check`
+  - unit-test: 79 passed / 0 failed (`cargo test`)
+  - build: ✅ `cargo build`
+- **剩余风险 / 未做项**：aspect critic/rubric 数据模型已落地；Python ragas prompt parity 和 golden fixtures 待 task-16.1 登记。
+- **下游 task 影响**：task-12.2、task-12.3 可复用 `src/metrics/advanced/` 和 audit serialization 模式。
