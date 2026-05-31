@@ -1,6 +1,6 @@
 # Task 10.2 - faithfulness-family
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 10
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
