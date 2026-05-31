@@ -1,6 +1,6 @@
 # Task 3.1 - providers
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 3 - providers
 **PRD**: docs/prds/ragas-rs.prd.md
 
@@ -64,9 +64,9 @@ Uses `RagasError` from phase 1 and async-trait for provider traits.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-3.1.1 | TEST-3.1.1 | Not Started |
-| AC2 | SCEN-3.1.2 | TEST-3.1.2 | Not Started |
-| AC3 | SCEN-3.1.3 | TEST-3.1.3 | Not Started |
+| AC1 | SCEN-3.1.1 | TEST-3.1.1 | Done |
+| AC2 | SCEN-3.1.2 | TEST-3.1.2 | Done |
+| AC3 | SCEN-3.1.3 | TEST-3.1.3 | Done |
 
 ## 8. Risks
 
@@ -82,9 +82,22 @@ Uses `RagasError` from phase 1 and async-trait for provider traits.
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `Cargo.toml`（新增 reqwest 和 serde_json）
+  - `Cargo.lock`（更新锁文件）
+  - `src/error.rs`（新增 Provider 和 Parse 错误）
+  - `src/lib.rs`（导出 provider API）
+  - `src/llm.rs`（新增 provider traits、OpenAI-compatible client、DTO parser、unit tests）
+- **commit 列表**：
+  - `7499961` docs(spec): task-3.1 Ready
+  - `badea1f` docs(spec): task-3.1 进入实施
+  - `12fc7a6` test(llm): 加 task-3.1 RED 测试
+  - `87321d6` feat(llm): 实现 task-3.1 OpenAI 兼容 provider
+- **§9 Verification 结果**：
+  - install: pass (`cargo build`)
+  - typecheck: pass (`cargo check`)
+  - unit-test: 9 passed / 0 failed (`cargo test`)
+  - build: pass (`cargo build`)
+- **剩余风险 / 未做项**：无；真实 provider endpoint 兼容性仍需后续集成样本登记
+- **下游 task 影响**：task-4.1 可使用 `LlmProvider` 和 `EmbeddingProvider` 实现内置指标
