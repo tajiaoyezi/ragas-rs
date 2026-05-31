@@ -1,6 +1,6 @@
 # Task 16.1 - parity-suite
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 16
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
