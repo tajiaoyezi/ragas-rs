@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{EvaluationDataset, EvaluationSample, RagasError, SingleTurnSample};
 
@@ -27,22 +27,26 @@ impl InMemoryDatasetBackend {
 impl DatasetBackend for InMemoryDatasetBackend {
     fn save(
         &mut self,
-        _name: &str,
-        _dataset: &EvaluationDataset<EvaluationSample>,
+        name: &str,
+        dataset: &EvaluationDataset<EvaluationSample>,
     ) -> Result<(), RagasError> {
+        self.datasets.insert(name.to_string(), dataset.clone());
         Ok(())
     }
 
     fn load(&self, name: &str) -> Result<EvaluationDataset<EvaluationSample>, RagasError> {
-        Err(not_found(name))
+        self.datasets
+            .get(name)
+            .cloned()
+            .ok_or_else(|| not_found(name))
     }
 
     fn list(&self) -> Vec<String> {
-        Vec::new()
+        self.datasets.keys().cloned().collect()
     }
 
-    fn delete(&mut self, _name: &str) -> bool {
-        false
+    fn delete(&mut self, name: &str) -> bool {
+        self.datasets.remove(name).is_some()
     }
 }
 
@@ -60,22 +64,25 @@ impl JsonlDatasetBackend {
 impl DatasetBackend for JsonlDatasetBackend {
     fn save(
         &mut self,
-        _name: &str,
-        _dataset: &EvaluationDataset<EvaluationSample>,
+        name: &str,
+        dataset: &EvaluationDataset<EvaluationSample>,
     ) -> Result<(), RagasError> {
+        self.documents
+            .insert(name.to_string(), dataset.to_jsonl_string()?);
         Ok(())
     }
 
     fn load(&self, name: &str) -> Result<EvaluationDataset<EvaluationSample>, RagasError> {
-        Err(not_found(name))
+        let document = self.documents.get(name).ok_or_else(|| not_found(name))?;
+        EvaluationDataset::<EvaluationSample>::from_jsonl_str(document)
     }
 
     fn list(&self) -> Vec<String> {
-        Vec::new()
+        self.documents.keys().cloned().collect()
     }
 
-    fn delete(&mut self, _name: &str) -> bool {
-        false
+    fn delete(&mut self, name: &str) -> bool {
+        self.documents.remove(name).is_some()
     }
 }
 
@@ -93,28 +100,97 @@ impl CsvDatasetBackend {
 impl DatasetBackend for CsvDatasetBackend {
     fn save(
         &mut self,
-        _name: &str,
-        _dataset: &EvaluationDataset<EvaluationSample>,
+        name: &str,
+        dataset: &EvaluationDataset<EvaluationSample>,
     ) -> Result<(), RagasError> {
+        self.documents
+            .insert(name.to_string(), dataset_to_csv_string(dataset)?);
         Ok(())
     }
 
     fn load(&self, name: &str) -> Result<EvaluationDataset<EvaluationSample>, RagasError> {
-        Err(not_found(name))
+        let document = self.documents.get(name).ok_or_else(|| not_found(name))?;
+        let single_turn_dataset = EvaluationDataset::<SingleTurnSample>::from_csv_str(document)?;
+        EvaluationDataset::<EvaluationSample>::from_samples(
+            single_turn_dataset
+                .samples()
+                .iter()
+                .cloned()
+                .map(EvaluationSample::SingleTurn)
+                .collect(),
+        )
     }
 
     fn list(&self) -> Vec<String> {
-        Vec::new()
+        self.documents.keys().cloned().collect()
     }
 
-    fn delete(&mut self, _name: &str) -> bool {
-        false
+    fn delete(&mut self, name: &str) -> bool {
+        self.documents.remove(name).is_some()
     }
 }
 
 fn not_found(name: &str) -> RagasError {
     RagasError::DatasetIo {
         message: format!("dataset backend entry not found: {name}"),
+    }
+}
+
+fn dataset_to_csv_string(
+    dataset: &EvaluationDataset<EvaluationSample>,
+) -> Result<String, RagasError> {
+    let mut metadata_keys = BTreeSet::new();
+    let mut single_turn_samples = Vec::with_capacity(dataset.len());
+    for sample in dataset.samples() {
+        let EvaluationSample::SingleTurn(sample) = sample else {
+            return Err(dataset_io_error(
+                "CSV backend only supports single-turn samples",
+            ));
+        };
+        metadata_keys.extend(sample.metadata.keys().cloned());
+        single_turn_samples.push(sample);
+    }
+
+    let mut headers = vec![
+        "user_input".to_string(),
+        "response".to_string(),
+        "retrieved_contexts".to_string(),
+        "reference".to_string(),
+    ];
+    headers.extend(metadata_keys.iter().map(|key| format!("metadata.{key}")));
+
+    let mut writer = csv::Writer::from_writer(Vec::new());
+    writer
+        .write_record(&headers)
+        .map_err(|error| dataset_io_error(format!("CSV header write failed: {error}")))?;
+
+    for sample in single_turn_samples {
+        let mut record = vec![
+            sample.user_input.clone(),
+            sample.response.clone(),
+            serde_json::to_string(&sample.retrieved_contexts).map_err(|error| {
+                dataset_io_error(format!("retrieved_contexts JSON encode failed: {error}"))
+            })?,
+            sample.reference.clone().unwrap_or_default(),
+        ];
+        for key in &metadata_keys {
+            record.push(sample.metadata.get(key).cloned().unwrap_or_default());
+        }
+        writer
+            .write_record(&record)
+            .map_err(|error| dataset_io_error(format!("CSV row write failed: {error}")))?;
+    }
+
+    let bytes = writer
+        .into_inner()
+        .map_err(|error| dataset_io_error(format!("CSV writer finalize failed: {error}")))?;
+    String::from_utf8(bytes)
+        .map_err(|error| dataset_io_error(format!("CSV writer emitted invalid UTF-8: {error}")))
+}
+
+fn dataset_io_error(message: impl Into<String>) -> RagasError {
+    RagasError::DatasetIo {
+        message: message.into(),
     }
 }
 
