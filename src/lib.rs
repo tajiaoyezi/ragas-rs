@@ -8,6 +8,7 @@ pub mod integrations;
 pub mod llm;
 pub mod metric;
 pub mod metrics;
+pub mod optimizers;
 pub mod prompts;
 pub mod providers;
 pub mod runtime;
@@ -59,6 +60,10 @@ pub use metrics::{
     semantic_similarity_from_vectors, sql_semantic_equivalence, string_distance_similarity,
     summarization_score_from_judge_output, threshold_semantic_similarity, tool_call_accuracy,
     tool_call_f1, topic_adherence,
+};
+pub use optimizers::{
+    CandidateGenerator, GeneticOptimizer, GeneticOptimizerConfig, ObjectiveMetric,
+    OptimizationCandidate, OptimizationResult, OptimizationStep, Optimizer,
 };
 pub use prompts::{
     FewShotExample, JudgeOutputParser, LanguageAdapterRule, MultimodalPromptMessage,
