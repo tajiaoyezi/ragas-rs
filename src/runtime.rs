@@ -396,8 +396,10 @@ impl CallbackManager {
         self
     }
 
-    pub fn emit(&self, _event: RuntimeEvent) {
-        unimplemented!("TEST-6.3.1")
+    pub fn emit(&self, event: RuntimeEvent) {
+        for callback in &self.callbacks {
+            callback(&event);
+        }
     }
 }
 
@@ -427,11 +429,24 @@ impl UsageTracker {
 
     pub fn record(
         &mut self,
-        _provider: impl Into<String>,
-        _metric_name: impl Into<String>,
-        _usage: TokenUsage,
+        provider: impl Into<String>,
+        metric_name: impl Into<String>,
+        usage: TokenUsage,
     ) {
-        unimplemented!("TEST-6.3.2")
+        let provider = provider.into();
+        let metric_name = metric_name.into();
+        let totals = UsageTotals::from_token_usage(&usage);
+        self.summary.total.add_assign(&totals);
+        self.summary
+            .by_provider
+            .entry(provider)
+            .or_default()
+            .add_assign(&totals);
+        self.summary
+            .by_metric
+            .entry(metric_name)
+            .or_default()
+            .add_assign(&totals);
     }
 
     pub fn summary(&self) -> UsageSummary {
@@ -447,9 +462,113 @@ pub struct CacheKey {
 }
 
 impl CacheKey {
-    pub fn derive(_namespace: impl Into<String>, _payload: &Value) -> Self {
-        unimplemented!("TEST-6.3.3")
+    pub fn derive(namespace: impl Into<String>, payload: &Value) -> Self {
+        let namespace = namespace.into();
+        let redacted_payload = redact_value(payload);
+        let canonical = canonical_json(&redacted_payload);
+        let digest = stable_hash_hex(&format!("{namespace}:{canonical}"));
+        Self {
+            namespace,
+            digest,
+            redacted_payload,
+        }
     }
+}
+
+impl UsageTotals {
+    fn from_token_usage(usage: &TokenUsage) -> Self {
+        let prompt_tokens = usage.prompt_tokens.unwrap_or_default() as u64;
+        let completion_tokens = usage.completion_tokens.unwrap_or_default() as u64;
+        let total_tokens = usage
+            .total_tokens
+            .map(u64::from)
+            .unwrap_or(prompt_tokens + completion_tokens);
+        Self {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+        }
+    }
+
+    fn add_assign(&mut self, other: &Self) {
+        self.prompt_tokens += other.prompt_tokens;
+        self.completion_tokens += other.completion_tokens;
+        self.total_tokens += other.total_tokens;
+    }
+}
+
+fn redact_value(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut redacted = serde_json::Map::new();
+            for (key, value) in map {
+                if is_secret_key(key) {
+                    redacted.insert(key.clone(), Value::String("[redacted]".to_string()));
+                } else {
+                    redacted.insert(key.clone(), redact_value(value));
+                }
+            }
+            Value::Object(redacted)
+        }
+        Value::Array(values) => Value::Array(values.iter().map(redact_value).collect()),
+        Value::String(value) if looks_like_secret(value) => {
+            Value::String("[redacted]".to_string())
+        }
+        _ => value.clone(),
+    }
+}
+
+fn is_secret_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    ["api_key", "authorization", "password", "secret", "token"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+}
+
+fn looks_like_secret(value: &str) -> bool {
+    value.starts_with("sk-") || value.starts_with("Bearer ")
+}
+
+fn canonical_json(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => serde_json::to_string(value).expect("string serializes"),
+        Value::Array(values) => {
+            let inner = values
+                .iter()
+                .map(canonical_json)
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("[{inner}]")
+        }
+        Value::Object(map) => {
+            let mut entries = map.iter().collect::<Vec<_>>();
+            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            let inner = entries
+                .into_iter()
+                .map(|(key, value)| {
+                    format!(
+                        "{}:{}",
+                        serde_json::to_string(key).expect("key serializes"),
+                        canonical_json(value)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("{{{inner}}}")
+        }
+    }
+}
+
+fn stable_hash_hex(input: &str) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in input.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
 }
 
 impl RunConfigBuilder {
