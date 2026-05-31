@@ -25,7 +25,7 @@ src/experiments/ + src/optimizers/
 
 | Task | Spec | Status |
 |---|---|---|
-| 15.1 | docs/specs/tasks/task-15.1-experiments.md | Ready |
+| 15.1 | docs/specs/tasks/task-15.1-experiments.md | In Progress |
 | 15.2 | docs/specs/tasks/task-15.2-optimizers.md | Draft |
 | 15.3 | docs/specs/tasks/task-15.3-benchmarks.md | Draft |
 
