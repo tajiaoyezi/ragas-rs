@@ -128,7 +128,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 9.2 | metrics | docs/specs/tasks/task-9.2-metric-result.md | Done | after task 9.1 | - |
 | 9.3 | metrics | docs/specs/tasks/task-9.3-metric-registry.md | Done | after task 9.2 | - |
 | 10.1 | metrics-rag | docs/specs/tasks/task-10.1-context-metrics.md | Done | after task 9.3 | - |
-| 10.2 | metrics-rag | docs/specs/tasks/task-10.2-faithfulness-family.md | Draft | after task 10.1 | - |
+| 10.2 | metrics-rag | docs/specs/tasks/task-10.2-faithfulness-family.md | Done | after task 10.1 | - |
 | 10.3 | metrics-rag | docs/specs/tasks/task-10.3-answer-quality.md | Draft | after task 10.2 | - |
 | 11.1 | metrics-traditional | docs/specs/tasks/task-11.1-lexical.md | Draft | after task 9.3 | - |
 | 11.2 | metrics-traditional | docs/specs/tasks/task-11.2-semantic.md | Draft | after task 11.1 | - |

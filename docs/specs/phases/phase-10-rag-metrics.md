@@ -26,7 +26,7 @@ src/metrics/rag/
 | Task | Spec | Status |
 |---|---|---|
 | 10.1 | docs/specs/tasks/task-10.1-context-metrics.md | Done |
-| 10.2 | docs/specs/tasks/task-10.2-faithfulness-family.md | Draft |
+| 10.2 | docs/specs/tasks/task-10.2-faithfulness-family.md | Done |
 | 10.3 | docs/specs/tasks/task-10.3-answer-quality.md | Draft |
 
 ## 6. Phase Acceptance And Smoke
