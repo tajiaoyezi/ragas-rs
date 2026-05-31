@@ -1,6 +1,6 @@
 # Task 1.1 - foundation-dataset
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 1 - foundation-dataset
 **PRD**: docs/prds/ragas-rs.prd.md
 
@@ -64,9 +64,9 @@ Production code exports dataset and error modules from `src/lib.rs`.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-1.1.1 | TEST-1.1.1 | Not Started |
-| AC2 | SCEN-1.1.2 | TEST-1.1.2 | Not Started |
-| AC3 | SCEN-1.1.3 | TEST-1.1.3 | Not Started |
+| AC1 | SCEN-1.1.1 | TEST-1.1.1 | Done |
+| AC2 | SCEN-1.1.2 | TEST-1.1.2 | Done |
+| AC3 | SCEN-1.1.3 | TEST-1.1.3 | Done |
 
 ## 8. Risks
 
@@ -82,9 +82,22 @@ Production code exports dataset and error modules from `src/lib.rs`.
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `Cargo.toml`（新增 crate manifest）
+  - `Cargo.lock`（新增锁文件）
+  - `src/lib.rs`（新增 public exports）
+  - `src/error.rs`（新增 RagasError）
+  - `src/dataset.rs`（新增 dataset model、validation、unit tests）
+- **commit 列表**：
+  - `d8bd257` docs(spec): task-1.1 Ready
+  - `082df7d` docs(spec): task-1.1 进入实施
+  - `363b5f1` test(dataset): 加 task-1.1 RED 测试
+  - `fc09e09` feat(dataset): 实现 task-1.1 数据集基础
+- **§9 Verification 结果**：
+  - install: pass (`cargo build`)
+  - typecheck: pass (`cargo check`)
+  - unit-test: 3 passed / 0 failed (`cargo test`)
+  - build: pass (`cargo build`)
+- **剩余风险 / 未做项**：无
+- **下游 task 影响**：task-2.1 可使用 `SingleTurnSample`、`EvaluationDataset`、`RagasError`
