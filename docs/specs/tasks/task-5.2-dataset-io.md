@@ -1,6 +1,6 @@
 # Task 5.2 - dataset-io
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 5
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-5.2.1 | TEST-5.2.1 | Not Started |
-| AC2 | SCEN-5.2.2 | TEST-5.2.2 | Not Started |
-| AC3 | SCEN-5.2.3 | TEST-5.2.3 | Not Started |
+| AC1 | SCEN-5.2.1 | TEST-5.2.1 | Done |
+| AC2 | SCEN-5.2.2 | TEST-5.2.2 | Done |
+| AC3 | SCEN-5.2.3 | TEST-5.2.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,23 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `Cargo.toml`（新增 csv 依赖）
+  - `Cargo.lock`（锁定 csv/csv-core）
+  - `src/dataset.rs`（新增 EvaluationSample、EvaluationDatasetBuilder、JSONL/CSV serde IO、dataset metadata）
+  - `src/error.rs`（新增 DatasetIo 诊断错误）
+  - `src/lib.rs`（导出 dataset IO 类型）
+  - `docs/specs/tasks/task-5.2-dataset-io.md`（Status/traceability/Completion Notes 回填）
+- **commit 列表**：
+  - `54a63c7` docs(spec): task-5.2 Ready
+  - `c6872cd` docs(spec): task-5.2 进入实施
+  - `79102fe` test(dataset): 加 task-5.2 RED 测试
+  - `68ffaa8` feat(dataset): 实现 task-5.2 dataset IO
+- **§9 Verification 结果**：
+  - install: pass (`cargo build`)
+  - typecheck: pass (`cargo check`)
+  - unit-test: 19 passed / 0 failed (`cargo test`)
+  - build: pass (`cargo build`)
+- **剩余风险 / 未做项**：文件路径级 backend、完整 Python ragas dataset field parity、sample/metric compatibility validation 仍由 task 5.3/14.1/16.1 覆盖；本 task 只声明核心 serde IO 和 builder 行为。
+- **下游 task 影响**：task 5.3 可复用 DatasetIo 诊断和 EvaluationSample validation；task 14.1 可在字符串 IO 之上封装本地 JSONL/CSV backend；task 16.1 可使用 JSONL roundtrip 作为 parity fixture 基础。
