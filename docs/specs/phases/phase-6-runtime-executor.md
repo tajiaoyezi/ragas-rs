@@ -1,6 +1,6 @@
 # Phase 6 - runtime-executor
 
-**Status**: In Progress
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 **Depends On**: 5
 
@@ -27,7 +27,7 @@ src/runtime/ + src/eval.rs
 |---|---|---|
 | 6.1 | docs/specs/tasks/task-6.1-run-config.md | Done |
 | 6.2 | docs/specs/tasks/task-6.2-executor.md | Done |
-| 6.3 | docs/specs/tasks/task-6.3-callbacks-cost-cache.md | Draft |
+| 6.3 | docs/specs/tasks/task-6.3-callbacks-cost-cache.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 
