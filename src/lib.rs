@@ -12,4 +12,7 @@ pub use llm::{
     EmbeddingRequest, EmbeddingResponse, LlmProvider, LlmRequest, LlmResponse,
     OpenAiCompatibleClient, TokenUsage,
 };
-pub use metric::{FnMetric, Metric, MetricResult, MetricValue, RankingItem};
+pub use metric::{
+    cosine_similarity, ContextPrecisionMetric, FaithfulnessMetric, FnMetric, Metric, MetricResult,
+    MetricValue, RankingItem, ResponseRelevancyMetric,
+};

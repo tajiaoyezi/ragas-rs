@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    EmbeddingProvider, EmbeddingRequest, LlmProvider, LlmRequest, RagasError, SingleTurnSample,
+    ChatMessage, EmbeddingProvider, EmbeddingRequest, LlmProvider, LlmRequest, RagasError,
+    SingleTurnSample,
 };
 
 pub type BoxMetricFuture = Pin<Box<dyn Future<Output = Result<MetricResult, RagasError>> + Send>>;
@@ -33,8 +34,22 @@ impl Metric for FaithfulnessMetric {
         "faithfulness"
     }
 
-    async fn score(&self, _sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
-        unimplemented!("TEST-4.1.2: FaithfulnessMetric scoring is not implemented yet")
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let prompt = format!(
+            "Score whether the response is faithful to the provided contexts. Return JSON with score between 0 and 1 and reason.\nQuestion: {}\nResponse: {}\nContexts:\n{}",
+            sample.user_input,
+            sample.response,
+            sample.retrieved_contexts.join("\n")
+        );
+        let response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+
+        parse_judge_score(&response.content, self.name())
     }
 }
 
@@ -54,8 +69,22 @@ impl Metric for ResponseRelevancyMetric {
         "response_relevancy"
     }
 
-    async fn score(&self, _sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
-        unimplemented!("TEST-4.1.3: ResponseRelevancyMetric scoring is not implemented yet")
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let response = self
+            .embedding
+            .embed(EmbeddingRequest {
+                input: vec![sample.user_input.clone(), sample.response.clone()],
+            })
+            .await?;
+        if response.embeddings.len() < 2 {
+            return Err(RagasError::Parse {
+                message: "response relevancy requires two embeddings".to_string(),
+            });
+        }
+
+        let score = cosine_similarity(&response.embeddings[0], &response.embeddings[1]);
+        Ok(MetricResult::success(self.name(), MetricValue::numeric(score))
+            .with_reason("cosine similarity between question and response embeddings"))
     }
 }
 
@@ -75,17 +104,83 @@ impl Metric for ContextPrecisionMetric {
         "context_precision"
     }
 
-    async fn score(&self, _sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
-        unimplemented!("TEST-4.1.4: ContextPrecisionMetric scoring is not implemented yet")
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        if sample.retrieved_contexts.is_empty() {
+            return Ok(MetricResult::success(self.name(), MetricValue::numeric(0.0))
+                .with_reason("sample has no retrieved contexts"));
+        }
+
+        let mut input = Vec::with_capacity(sample.retrieved_contexts.len() + 1);
+        input.push(sample.user_input.clone());
+        input.extend(sample.retrieved_contexts.iter().cloned());
+        let response = self.embedding.embed(EmbeddingRequest { input }).await?;
+        if response.embeddings.len() != sample.retrieved_contexts.len() + 1 {
+            return Err(RagasError::Parse {
+                message: "context precision embedding count mismatch".to_string(),
+            });
+        }
+
+        let query = &response.embeddings[0];
+        let mut relevant_count = 0usize;
+        let mut precision_sum = 0.0f64;
+        for (rank, context_embedding) in response.embeddings.iter().skip(1).enumerate() {
+            let similarity = cosine_similarity(query, context_embedding);
+            if similarity >= 0.5 {
+                relevant_count += 1;
+                precision_sum += relevant_count as f64 / (rank + 1) as f64;
+            }
+        }
+
+        let score = if relevant_count == 0 {
+            0.0
+        } else {
+            precision_sum / relevant_count as f64
+        };
+
+        Ok(MetricResult::success(self.name(), MetricValue::numeric(score))
+            .with_reason("average precision over contexts with embedding similarity >= 0.5"))
     }
 }
 
-fn parse_judge_score(_content: &str, _metric_name: &str) -> Result<MetricResult, RagasError> {
-    unimplemented!("TEST-4.1.2: judge score parser is not implemented yet")
+fn parse_judge_score(content: &str, metric_name: &str) -> Result<MetricResult, RagasError> {
+    let parsed: Value = serde_json::from_str(content).map_err(|error| RagasError::Parse {
+        message: format!("judge JSON: {error}"),
+    })?;
+    let score = parsed
+        .get("score")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| RagasError::Parse {
+            message: "judge JSON missing numeric score".to_string(),
+        })?;
+    let mut result = MetricResult::success(metric_name, MetricValue::numeric(score));
+    if let Some(reason) = parsed.get("reason").and_then(Value::as_str) {
+        result = result.with_reason(reason);
+    }
+    Ok(result)
 }
 
-pub fn cosine_similarity(_left: &[f32], _right: &[f32]) -> f64 {
-    unimplemented!("TEST-4.1.3: cosine similarity is not implemented yet")
+pub fn cosine_similarity(left: &[f32], right: &[f32]) -> f64 {
+    let len = left.len().min(right.len());
+    if len == 0 {
+        return 0.0;
+    }
+
+    let mut dot = 0.0f64;
+    let mut left_norm = 0.0f64;
+    let mut right_norm = 0.0f64;
+    for index in 0..len {
+        let l = left[index] as f64;
+        let r = right[index] as f64;
+        dot += l * r;
+        left_norm += l * l;
+        right_norm += r * r;
+    }
+
+    if left_norm == 0.0 || right_norm == 0.0 {
+        return 0.0;
+    }
+
+    dot / (left_norm.sqrt() * right_norm.sqrt())
 }
 
 impl MetricValue {
