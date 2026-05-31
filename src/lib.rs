@@ -1,4 +1,5 @@
 pub mod backends;
+pub mod cli;
 pub mod dataset;
 pub mod error;
 pub mod eval;
@@ -16,6 +17,7 @@ pub mod validation;
 pub use backends::{
     CsvDatasetBackend, DatasetBackend, InMemoryDatasetBackend, JsonlDatasetBackend,
 };
+pub use cli::{CliCommand, CliOutput, CliRuntime, run_cli_command};
 pub use dataset::{
     EvaluationDataset, EvaluationDatasetBuilder, EvaluationSample, SingleTurnSample,
 };
