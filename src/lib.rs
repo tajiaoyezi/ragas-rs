@@ -8,6 +8,7 @@ pub mod prompts;
 pub mod providers;
 pub mod runtime;
 pub mod schema;
+pub mod testset;
 pub mod validation;
 
 pub use dataset::{
@@ -59,6 +60,7 @@ pub use runtime::{
     UsageTotals, UsageTracker,
 };
 pub use schema::{Message, MessageRole, MultiTurnSample, Rubric, ToolCall};
+pub use testset::{GraphEdge, GraphNode, GraphProperty, KnowledgeGraph};
 pub use validation::{
     MetricRequirements, SampleField, ValidationIssue, ValidationReport, validate_before_evaluate,
     validate_dataset_requirements, validate_single_turn_samples,
