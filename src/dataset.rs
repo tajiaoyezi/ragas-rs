@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::RagasError;
+use crate::{MultiTurnSample, RagasError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SingleTurnSample {
@@ -39,12 +39,54 @@ impl SingleTurnSample {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EvaluationDataset {
-    samples: Vec<SingleTurnSample>,
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "sample_type", rename_all = "snake_case")]
+pub enum EvaluationSample {
+    SingleTurn(SingleTurnSample),
+    MultiTurn(MultiTurnSample),
 }
 
-impl EvaluationDataset {
+impl From<SingleTurnSample> for EvaluationSample {
+    fn from(sample: SingleTurnSample) -> Self {
+        Self::SingleTurn(sample)
+    }
+}
+
+impl From<MultiTurnSample> for EvaluationSample {
+    fn from(sample: MultiTurnSample) -> Self {
+        Self::MultiTurn(sample)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EvaluationDataset<T = SingleTurnSample> {
+    samples: Vec<T>,
+    metadata: HashMap<String, String>,
+}
+
+impl<T> EvaluationDataset<T> {
+    pub fn len(&self) -> usize {
+        self.samples.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.samples.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        self.samples.iter()
+    }
+
+    pub fn samples(&self) -> &[T] {
+        &self.samples
+    }
+
+    pub fn metadata(&self) -> &HashMap<String, String> {
+        &self.metadata
+    }
+}
+
+impl EvaluationDataset<SingleTurnSample> {
     pub fn new(samples: Vec<SingleTurnSample>) -> Result<Self, RagasError> {
         if samples.is_empty() {
             return Err(RagasError::EmptyDataset);
@@ -54,27 +96,62 @@ impl EvaluationDataset {
             validate_sample(index, sample)?;
         }
 
-        Ok(Self { samples })
+        Ok(Self {
+            samples,
+            metadata: HashMap::new(),
+        })
     }
 
     pub fn from_sample(sample: SingleTurnSample) -> Result<Self, RagasError> {
         Self::new(vec![sample])
     }
 
-    pub fn len(&self) -> usize {
-        self.samples.len()
+    pub fn from_csv_str(_input: &str) -> Result<Self, RagasError> {
+        unimplemented!("TEST-5.2.2")
+    }
+}
+
+impl EvaluationDataset<EvaluationSample> {
+    pub fn from_jsonl_str(_input: &str) -> Result<Self, RagasError> {
+        unimplemented!("TEST-5.2.1")
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.samples.is_empty()
+    pub fn to_jsonl_string(&self) -> Result<String, RagasError> {
+        unimplemented!("TEST-5.2.1")
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct EvaluationDatasetBuilder {
+    samples: Vec<EvaluationSample>,
+    metadata: HashMap<String, String>,
+}
+
+impl EvaluationDatasetBuilder {
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &SingleTurnSample> {
-        self.samples.iter()
+    pub fn with_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.metadata.insert(key.into(), value.into());
+        self
     }
 
-    pub fn samples(&self) -> &[SingleTurnSample] {
-        &self.samples
+    pub fn add_sample(mut self, sample: impl Into<EvaluationSample>) -> Self {
+        self.samples.push(sample.into());
+        self
+    }
+
+    pub fn add_single_turn(self, sample: SingleTurnSample) -> Self {
+        self.add_sample(sample)
+    }
+
+    pub fn add_multi_turn(self, sample: MultiTurnSample) -> Self {
+        self.add_sample(sample)
+    }
+
+    pub fn build(self) -> Result<EvaluationDataset<EvaluationSample>, RagasError> {
+        unimplemented!("TEST-5.2.3")
     }
 }
 
@@ -107,6 +184,7 @@ fn validate_sample(index: usize, sample: &SingleTurnSample) -> Result<(), RagasE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Message, MultiTurnSample};
 
     #[test]
     fn test_1_1_1_valid_sample_fields_are_preserved() {
@@ -171,5 +249,90 @@ mod tests {
                 field: "retrieved_contexts".to_string()
             }
         );
+    }
+
+    #[test]
+    fn test_5_2_1_jsonl_roundtrip_supports_single_and_multi_turn_samples() {
+        // SCEN-5.2.1 / AC1 / TEST-5.2.1
+        let dataset = EvaluationDatasetBuilder::new()
+            .add_single_turn(
+                SingleTurnSample::new("What is ragas?", "An eval framework.", vec!["ctx".into()])
+                    .with_reference("Ragas evaluates LLM apps.")
+                    .with_metadata("row_id", "single-1"),
+            )
+            .add_multi_turn(
+                MultiTurnSample::new(vec![
+                    Message::user("Can you inspect this?"),
+                    Message::assistant("I can inspect it."),
+                ])
+                .with_reference("The assistant should answer the user.")
+                .with_metadata("row_id", "multi-1"),
+            )
+            .build()
+            .expect("mixed dataset");
+
+        let jsonl = dataset.to_jsonl_string().expect("serialize jsonl");
+        assert_eq!(jsonl.lines().count(), 2);
+
+        let roundtrip =
+            EvaluationDataset::<EvaluationSample>::from_jsonl_str(&jsonl).expect("read jsonl");
+
+        assert_eq!(roundtrip.samples(), dataset.samples());
+    }
+
+    #[test]
+    fn test_5_2_2_csv_import_maps_required_columns_and_reports_clear_errors() {
+        // SCEN-5.2.2 / AC2 / TEST-5.2.2
+        let csv = "user_input,response,retrieved_contexts,reference,metadata.source\nWhat?,Answer,ctx one|ctx two,Reference,fixture\n";
+        let dataset = EvaluationDataset::from_csv_str(csv).expect("csv dataset");
+        let sample = &dataset.samples()[0];
+
+        assert_eq!(sample.user_input, "What?");
+        assert_eq!(sample.response, "Answer");
+        assert_eq!(sample.retrieved_contexts, vec!["ctx one", "ctx two"]);
+        assert_eq!(sample.reference.as_deref(), Some("Reference"));
+        assert_eq!(sample.metadata.get("source").map(String::as_str), Some("fixture"));
+
+        let error = EvaluationDataset::from_csv_str("user_input,response\nWhat?,Answer\n")
+            .expect_err("missing retrieved_contexts column");
+        assert!(
+            error
+                .to_string()
+                .contains("CSV missing required column: retrieved_contexts"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn test_5_2_3_dataset_builder_preserves_sample_order_and_metadata() {
+        // SCEN-5.2.3 / AC3 / TEST-5.2.3
+        let dataset = EvaluationDatasetBuilder::new()
+            .with_metadata("name", "ordered-fixture")
+            .add_single_turn(SingleTurnSample::new("first", "a1", vec!["c1".into()]))
+            .add_multi_turn(MultiTurnSample::new(vec![Message::user("second")]))
+            .add_single_turn(
+                SingleTurnSample::new("third", "a3", vec!["c3".into()])
+                    .with_metadata("sample", "third"),
+            )
+            .build()
+            .expect("ordered dataset");
+
+        assert_eq!(
+            dataset.metadata().get("name").map(String::as_str),
+            Some("ordered-fixture")
+        );
+        assert!(matches!(
+            &dataset.samples()[0],
+            EvaluationSample::SingleTurn(sample) if sample.user_input == "first"
+        ));
+        assert!(matches!(
+            &dataset.samples()[1],
+            EvaluationSample::MultiTurn(sample) if sample.messages[0].content == "second"
+        ));
+        assert!(matches!(
+            &dataset.samples()[2],
+            EvaluationSample::SingleTurn(sample)
+                if sample.metadata.get("sample").map(String::as_str) == Some("third")
+        ));
     }
 }

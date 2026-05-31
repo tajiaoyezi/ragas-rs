@@ -5,7 +5,7 @@ pub mod llm;
 pub mod metric;
 pub mod schema;
 
-pub use dataset::{EvaluationDataset, SingleTurnSample};
+pub use dataset::{EvaluationDataset, EvaluationDatasetBuilder, EvaluationSample, SingleTurnSample};
 pub use eval::{evaluate, EvaluationOptions, EvaluationReport, SampleEvaluation};
 pub use error::RagasError;
 pub use llm::{
