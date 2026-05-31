@@ -135,6 +135,9 @@ impl TextChunk {
 
     pub fn to_graph_node(&self) -> GraphNode {
         GraphNode::new(self.id.clone(), "chunk")
+            .with_property("text", GraphProperty::Text(self.text.clone()))
+            .with_property("source_id", GraphProperty::Text(self.source_id.clone()))
+            .with_property("chunk_index", GraphProperty::Number(self.index as f64))
     }
 }
 
@@ -155,24 +158,97 @@ impl ExtractionBundle {
     }
 }
 
-pub fn split_text_into_chunks(_source_id: &str, _text: &str, _max_chars: usize) -> Vec<TextChunk> {
-    Vec::new()
+pub fn split_text_into_chunks(source_id: &str, text: &str, max_chars: usize) -> Vec<TextChunk> {
+    let max_chars = max_chars.max(1);
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+
+    for word in text.split_whitespace() {
+        let next_len = if current.is_empty() {
+            word.len()
+        } else {
+            current.len() + 1 + word.len()
+        };
+
+        if !current.is_empty() && next_len > max_chars {
+            chunks.push(make_chunk(source_id, chunks.len(), current));
+            current = word.to_string();
+        } else {
+            if !current.is_empty() {
+                current.push(' ');
+            }
+            current.push_str(word);
+        }
+    }
+
+    if !current.is_empty() {
+        chunks.push(make_chunk(source_id, chunks.len(), current));
+    }
+
+    chunks
 }
 
 pub fn attach_extractions(
-    graph: KnowledgeGraph,
-    _node_id: &str,
-    _extractions: ExtractionBundle,
+    mut graph: KnowledgeGraph,
+    node_id: &str,
+    extractions: ExtractionBundle,
 ) -> KnowledgeGraph {
+    if let Some(node) = graph.nodes.iter_mut().find(|node| node.id == node_id) {
+        node.properties.insert(
+            "entities".to_string(),
+            GraphProperty::TextList(extractions.entities),
+        );
+        node.properties.insert(
+            "themes".to_string(),
+            GraphProperty::TextList(extractions.themes),
+        );
+        node.properties.insert(
+            "summary".to_string(),
+            GraphProperty::Text(extractions.summary),
+        );
+    }
+
     graph
 }
 
 pub fn build_chunk_relationships(
-    graph: KnowledgeGraph,
-    _source_id: &str,
-    _chunks: &[TextChunk],
+    mut graph: KnowledgeGraph,
+    source_id: &str,
+    chunks: &[TextChunk],
 ) -> KnowledgeGraph {
+    for chunk in chunks {
+        graph = graph.add_edge(
+            GraphEdge::new(source_id, chunk.id.clone(), "contains")
+                .with_property("order", GraphProperty::Number(chunk.index as f64)),
+        );
+    }
+
+    for window in chunks.windows(2) {
+        let source = &window[0];
+        let target = &window[1];
+        graph = graph.add_edge(
+            GraphEdge::new(source.id.clone(), target.id.clone(), "next")
+                .with_property("order", GraphProperty::Number(source.index as f64)),
+        );
+    }
+
     graph
+}
+
+fn make_chunk(source_id: &str, index: usize, text: String) -> TextChunk {
+    let mut chunk = TextChunk::new(
+        format!("{source_id}-chunk-{index}"),
+        source_id.to_string(),
+        index,
+        text,
+    );
+    chunk
+        .metadata
+        .insert("source_id".to_string(), source_id.to_string());
+    chunk
+        .metadata
+        .insert("chunk_index".to_string(), index.to_string());
+    chunk
 }
 
 #[cfg(test)]
