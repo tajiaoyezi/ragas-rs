@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    DetailedMetricResult, MetricEvidence, MetricValueType, MultiTurnSample,
-    ScoreNormalizationPolicy, ToolCall,
+    DetailedMetricResult, MetricError, MetricEvidence, MetricValueType, MultiTurnSample,
+    MultimodalPromptMessage, RagasError, ScoreNormalizationPolicy, ToolCall,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -147,6 +147,36 @@ impl TopicAdherence {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SqlJudgeVerdict {
+    pub equivalent: bool,
+    pub confidence: f64,
+    pub reason: String,
+}
+
+impl SqlJudgeVerdict {
+    pub fn new(equivalent: bool, confidence: f64, reason: impl Into<String>) -> Self {
+        Self {
+            equivalent,
+            confidence,
+            reason: reason.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MultimodalMetricKind {
+    Faithfulness,
+    Relevance,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SummarizationSignals {
+    pub coverage: f64,
+    pub conciseness: f64,
+    pub reason: Option<String>,
+}
+
 pub fn tool_call_accuracy(
     expected: &[ToolCall],
     actual: &[ToolCall],
@@ -244,6 +274,33 @@ pub fn topic_adherence(topics: &[TopicAdherence]) -> DetailedMetricResult {
             topic.evidence.clone(),
         ))
     })
+}
+
+pub fn sql_semantic_equivalence(
+    _expected_sql: &str,
+    _actual_sql: &str,
+    _judge: Option<SqlJudgeVerdict>,
+) -> DetailedMetricResult {
+    numeric_result("sql_semantic_equivalence", 0.0, "not implemented")
+}
+
+pub fn multimodal_metric_from_prompt(
+    _kind: MultimodalMetricKind,
+    _prompt: &MultimodalPromptMessage,
+    _judge_score: f64,
+    _judge_reason: impl Into<String>,
+) -> Result<DetailedMetricResult, RagasError> {
+    Ok(numeric_result("multimodal_metric", 0.0, "not implemented"))
+}
+
+pub fn summarization_score_from_judge_output(
+    _output: &str,
+) -> Result<DetailedMetricResult, MetricError> {
+    Ok(numeric_result(
+        "summarization_score",
+        0.0,
+        "not implemented",
+    ))
 }
 
 fn strict_tool_call_matches(
@@ -541,5 +598,106 @@ mod tests {
         assert_eq!(result.evidence.len(), 2);
         assert_eq!(result.evidence[0].source, "topic:refunds");
         assert_eq!(result.evidence[1].source, "topic:medical advice");
+    }
+
+    #[test]
+    fn test_12_3_1_sql_semantic_equivalence_compares_normalized_sql_or_judge_output() {
+        // SCEN-12.3.1 / AC1 / TEST-12.3.1
+        let normalized = sql_semantic_equivalence(
+            "SELECT name FROM users WHERE id = 1;",
+            " select name from users where id=1 ",
+            None,
+        );
+        assert_score_close(&normalized, 1.0);
+        assert!(
+            normalized
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("normalized_sql")
+        );
+
+        let judged = sql_semantic_equivalence(
+            "SELECT count(*) FROM orders;",
+            "SELECT total_orders FROM daily_order_metrics;",
+            Some(SqlJudgeVerdict::new(
+                true,
+                0.85,
+                "both queries represent the same aggregate count",
+            )),
+        );
+        assert_score_close(&judged, 0.85);
+        assert!(judged.reason.as_deref().unwrap_or("").contains("judge"));
+        assert!(
+            judged
+                .evidence
+                .iter()
+                .any(|item| item.text.contains("same aggregate count"))
+        );
+    }
+
+    #[test]
+    fn test_12_3_2_multimodal_metrics_route_through_multimodal_prompt_model() {
+        // SCEN-12.3.2 / AC2 / TEST-12.3.2
+        let prompt = MultimodalPromptMessage::new("user")
+            .push_text("Judge whether the answer is grounded in the image.")
+            .push_image_url("https://example.test/chart.png", "image/png");
+
+        let faithfulness = multimodal_metric_from_prompt(
+            MultimodalMetricKind::Faithfulness,
+            &prompt,
+            0.75,
+            "image supports the answer",
+        )
+        .expect("supported multimodal prompt");
+        assert_score_close(&faithfulness, 0.75);
+        assert_eq!(faithfulness.metric_name, "multimodal_faithfulness");
+        assert!(
+            faithfulness.evidence[0]
+                .text
+                .contains("[image image/png] https://example.test/chart.png")
+        );
+
+        let relevance = multimodal_metric_from_prompt(
+            MultimodalMetricKind::Relevance,
+            &prompt,
+            0.6,
+            "chart is partially relevant",
+        )
+        .expect("supported multimodal prompt");
+        assert_eq!(relevance.metric_name, "multimodal_relevance");
+        assert!(
+            relevance
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("partially")
+        );
+    }
+
+    #[test]
+    fn test_12_3_3_summarization_score_parses_coverage_and_conciseness_signals() {
+        // SCEN-12.3.3 / AC3 / TEST-12.3.3
+        let result = summarization_score_from_judge_output(
+            r#"{"coverage":0.8,"conciseness":0.6,"reason":"covers the key points but is verbose"}"#,
+        )
+        .expect("valid summarization output");
+
+        assert_score_close(&result, 0.7);
+        assert!(
+            result
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("coverage=0.800 conciseness=0.600")
+        );
+        assert_eq!(result.evidence[0].source, "coverage");
+        assert_eq!(result.evidence[1].source, "conciseness");
+        assert!(
+            result
+                .evidence
+                .iter()
+                .any(|item| item.text.contains("covers the key points"))
+        );
     }
 }
