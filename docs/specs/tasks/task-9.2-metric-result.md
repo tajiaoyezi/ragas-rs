@@ -1,6 +1,6 @@
 # Task 9.2 - metric-result
 
-**Status**: Draft
+**Status**: Ready
 **Phase**: 9
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -15,7 +15,7 @@ result schema, score normalization, reason/evidence, error taxonomy
 ## 3. Scope And Out-of-Scope
 
 **In scope**:
-- Rust module area: $(System.Collections.Hashtable.Module).
+- Rust module area: `src/metrics/result.rs`, `src/metrics/mod.rs`, and public exports in `src/lib.rs`.
 - Behavior listed in §6 acceptance criteria.
 - Unit tests and, where applicable, parity fixtures for upstream ragas semantics.
 
