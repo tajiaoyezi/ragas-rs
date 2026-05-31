@@ -1,6 +1,6 @@
 # Task 7.3 - embedding-adapters
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 7
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-7.3.1 | TEST-7.3.1 | Not Started |
-| AC2 | SCEN-7.3.2 | TEST-7.3.2 | Not Started |
-| AC3 | SCEN-7.3.3 | TEST-7.3.3 | Not Started |
+| AC1 | SCEN-7.3.1 | TEST-7.3.1 | Done |
+| AC2 | SCEN-7.3.2 | TEST-7.3.2 | Done |
+| AC3 | SCEN-7.3.3 | TEST-7.3.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,21 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/llm.rs`（新增 generic `EmbeddingAdapter`、batching、optional L2 normalization、batch-position error wrapping 和 task 7.3 unit tests）
+  - `src/lib.rs`（导出 `EmbeddingAdapter` 和 `normalize_embedding_vector`）
+  - `docs/specs/tasks/task-7.3-embedding-adapters.md`（Status/traceability/Completion Notes 回填）
+- **commit 列表**：
+  - `993f157` docs(spec): task-7.3 Ready
+  - `21b6492` docs(spec): task-7.3 进入实施
+  - `5128ef1` test(llm): 加 task-7.3 RED 测试
+  - `98b39ec` feat(llm): 实现 task-7.3 embedding adapters
+- **§9 Verification 结果**：
+  - install: pass (`cargo build`)
+  - typecheck: pass (`cargo check`)
+  - unit-test: 40 passed / 0 failed (`cargo test`)
+  - build: pass (`cargo build`)
+  - note: project helper `s2v_verify_full` has the same lowercase generated §9 key parsing issue seen in task 7.2; adapter commands were executed directly and recorded here.
+- **剩余风险 / 未做项**：本 task 提供 generic embedding batching/normalization wrapper；真实 HTTP embedding batching 的 rate-limit/backoff 策略和 provider-specific fixture 仍由后续 integration/parity tasks 细化。
+- **下游 task 影响**：phase 9/10 metric implementations can wrap mock or HTTP embedding providers with `EmbeddingAdapter` for deterministic batch behavior; phase 15 benchmarks can measure normalization and batching overhead separately from provider latency.
