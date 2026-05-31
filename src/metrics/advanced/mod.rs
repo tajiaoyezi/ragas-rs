@@ -26,10 +26,10 @@ pub struct RubricMetric {
 }
 
 impl RubricMetric {
-    pub fn new(name: impl Into<String>, _criteria: Vec<RubricCriterion>) -> Self {
+    pub fn new(name: impl Into<String>, criteria: Vec<RubricCriterion>) -> Self {
         Self {
             name: name.into(),
-            criteria: Vec::new(),
+            criteria,
         }
     }
 }
@@ -66,10 +66,10 @@ pub struct DomainRubric {
 }
 
 impl DomainRubric {
-    pub fn new(domain: impl Into<String>, _criteria: Vec<RubricCriterion>) -> Self {
+    pub fn new(domain: impl Into<String>, criteria: Vec<RubricCriterion>) -> Self {
         Self {
             domain: domain.into(),
-            criteria: Vec::new(),
+            criteria,
         }
     }
 }
@@ -82,10 +82,10 @@ pub struct InstanceRubric {
 }
 
 impl InstanceRubric {
-    pub fn new(instance_id: impl Into<String>, _criteria: Vec<RubricCriterion>) -> Self {
+    pub fn new(instance_id: impl Into<String>, criteria: Vec<RubricCriterion>) -> Self {
         Self {
             instance_id: instance_id.into(),
-            criteria: Vec::new(),
+            criteria,
             notes: None,
         }
     }
@@ -96,11 +96,26 @@ impl InstanceRubric {
     }
 }
 
-pub fn score_aspect_critic(_raw_score: f64, _config: AspectCriticConfig) -> DetailedMetricResult {
+pub fn score_aspect_critic(raw_score: f64, config: AspectCriticConfig) -> DetailedMetricResult {
+    let raw_score = raw_score.clamp(0.0, 1.0);
+    let (score, reason) = match config.mode {
+        AspectCriticMode::Binary { threshold } => {
+            let passed = raw_score >= threshold;
+            (
+                if passed { 1.0 } else { 0.0 },
+                format!("binary aspect critic: raw_score={raw_score:.3} threshold={threshold:.3}"),
+            )
+        }
+        AspectCriticMode::Graded => (
+            raw_score,
+            format!("graded aspect critic: raw_score={raw_score:.3}"),
+        ),
+    };
+
     DetailedMetricResult::new("aspect_critic", MetricValueType::Numeric)
-        .with_score(0.0, ScoreNormalizationPolicy::Reject)
-        .expect("zero score is valid")
-        .with_reason("not implemented")
+        .with_score(score, ScoreNormalizationPolicy::Reject)
+        .expect("aspect critic score is normalized")
+        .with_reason(reason)
 }
 
 #[cfg(test)]
