@@ -1,9 +1,10 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::{Mutex, Semaphore};
 
-use crate::RagasError;
+use crate::{RagasError, TokenUsage};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunConfig {
@@ -321,6 +322,136 @@ pub struct ExecutorReport<T> {
     pub events: Vec<ProgressEvent>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RuntimeEventKind {
+    EvaluationStarted,
+    MetricStarted,
+    MetricSucceeded,
+    MetricFailed,
+    EvaluationFinished,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeEvent {
+    pub kind: RuntimeEventKind,
+    pub run_id: String,
+    pub metric_name: Option<String>,
+    pub sample_index: Option<usize>,
+}
+
+impl RuntimeEvent {
+    pub fn evaluation_started(run_id: impl Into<String>) -> Self {
+        Self {
+            kind: RuntimeEventKind::EvaluationStarted,
+            run_id: run_id.into(),
+            metric_name: None,
+            sample_index: None,
+        }
+    }
+
+    pub fn metric_started(
+        run_id: impl Into<String>,
+        metric_name: impl Into<String>,
+        sample_index: usize,
+    ) -> Self {
+        Self {
+            kind: RuntimeEventKind::MetricStarted,
+            run_id: run_id.into(),
+            metric_name: Some(metric_name.into()),
+            sample_index: Some(sample_index),
+        }
+    }
+
+    pub fn metric_succeeded(
+        run_id: impl Into<String>,
+        metric_name: impl Into<String>,
+        sample_index: usize,
+    ) -> Self {
+        Self {
+            kind: RuntimeEventKind::MetricSucceeded,
+            run_id: run_id.into(),
+            metric_name: Some(metric_name.into()),
+            sample_index: Some(sample_index),
+        }
+    }
+}
+
+type RuntimeCallback = Arc<dyn Fn(&RuntimeEvent) + Send + Sync + 'static>;
+
+#[derive(Default, Clone)]
+pub struct CallbackManager {
+    callbacks: Vec<RuntimeCallback>,
+}
+
+impl CallbackManager {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_callback<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(&RuntimeEvent) + Send + Sync + 'static,
+    {
+        self.callbacks.push(Arc::new(callback));
+        self
+    }
+
+    pub fn emit(&self, _event: RuntimeEvent) {
+        unimplemented!("TEST-6.3.1")
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageTotals {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageSummary {
+    pub total: UsageTotals,
+    pub by_provider: HashMap<String, UsageTotals>,
+    pub by_metric: HashMap<String, UsageTotals>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct UsageTracker {
+    summary: UsageSummary,
+}
+
+impl UsageTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record(
+        &mut self,
+        _provider: impl Into<String>,
+        _metric_name: impl Into<String>,
+        _usage: TokenUsage,
+    ) {
+        unimplemented!("TEST-6.3.2")
+    }
+
+    pub fn summary(&self) -> UsageSummary {
+        self.summary.clone()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CacheKey {
+    pub namespace: String,
+    pub digest: String,
+    pub redacted_payload: Value,
+}
+
+impl CacheKey {
+    pub fn derive(_namespace: impl Into<String>, _payload: &Value) -> Self {
+        unimplemented!("TEST-6.3.3")
+    }
+}
+
 impl RunConfigBuilder {
     pub fn timeout_ms(mut self, per_operation_ms: u64) -> Self {
         self.timeout = Some(TimeoutConfig {
@@ -389,6 +520,7 @@ mod tests {
     use super::*;
     use crate::EvaluationOptions;
     use std::{
+        sync::{Arc as StdArc, Mutex as StdMutex},
         thread,
         time::Duration,
     };
@@ -541,5 +673,99 @@ mod tests {
         assert!(report.events.iter().any(|event| {
             event.job_name == "bad" && event.kind == ProgressEventKind::Failed
         }));
+    }
+
+    #[test]
+    fn test_6_3_1_callback_hooks_receive_evaluation_lifecycle_events() {
+        // SCEN-6.3.1 / AC1 / TEST-6.3.1
+        let events = StdArc::new(StdMutex::new(Vec::new()));
+        let captured = StdArc::clone(&events);
+        let callbacks = CallbackManager::new().with_callback(move |event| {
+            captured.lock().expect("events lock").push(event.clone());
+        });
+
+        callbacks.emit(RuntimeEvent::evaluation_started("run-1"));
+        callbacks.emit(RuntimeEvent::metric_started("run-1", "faithfulness", 0));
+        callbacks.emit(RuntimeEvent::metric_succeeded("run-1", "faithfulness", 0));
+
+        let events = events.lock().expect("events lock");
+        let kinds = events
+            .iter()
+            .map(|event| event.kind.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            kinds,
+            vec![
+                RuntimeEventKind::EvaluationStarted,
+                RuntimeEventKind::MetricStarted,
+                RuntimeEventKind::MetricSucceeded
+            ]
+        );
+        assert_eq!(events[1].metric_name.as_deref(), Some("faithfulness"));
+        assert_eq!(events[1].sample_index, Some(0));
+    }
+
+    #[test]
+    fn test_6_3_2_token_usage_aggregates_per_provider_and_metric() {
+        // SCEN-6.3.2 / AC2 / TEST-6.3.2
+        let mut tracker = UsageTracker::new();
+        tracker.record(
+            "openai",
+            "faithfulness",
+            TokenUsage {
+                prompt_tokens: Some(10),
+                completion_tokens: Some(5),
+                total_tokens: Some(15),
+            },
+        );
+        tracker.record(
+            "openai",
+            "faithfulness",
+            TokenUsage {
+                prompt_tokens: Some(3),
+                completion_tokens: Some(2),
+                total_tokens: Some(5),
+            },
+        );
+        tracker.record(
+            "local",
+            "context_precision",
+            TokenUsage {
+                prompt_tokens: Some(4),
+                completion_tokens: Some(1),
+                total_tokens: None,
+            },
+        );
+
+        let summary = tracker.summary();
+
+        assert_eq!(summary.total.prompt_tokens, 17);
+        assert_eq!(summary.total.completion_tokens, 8);
+        assert_eq!(summary.total.total_tokens, 25);
+        assert_eq!(summary.by_provider["openai"].total_tokens, 20);
+        assert_eq!(summary.by_metric["faithfulness"].completion_tokens, 7);
+        assert_eq!(summary.by_metric["context_precision"].total_tokens, 5);
+    }
+
+    #[test]
+    fn test_6_3_3_cache_key_derivation_is_stable_and_redacts_secrets() {
+        // SCEN-6.3.3 / AC3 / TEST-6.3.3
+        let left: Value = serde_json::from_str(
+            r#"{"api_key":"sk-secret","messages":[{"content":"hello"}],"temperature":0}"#,
+        )
+        .expect("payload");
+        let right: Value = serde_json::from_str(
+            r#"{"temperature":0,"messages":[{"content":"hello"}],"api_key":"sk-secret"}"#,
+        )
+        .expect("payload");
+
+        let first = CacheKey::derive("llm.generate", &left);
+        let second = CacheKey::derive("llm.generate", &right);
+
+        assert_eq!(first.digest, second.digest);
+        let redacted = first.redacted_payload.to_string();
+        assert!(!redacted.contains("sk-secret"));
+        assert!(redacted.contains("[redacted]"));
     }
 }
