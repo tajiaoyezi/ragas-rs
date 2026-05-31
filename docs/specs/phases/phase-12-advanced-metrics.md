@@ -1,6 +1,6 @@
 # Phase 12 - advanced-metrics
 
-**Status**: Draft
+**Status**: In Progress
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 **Depends On**: 9,7,8
 
@@ -25,7 +25,7 @@ src/metrics/advanced/
 
 | Task | Spec | Status |
 |---|---|---|
-| 12.1 | docs/specs/tasks/task-12.1-rubrics.md | Draft |
+| 12.1 | docs/specs/tasks/task-12.1-rubrics.md | Done |
 | 12.2 | docs/specs/tasks/task-12.2-agents-tools.md | Draft |
 | 12.3 | docs/specs/tasks/task-12.3-sql-multimodal-summary.md | Draft |
 

@@ -98,7 +98,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 9 | metric-framework-complete | docs/specs/phases/phase-9-metric-framework-complete.md | Done | 3 | - |
 | 10 | rag-metrics | docs/specs/phases/phase-10-rag-metrics.md | Done | 3 | - |
 | 11 | deterministic-and-similarity-metrics | docs/specs/phases/phase-11-deterministic-and-similarity-metrics.md | Done | 3 | - |
-| 12 | advanced-metrics | docs/specs/phases/phase-12-advanced-metrics.md | Draft | 3 | - |
+| 12 | advanced-metrics | docs/specs/phases/phase-12-advanced-metrics.md | In Progress | 3 | - |
 | 13 | testset-generation | docs/specs/phases/phase-13-testset-generation.md | Draft | 3 | - |
 | 14 | backends-integrations-cli | docs/specs/phases/phase-14-backends-integrations-cli.md | Draft | 3 | - |
 | 15 | optimizers-experiments | docs/specs/phases/phase-15-optimizers-experiments.md | Draft | 3 | - |
@@ -133,7 +133,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 11.1 | metrics-traditional | docs/specs/tasks/task-11.1-lexical.md | Done | after task 9.3 | - |
 | 11.2 | metrics-traditional | docs/specs/tasks/task-11.2-semantic.md | Done | after task 11.1 | - |
 | 11.3 | metrics-traditional | docs/specs/tasks/task-11.3-quoted-spans.md | Done | after task 11.2 | - |
-| 12.1 | metrics-advanced | docs/specs/tasks/task-12.1-rubrics.md | Draft | after task 9.3 | - |
+| 12.1 | metrics-advanced | docs/specs/tasks/task-12.1-rubrics.md | Done | after task 9.3 | - |
 | 12.2 | metrics-advanced | docs/specs/tasks/task-12.2-agents-tools.md | Draft | after task 12.1 | - |
 | 12.3 | metrics-advanced | docs/specs/tasks/task-12.3-sql-multimodal-summary.md | Draft | after task 12.2 | - |
 | 13.1 | testset | docs/specs/tasks/task-13.1-graph-core.md | Draft | after task 8.3 | - |
