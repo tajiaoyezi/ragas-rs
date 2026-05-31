@@ -1,6 +1,6 @@
 # Task 5.2 - dataset-io
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 5
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
