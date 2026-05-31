@@ -1,6 +1,6 @@
 # Task 2.1 - metric-abstractions
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 2 - metric-abstractions
 **PRD**: docs/prds/ragas-rs.prd.md
 
@@ -60,9 +60,9 @@ Uses `SingleTurnSample` and `RagasError` from phase 1.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-2.1.1 | TEST-2.1.1 | Not Started |
-| AC2 | SCEN-2.1.2 | TEST-2.1.2 | Not Started |
-| AC3 | SCEN-2.1.3 | TEST-2.1.3 | Not Started |
+| AC1 | SCEN-2.1.1 | TEST-2.1.1 | Done |
+| AC2 | SCEN-2.1.2 | TEST-2.1.2 | Done |
+| AC3 | SCEN-2.1.3 | TEST-2.1.3 | Done |
 
 ## 8. Risks
 
@@ -78,9 +78,21 @@ Uses `SingleTurnSample` and `RagasError` from phase 1.
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `Cargo.toml`（新增 async trait/runtime 依赖）
+  - `Cargo.lock`（更新锁文件）
+  - `src/lib.rs`（导出 metric API）
+  - `src/metric.rs`（新增 MetricValue、MetricResult、Metric、FnMetric 与单元测试）
+- **commit 列表**：
+  - `ef0d27d` docs(spec): task-2.1 Ready
+  - `d1c82a7` docs(spec): task-2.1 进入实施
+  - `933e394` test(metric): 加 task-2.1 RED 测试
+  - `7d12630` feat(metric): 实现 task-2.1 指标抽象
+- **§9 Verification 结果**：
+  - install: pass (`cargo build`)
+  - typecheck: pass (`cargo check`)
+  - unit-test: 6 passed / 0 failed (`cargo test`)
+  - build: pass (`cargo build`)
+- **剩余风险 / 未做项**：无
+- **下游 task 影响**：task-3.1 可独立定义 provider trait；task-4.1 可基于 `Metric` 和 `MetricResult` 实现内置指标
