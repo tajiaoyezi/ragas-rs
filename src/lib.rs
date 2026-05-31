@@ -2,6 +2,7 @@ pub mod backends;
 pub mod benchmarks;
 pub mod cli;
 pub mod dataset;
+pub mod docs_examples;
 pub mod error;
 pub mod eval;
 pub mod experiments;
@@ -29,6 +30,7 @@ pub use cli::{CliCommand, CliOutput, CliRuntime, run_cli_command};
 pub use dataset::{
     EvaluationDataset, EvaluationDatasetBuilder, EvaluationSample, SingleTurnSample,
 };
+pub use docs_examples::{DocExample, public_workflow_examples};
 pub use error::RagasError;
 pub use eval::{EvaluationOptions, EvaluationReport, SampleEvaluation, evaluate};
 pub use experiments::{
