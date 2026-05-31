@@ -1,6 +1,6 @@
 # Task 5.1 - schema-core
 
-**Status**: Draft
+**Status**: Ready
 **Phase**: 5
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
