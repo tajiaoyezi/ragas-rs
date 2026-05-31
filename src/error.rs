@@ -7,4 +7,10 @@ pub enum RagasError {
 
     #[error("invalid sample at index {index}: {field}")]
     InvalidSample { index: usize, field: String },
+
+    #[error("provider error: {message}")]
+    Provider { message: String },
+
+    #[error("parse error: {message}")]
+    Parse { message: String },
 }
