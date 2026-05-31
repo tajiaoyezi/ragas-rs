@@ -1,6 +1,6 @@
 # Task 8.1 - prompt-core
 
-**Status**: Draft
+**Status**: Ready
 **Phase**: 8
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -15,7 +15,7 @@ typed prompt template、few-shot examples、language adaptation hooks
 ## 3. Scope And Out-of-Scope
 
 **In scope**:
-- Rust module area: $(System.Collections.Hashtable.Module).
+- Rust module area: `src/prompts/mod.rs`, `src/error.rs`, and public exports in `src/lib.rs`.
 - Behavior listed in §6 acceptance criteria.
 - Unit tests and, where applicable, parity fixtures for upstream ragas semantics.
 
