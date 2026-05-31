@@ -24,7 +24,9 @@ pub use dataset::{
 };
 pub use error::RagasError;
 pub use eval::{EvaluationOptions, EvaluationReport, SampleEvaluation, evaluate};
-pub use experiments::{ExperimentRecord, ExperimentSummary, RunComparison, compare_runs, summarize_experiment};
+pub use experiments::{
+    ExperimentRecord, ExperimentSummary, RunComparison, compare_runs, summarize_experiment,
+};
 pub use integrations::{
     IntegrationDestination, IntegrationEvent, IntegrationFeatureRegistry, IntegrationPayload,
     TracingIntegration, redact_payload,
