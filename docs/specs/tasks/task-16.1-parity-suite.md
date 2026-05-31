@@ -1,6 +1,6 @@
 # Task 16.1 - parity-suite
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 16
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-16.1.1 | TEST-16.1.1 | Not Started |
-| AC2 | SCEN-16.1.2 | TEST-16.1.2 | Not Started |
-| AC3 | SCEN-16.1.3 | TEST-16.1.3 | Not Started |
+| AC1 | SCEN-16.1.1 | TEST-16.1.1 | Done |
+| AC2 | SCEN-16.1.2 | TEST-16.1.2 | Done |
+| AC3 | SCEN-16.1.3 | TEST-16.1.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,20 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/parity/mod.rs`（新增 parity fixture、gap matrix、semantic drift checker 与 TEST-16.1.1~16.1.3）
+  - `src/lib.rs`（导出 parity public API）
+  - `tests/parity/fixtures/context_precision.json`（tracked golden fixture）
+- **commit 列表**：
+  - `cff13da` docs(spec): task-16.1 Ready
+  - `50d9aa9` docs(spec): task-16.1 进入实施
+  - `37041a3` test(parity): 加 task-16.1 RED 测试
+  - `beebba7` feat(parity): 实现 task-16.1 parity checks
+- **§9 Verification 结果**：
+  - install: ✅ `cargo build`
+  - typecheck: ✅ `cargo check`
+  - unit-test: 115 passed / 0 failed (`cargo test`)
+  - build: ✅ `cargo build`
+- **剩余风险 / 未做项**：当前 drift checker 对 `score` 字段做 tolerance 比较，并对其他 JSON 做整体比较；复杂 metric-specific diff 需要后续 fixture policy 扩展。
+- **下游 task 影响**：task 16.2 docs 可引用 parity fixture 格式；task 16.3 release 可把 gap matrix 与 undeclared drift policy 写入发布检查。
