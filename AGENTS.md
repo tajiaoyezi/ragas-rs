@@ -2,7 +2,7 @@
 
 **Collaboration Tier**: solo
 **Adapter**: docs/s2v-adapter.md
-**Master PRD**: docs/prds/ragas-rs.prd.md
+**Master PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
 This repository is initialized with S2V. Any agent entering the repo must read this file, `docs/s2v-adapter.md`, the active task spec, and the required reading listed by that task before editing code.
 
