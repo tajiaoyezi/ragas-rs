@@ -94,17 +94,89 @@ impl Optimizer for GeneticOptimizer {
     fn optimize(
         &mut self,
         objective: &dyn ObjectiveMetric,
-        _generator: &dyn CandidateGenerator,
+        generator: &dyn CandidateGenerator,
     ) -> OptimizationResult {
-        let _config = self.config;
         self.history.clear();
+        let population_size = self.config.population_size.max(1);
+        let mut rng_state = self.config.seed;
+        let mut population = normalize_population(
+            generator.initial_candidates(),
+            population_size,
+            generator,
+            &mut rng_state,
+        );
+
+        let mut best_candidate = population
+            .first()
+            .cloned()
+            .unwrap_or_else(|| OptimizationCandidate::new("empty", ""));
+        let mut best_score = f64::NEG_INFINITY;
+
+        for generation in 0..=self.config.generations {
+            let mut generation_scores = Vec::with_capacity(population.len());
+            for candidate in &population {
+                let score = objective.score(candidate);
+                self.history.push(OptimizationStep {
+                    generation,
+                    candidate_id: candidate.id.clone(),
+                    score,
+                });
+                generation_scores.push((candidate.clone(), score));
+                if score > best_score {
+                    best_candidate = candidate.clone();
+                    best_score = score;
+                }
+            }
+
+            if generation < self.config.generations {
+                generation_scores.sort_by(|left, right| {
+                    right
+                        .1
+                        .partial_cmp(&left.1)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| left.0.id.cmp(&right.0.id))
+                });
+                let parent = generation_scores
+                    .first()
+                    .map(|(candidate, _)| candidate.clone())
+                    .unwrap_or_else(|| best_candidate.clone());
+                population = (0..population_size)
+                    .map(|_| generator.mutate(&parent, next_seed(&mut rng_state)))
+                    .collect();
+            }
+        }
+
         OptimizationResult {
             objective_metric: objective.name().to_string(),
-            best_candidate: OptimizationCandidate::new("", ""),
-            best_score: 0.0,
-            history: Vec::new(),
+            best_candidate,
+            best_score,
+            history: self.history.clone(),
         }
     }
+}
+
+fn normalize_population(
+    mut candidates: Vec<OptimizationCandidate>,
+    population_size: usize,
+    generator: &dyn CandidateGenerator,
+    rng_state: &mut u64,
+) -> Vec<OptimizationCandidate> {
+    if candidates.is_empty() {
+        candidates.push(OptimizationCandidate::new("seed", ""));
+    }
+    while candidates.len() < population_size {
+        let parent = candidates[candidates.len() - 1].clone();
+        candidates.push(generator.mutate(&parent, next_seed(rng_state)));
+    }
+    candidates.truncate(population_size);
+    candidates
+}
+
+fn next_seed(state: &mut u64) -> u64 {
+    *state = state
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    *state
 }
 
 #[cfg(test)]
@@ -145,7 +217,12 @@ mod tests {
                 format!("{}-m{}", candidate.id, seed % 7),
                 format!("{} variant-{}", candidate.prompt, seed % 7),
             )
-            .with_model(candidate.model.clone().unwrap_or_else(|| "gpt-a".to_string()))
+            .with_model(
+                candidate
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| "gpt-a".to_string()),
+            )
             .with_parameter("seed_mod", (seed % 7).to_string())
         }
     }
@@ -203,12 +280,7 @@ mod tests {
         assert_eq!(first_result.history, second_result.history);
         assert_eq!(first_result.best_candidate, second_result.best_candidate);
         assert!(first_result.best_score > 0.0);
-        assert!(
-            first_result
-                .history
-                .iter()
-                .any(|step| step.generation == 3)
-        );
+        assert!(first_result.history.iter().any(|step| step.generation == 3));
     }
 
     #[test]
