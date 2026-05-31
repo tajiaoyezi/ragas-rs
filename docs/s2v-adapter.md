@@ -101,7 +101,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 12 | advanced-metrics | docs/specs/phases/phase-12-advanced-metrics.md | Done | 3 | - |
 | 13 | testset-generation | docs/specs/phases/phase-13-testset-generation.md | Done | 3 | - |
 | 14 | backends-integrations-cli | docs/specs/phases/phase-14-backends-integrations-cli.md | Done | 3 | - |
-| 15 | optimizers-experiments | docs/specs/phases/phase-15-optimizers-experiments.md | Draft | 3 | - |
+| 15 | optimizers-experiments | docs/specs/phases/phase-15-optimizers-experiments.md | In Progress | 3 | - |
 | 16 | parity-docs-release | docs/specs/phases/phase-16-parity-docs-release.md | Draft | 3 | - |
 
 ## Task 总索引
@@ -142,7 +142,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 14.1 | backends | docs/specs/tasks/task-14.1-backends.md | Done | after task 13.3 | - |
 | 14.2 | integrations | docs/specs/tasks/task-14.2-integrations.md | Done | after task 14.1 | - |
 | 14.3 | cli | docs/specs/tasks/task-14.3-cli.md | Done | after task 14.2 | - |
-| 15.1 | experiments | docs/specs/tasks/task-15.1-experiments.md | Draft | after task 14.3 | - |
+| 15.1 | experiments | docs/specs/tasks/task-15.1-experiments.md | Ready | after task 14.3 | - |
 | 15.2 | optimizers | docs/specs/tasks/task-15.2-optimizers.md | Draft | after task 15.1 | - |
 | 15.3 | benchmarks | docs/specs/tasks/task-15.3-benchmarks.md | Draft | after task 15.2 | - |
 | 16.1 | parity | docs/specs/tasks/task-16.1-parity-suite.md | Draft | after tasks 10-15 | - |

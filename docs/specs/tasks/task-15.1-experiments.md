@@ -1,6 +1,6 @@
 # Task 15.1 - experiments
 
-**Status**: Draft
+**Status**: Ready
 **Phase**: 15
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -15,7 +15,7 @@ experiment record model, compare runs, report summaries
 ## 3. Scope And Out-of-Scope
 
 **In scope**:
-- Rust module area: $(System.Collections.Hashtable.Module).
+- Rust module area: `src/experiments/`.
 - Behavior listed in §6 acceptance criteria.
 - Unit tests and, where applicable, parity fixtures for upstream ragas semantics.
 
