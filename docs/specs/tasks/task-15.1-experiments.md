@@ -1,6 +1,6 @@
 # Task 15.1 - experiments
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 15
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-15.1.1 | TEST-15.1.1 | Not Started |
-| AC2 | SCEN-15.1.2 | TEST-15.1.2 | Not Started |
-| AC3 | SCEN-15.1.3 | TEST-15.1.3 | Not Started |
+| AC1 | SCEN-15.1.1 | TEST-15.1.1 | Done |
+| AC2 | SCEN-15.1.2 | TEST-15.1.2 | Done |
+| AC3 | SCEN-15.1.3 | TEST-15.1.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,19 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/experiments/mod.rs`（新增 experiment record、run comparison、summary DTO 与 TEST-15.1.1~15.1.3）
+  - `src/lib.rs`（导出 experiments public API）
+- **commit 列表**：
+  - `124fafa` docs(spec): task-15.1 Ready
+  - `5bb704c` docs(spec): task-15.1 进入实施
+  - `2a0625b` test(experiments): 加 task-15.1 RED 测试
+  - `71b0511` feat(experiments): 实现 task-15.1 run records
+- **§9 Verification 结果**：
+  - install: ✅ `cargo build`
+  - typecheck: ✅ `cargo check`
+  - unit-test: 106 passed / 0 failed (`cargo test`)
+  - build: ✅ `cargo build`
+- **剩余风险 / 未做项**：metric summary 当前只聚合 numeric metric；discrete/ranking 指标保留在原始 report 中，若需要跨类型 aggregate 需后续扩展策略。
+- **下游 task 影响**：task 15.2 optimizer 可复用 ExperimentRecord/RunComparison 判断优化候选；task 15.3 benchmark 可复用 ExperimentSummary JSON。
