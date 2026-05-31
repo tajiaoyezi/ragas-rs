@@ -1,6 +1,6 @@
 # Task 12.3 - sql-multimodal-summary
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 12
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-12.3.1 | TEST-12.3.1 | Not Started |
-| AC2 | SCEN-12.3.2 | TEST-12.3.2 | Not Started |
-| AC3 | SCEN-12.3.3 | TEST-12.3.3 | Not Started |
+| AC1 | SCEN-12.3.1 | TEST-12.3.1 | Done |
+| AC2 | SCEN-12.3.2 | TEST-12.3.2 | Done |
+| AC3 | SCEN-12.3.3 | TEST-12.3.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,20 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/metrics/advanced/mod.rs`（新增 SQL semantic equivalence、multimodal metric、summarization signal parser 与 TEST-12.3.1~12.3.3）
+  - `src/metrics/mod.rs`（导出 task-12.3 advanced metrics API）
+  - `src/lib.rs`（导出 task-12.3 public crate API）
+- **commit 列表**：
+  - `96c75a3` docs(spec): task-12.3 Ready
+  - `dcc9ff3` docs(spec): task-12.3 进入实施
+  - `bd0f225` test(metrics-advanced): 加 task-12.3 RED 测试
+  - `a1ec15f` feat(metrics-advanced): 实现 task-12.3 sql multimodal summary
+- **§9 Verification 结果**：
+  - install: ✅ `cargo build`
+  - typecheck: ✅ `cargo check`
+  - unit-test: 85 passed / 0 failed (`cargo test`)
+  - build: ✅ `cargo build`
+- **剩余风险 / 未做项**：SQL 本地规范化是轻量 deterministic fallback，不是完整 SQL AST 等价；未声称 Python ragas prompt/judge parity complete，后续由 parity suite 登记 fixture 或 Known Gap。
+- **下游 task 影响**：phase 16.1 需要覆盖 SQL/multimodal/summarization golden fixtures；docs/examples 可展示多模态 prompt scaffold 和 summarization judge JSON 格式。
