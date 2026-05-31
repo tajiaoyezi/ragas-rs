@@ -26,7 +26,7 @@ src/backends/ + src/integrations/ + src/cli/
 | Task | Spec | Status |
 |---|---|---|
 | 14.1 | docs/specs/tasks/task-14.1-backends.md | Done |
-| 14.2 | docs/specs/tasks/task-14.2-integrations.md | Draft |
+| 14.2 | docs/specs/tasks/task-14.2-integrations.md | Done |
 | 14.3 | docs/specs/tasks/task-14.3-cli.md | Draft |
 
 ## 6. Phase Acceptance And Smoke
