@@ -1,6 +1,6 @@
 # Task 14.3 - cli
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 14
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-14.3.1 | TEST-14.3.1 | Not Started |
-| AC2 | SCEN-14.3.2 | TEST-14.3.2 | Not Started |
-| AC3 | SCEN-14.3.3 | TEST-14.3.3 | Not Started |
+| AC1 | SCEN-14.3.1 | TEST-14.3.1 | Done |
+| AC2 | SCEN-14.3.2 | TEST-14.3.2 | Done |
+| AC3 | SCEN-14.3.3 | TEST-14.3.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,19 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/cli/mod.rs`（新增库内 CLI command runtime、evaluate/testset/benchmark JSON 输出与 TEST-14.3.1~14.3.3）
+  - `src/lib.rs`（导出 cli public API）
+- **commit 列表**：
+  - `903f855` docs(spec): task-14.3 Ready
+  - `3f62850` docs(spec): task-14.3 进入实施
+  - `18b7baf` test(cli): 加 task-14.3 RED 测试
+  - `daeb97d` feat(cli): 实现 task-14.3 command runtime
+- **§9 Verification 结果**：
+  - install: ✅ `cargo build`
+  - typecheck: ✅ `cargo check`
+  - unit-test: 103 passed / 0 failed (`cargo test`)
+  - build: ✅ `cargo build`
+- **剩余风险 / 未做项**：当前实现是 embeddable library CLI runtime，不绑定 `clap`/二进制入口；如发布真正 `ragas` executable，需要在 release task 中补 binary wrapper。
+- **下游 task 影响**：task 15.3 benchmark 可复用 benchmark JSON contract；phase 16 docs/release 需记录 CLI runtime API 与二进制 wrapper 边界。
