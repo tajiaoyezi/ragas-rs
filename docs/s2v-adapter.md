@@ -98,7 +98,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 9 | metric-framework-complete | docs/specs/phases/phase-9-metric-framework-complete.md | Done | 3 | - |
 | 10 | rag-metrics | docs/specs/phases/phase-10-rag-metrics.md | Done | 3 | - |
 | 11 | deterministic-and-similarity-metrics | docs/specs/phases/phase-11-deterministic-and-similarity-metrics.md | Done | 3 | - |
-| 12 | advanced-metrics | docs/specs/phases/phase-12-advanced-metrics.md | In Progress | 3 | - |
+| 12 | advanced-metrics | docs/specs/phases/phase-12-advanced-metrics.md | Done | 3 | - |
 | 13 | testset-generation | docs/specs/phases/phase-13-testset-generation.md | Draft | 3 | - |
 | 14 | backends-integrations-cli | docs/specs/phases/phase-14-backends-integrations-cli.md | Draft | 3 | - |
 | 15 | optimizers-experiments | docs/specs/phases/phase-15-optimizers-experiments.md | Draft | 3 | - |

@@ -1,6 +1,6 @@
 # Phase 12 - advanced-metrics
 
-**Status**: In Progress
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 **Depends On**: 9,7,8
 
