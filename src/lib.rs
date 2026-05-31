@@ -3,6 +3,7 @@ pub mod eval;
 pub mod error;
 pub mod llm;
 pub mod metric;
+pub mod schema;
 
 pub use dataset::{EvaluationDataset, SingleTurnSample};
 pub use eval::{evaluate, EvaluationOptions, EvaluationReport, SampleEvaluation};
@@ -16,3 +17,4 @@ pub use metric::{
     cosine_similarity, ContextPrecisionMetric, FaithfulnessMetric, FnMetric, Metric, MetricResult,
     MetricValue, RankingItem, ResponseRelevancyMetric,
 };
+pub use schema::{Message, MessageRole, MultiTurnSample, Rubric, ToolCall};
