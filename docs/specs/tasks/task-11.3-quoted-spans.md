@@ -1,6 +1,6 @@
 # Task 11.3 - quoted-spans
 
-**Status**: Draft
+**Status**: Ready
 **Phase**: 11
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -15,7 +15,7 @@ quoted spans and citation overlap metrics
 ## 3. Scope And Out-of-Scope
 
 **In scope**:
-- Rust module area: $(System.Collections.Hashtable.Module).
+- Rust module area: src/metrics/traditional/.
 - Behavior listed in §6 acceptance criteria.
 - Unit tests and, where applicable, parity fixtures for upstream ragas semantics.
 
