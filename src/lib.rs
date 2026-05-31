@@ -60,7 +60,10 @@ pub use runtime::{
     UsageTotals, UsageTracker,
 };
 pub use schema::{Message, MessageRole, MultiTurnSample, Rubric, ToolCall};
-pub use testset::{GraphEdge, GraphNode, GraphProperty, KnowledgeGraph};
+pub use testset::{
+    ExtractionBundle, GraphEdge, GraphNode, GraphProperty, KnowledgeGraph, TextChunk,
+    attach_extractions, build_chunk_relationships, split_text_into_chunks,
+};
 pub use validation::{
     MetricRequirements, SampleField, ValidationIssue, ValidationReport, validate_before_evaluate,
     validate_dataset_requirements, validate_single_turn_samples,
