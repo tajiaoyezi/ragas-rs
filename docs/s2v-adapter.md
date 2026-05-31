@@ -137,7 +137,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 12.2 | metrics-advanced | docs/specs/tasks/task-12.2-agents-tools.md | Done | after task 12.1 | - |
 | 12.3 | metrics-advanced | docs/specs/tasks/task-12.3-sql-multimodal-summary.md | Done | after task 12.2 | - |
 | 13.1 | testset | docs/specs/tasks/task-13.1-graph-core.md | Done | after task 8.3 | - |
-| 13.2 | testset | docs/specs/tasks/task-13.2-transforms.md | Draft | after task 13.1 | - |
+| 13.2 | testset | docs/specs/tasks/task-13.2-transforms.md | Done | after task 13.1 | - |
 | 13.3 | testset | docs/specs/tasks/task-13.3-synthesizers.md | Draft | after task 13.2 | - |
 | 14.1 | backends | docs/specs/tasks/task-14.1-backends.md | Draft | after task 13.3 | - |
 | 14.2 | integrations | docs/specs/tasks/task-14.2-integrations.md | Draft | after task 14.1 | - |
