@@ -2,6 +2,7 @@ pub mod backends;
 pub mod dataset;
 pub mod error;
 pub mod eval;
+pub mod integrations;
 pub mod llm;
 pub mod metric;
 pub mod metrics;
@@ -20,6 +21,10 @@ pub use dataset::{
 };
 pub use error::RagasError;
 pub use eval::{EvaluationOptions, EvaluationReport, SampleEvaluation, evaluate};
+pub use integrations::{
+    IntegrationDestination, IntegrationEvent, IntegrationFeatureRegistry, IntegrationPayload,
+    TracingIntegration, redact_payload,
+};
 pub use llm::{
     AzureOpenAiConfig, ChatMessage, EmbeddingAdapter, EmbeddingProvider, EmbeddingRequest,
     EmbeddingResponse, LlmProvider, LlmRequest, LlmResponse, OpenAiCompatibleClient,
