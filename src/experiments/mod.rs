@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::EvaluationReport;
+use crate::{EvaluationReport, MetricValue};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExperimentRecord {
@@ -17,25 +17,26 @@ pub struct ExperimentRecord {
 
 impl ExperimentRecord {
     pub fn new(
-        _run_id: impl Into<String>,
-        _dataset_name: impl Into<String>,
-        _sample_count: usize,
-        _metric_names: Vec<String>,
-        _provider_config: BTreeMap<String, String>,
+        run_id: impl Into<String>,
+        dataset_name: impl Into<String>,
+        sample_count: usize,
+        metric_names: Vec<String>,
+        provider_config: BTreeMap<String, String>,
         report: EvaluationReport,
     ) -> Self {
         Self {
-            run_id: String::new(),
-            dataset_name: String::new(),
-            sample_count: 0,
-            metric_names: Vec::new(),
-            provider_config: BTreeMap::new(),
+            run_id: run_id.into(),
+            dataset_name: dataset_name.into(),
+            sample_count,
+            metric_names,
+            provider_config,
             report,
             outputs: BTreeMap::new(),
         }
     }
 
-    pub fn with_output(self, _name: impl Into<String>, _location: impl Into<String>) -> Self {
+    pub fn with_output(mut self, name: impl Into<String>, location: impl Into<String>) -> Self {
+        self.outputs.insert(name.into(), location.into());
         self
     }
 }
@@ -58,24 +59,62 @@ pub struct ExperimentSummary {
     pub outputs: BTreeMap<String, String>,
 }
 
-pub fn compare_runs(_baseline: &ExperimentRecord, _candidate: &ExperimentRecord) -> RunComparison {
+pub fn compare_runs(baseline: &ExperimentRecord, candidate: &ExperimentRecord) -> RunComparison {
+    let baseline_means = metric_means(baseline);
+    let candidate_means = metric_means(candidate);
+    let mut metric_deltas = BTreeMap::new();
+
+    for metric_name in baseline
+        .metric_names
+        .iter()
+        .chain(candidate.metric_names.iter())
+    {
+        if metric_deltas.contains_key(metric_name) {
+            continue;
+        }
+        let baseline_mean = baseline_means.get(metric_name).copied().unwrap_or(0.0);
+        let candidate_mean = candidate_means.get(metric_name).copied().unwrap_or(0.0);
+        metric_deltas.insert(metric_name.clone(), candidate_mean - baseline_mean);
+    }
+
     RunComparison {
-        baseline_run_id: String::new(),
-        candidate_run_id: String::new(),
-        sample_count_delta: 0,
-        metric_deltas: BTreeMap::new(),
+        baseline_run_id: baseline.run_id.clone(),
+        candidate_run_id: candidate.run_id.clone(),
+        sample_count_delta: candidate.sample_count as isize - baseline.sample_count as isize,
+        metric_deltas,
     }
 }
 
-pub fn summarize_experiment(_record: &ExperimentRecord) -> ExperimentSummary {
+pub fn summarize_experiment(record: &ExperimentRecord) -> ExperimentSummary {
     ExperimentSummary {
-        run_id: String::new(),
-        dataset_name: String::new(),
-        sample_count: 0,
-        metric_means: BTreeMap::new(),
-        provider_config: BTreeMap::new(),
-        outputs: BTreeMap::new(),
+        run_id: record.run_id.clone(),
+        dataset_name: record.dataset_name.clone(),
+        sample_count: record.sample_count,
+        metric_means: metric_means(record),
+        provider_config: record.provider_config.clone(),
+        outputs: record.outputs.clone(),
     }
+}
+
+fn metric_means(record: &ExperimentRecord) -> BTreeMap<String, f64> {
+    let mut totals: BTreeMap<String, (f64, usize)> = BTreeMap::new();
+    for sample in &record.report.results {
+        for result in &sample.results {
+            let Some(MetricValue::Numeric(value)) = &result.value else {
+                continue;
+            };
+            let entry = totals.entry(result.metric_name.clone()).or_insert((0.0, 0));
+            entry.0 += value;
+            entry.1 += 1;
+        }
+    }
+
+    totals
+        .into_iter()
+        .filter_map(|(metric_name, (sum, count))| {
+            (count > 0).then_some((metric_name, sum / count as f64))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -85,7 +124,10 @@ mod tests {
 
     fn provider_config() -> BTreeMap<String, String> {
         BTreeMap::from([
-            ("llm".to_string(), "openai-compatible:gpt-4o-mini".to_string()),
+            (
+                "llm".to_string(),
+                "openai-compatible:gpt-4o-mini".to_string(),
+            ),
             (
                 "embedding".to_string(),
                 "openai-compatible:text-embedding-3-small".to_string(),
@@ -100,27 +142,15 @@ mod tests {
                 SampleEvaluation {
                     sample_index: 0,
                     results: vec![
-                        MetricResult::success(
-                            "faithfulness",
-                            MetricValue::numeric(faithfulness),
-                        ),
-                        MetricResult::success(
-                            "answer_relevancy",
-                            MetricValue::numeric(relevancy),
-                        ),
+                        MetricResult::success("faithfulness", MetricValue::numeric(faithfulness)),
+                        MetricResult::success("answer_relevancy", MetricValue::numeric(relevancy)),
                     ],
                 },
                 SampleEvaluation {
                     sample_index: 1,
                     results: vec![
-                        MetricResult::success(
-                            "faithfulness",
-                            MetricValue::numeric(faithfulness),
-                        ),
-                        MetricResult::success(
-                            "answer_relevancy",
-                            MetricValue::numeric(relevancy),
-                        ),
+                        MetricResult::success("faithfulness", MetricValue::numeric(faithfulness)),
+                        MetricResult::success("answer_relevancy", MetricValue::numeric(relevancy)),
                     ],
                 },
             ],
@@ -194,6 +224,9 @@ mod tests {
             json["provider_config"]["embedding"],
             "openai-compatible:text-embedding-3-small"
         );
-        assert_eq!(json["outputs"]["report_json"], "memory://reports/summary-run.json");
+        assert_eq!(
+            json["outputs"]["report_json"],
+            "memory://reports/summary-run.json"
+        );
     }
 }
