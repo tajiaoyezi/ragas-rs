@@ -1,4 +1,5 @@
 pub mod backends;
+pub mod benchmarks;
 pub mod cli;
 pub mod dataset;
 pub mod error;
@@ -18,6 +19,10 @@ pub mod validation;
 
 pub use backends::{
     CsvDatasetBackend, DatasetBackend, InMemoryDatasetBackend, JsonlDatasetBackend,
+};
+pub use benchmarks::{
+    BenchmarkMeasurement, BenchmarkPrompt, BenchmarkProvider, BenchmarkReport, CostRates,
+    CostSummary, run_provider_benchmark,
 };
 pub use cli::{CliCommand, CliOutput, CliRuntime, run_cli_command};
 pub use dataset::{
