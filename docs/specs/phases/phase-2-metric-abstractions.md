@@ -1,6 +1,6 @@
 # Phase 2 - metric-abstractions
 
-**Status**: Draft
+**Status**: Done
 **PRD**: docs/prds/ragas-rs.prd.md
 **Tasks**: docs/specs/tasks/task-2.1-metric-abstractions.md
 
@@ -26,7 +26,7 @@ Define type-safe metric values, metric results, async `Metric` trait, and custom
 
 | Task | Spec | Status |
 |---|---|---|
-| 2.1 | docs/specs/tasks/task-2.1-metric-abstractions.md | Draft |
+| 2.1 | docs/specs/tasks/task-2.1-metric-abstractions.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 
