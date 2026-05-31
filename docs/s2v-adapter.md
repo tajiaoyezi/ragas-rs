@@ -113,7 +113,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 3.1 | llm | docs/specs/tasks/task-3.1-providers.md | Done | after task 2.1 | - |
 | 4.1 | eval | docs/specs/tasks/task-4.1-evaluator-builtins.md | Done | after task 3.1 | - |
 | 5.1 | schema | docs/specs/tasks/task-5.1-schema-core.md | Done | after task 4.1 | - |
-| 5.2 | dataset | docs/specs/tasks/task-5.2-dataset-io.md | Draft | after task 5.1 | - |
+| 5.2 | dataset | docs/specs/tasks/task-5.2-dataset-io.md | Done | after task 5.1 | - |
 | 5.3 | validation | docs/specs/tasks/task-5.3-validation.md | Draft | after task 5.2 | - |
 | 6.1 | runtime | docs/specs/tasks/task-6.1-run-config.md | Draft | after task 5.3 | - |
 | 6.2 | runtime | docs/specs/tasks/task-6.2-executor.md | Draft | after task 6.1 | - |
