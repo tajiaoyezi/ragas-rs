@@ -94,7 +94,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 5 | schema-and-datasets | docs/specs/phases/phase-5-schema-and-datasets.md | Done | 3 | - |
 | 6 | runtime-executor | docs/specs/phases/phase-6-runtime-executor.md | Done | 3 | - |
 | 7 | providers-and-adapters | docs/specs/phases/phase-7-providers-and-adapters.md | Done | 3 | - |
-| 8 | prompts-and-parsers | docs/specs/phases/phase-8-prompts-and-parsers.md | In Progress | 3 | - |
+| 8 | prompts-and-parsers | docs/specs/phases/phase-8-prompts-and-parsers.md | Done | 3 | - |
 | 9 | metric-framework-complete | docs/specs/phases/phase-9-metric-framework-complete.md | Draft | 3 | - |
 | 10 | rag-metrics | docs/specs/phases/phase-10-rag-metrics.md | Draft | 3 | - |
 | 11 | deterministic-and-similarity-metrics | docs/specs/phases/phase-11-deterministic-and-similarity-metrics.md | Draft | 3 | - |
@@ -123,7 +123,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 7.3 | providers | docs/specs/tasks/task-7.3-embedding-adapters.md | Done | after task 7.2 | - |
 | 8.1 | prompts | docs/specs/tasks/task-8.1-prompt-core.md | Done | after task 6.3 | - |
 | 8.2 | prompts | docs/specs/tasks/task-8.2-output-parser.md | Done | after task 8.1 | - |
-| 8.3 | prompts | docs/specs/tasks/task-8.3-multimodal-prompt.md | Draft | after task 8.2 | - |
+| 8.3 | prompts | docs/specs/tasks/task-8.3-multimodal-prompt.md | Done | after task 8.2 | - |
 | 9.1 | metrics | docs/specs/tasks/task-9.1-metric-base.md | Draft | after task 8.3 | - |
 | 9.2 | metrics | docs/specs/tasks/task-9.2-metric-result.md | Draft | after task 9.1 | - |
 | 9.3 | metrics | docs/specs/tasks/task-9.3-metric-registry.md | Draft | after task 9.2 | - |
