@@ -1,6 +1,6 @@
 # Task 11.1 - lexical
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 11
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-11.1.1 | TEST-11.1.1 | Not Started |
-| AC2 | SCEN-11.1.2 | TEST-11.1.2 | Not Started |
-| AC3 | SCEN-11.1.3 | TEST-11.1.3 | Not Started |
+| AC1 | SCEN-11.1.1 | TEST-11.1.1 | Done |
+| AC2 | SCEN-11.1.2 | TEST-11.1.2 | Done |
+| AC3 | SCEN-11.1.3 | TEST-11.1.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,19 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/metrics/traditional/mod.rs`（新增）
+  - `src/metrics/mod.rs`（修改）
+  - `src/lib.rs`（修改）
+  - `docs/specs/tasks/task-11.1-lexical.md`（修改）
+- **commit 列表**：
+  - `4a5c61b` test(metrics-traditional): 加 task-11.1 RED 测试
+  - `7a4551d` feat(metrics-traditional): 实现 task-11.1 lexical metrics
+- **§9 Verification 结果**：
+  - install: ✅ `cargo build`
+  - typecheck: ✅ `cargo check`
+  - unit-test: 70 passed / 0 failed (`cargo test`)
+  - build: ✅ `cargo build`
+- **剩余风险 / 未做项**：BLEU/ROUGE/CHRF 为 documented tokenizer approximation；Python ragas parity fixture 待 task-16.1 登记。
+- **下游 task 影响**：task-11.2 和 task-11.3 可复用 `src/metrics/traditional/` 模块边界及 explicit empty-string policy。
