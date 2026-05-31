@@ -1,6 +1,6 @@
 # Task 5.2 - dataset-io
 
-**Status**: Draft
+**Status**: Ready
 **Phase**: 5
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -15,7 +15,7 @@ JSONL/CSV serde roundtrip、dataset builders、validation diagnostics
 ## 3. Scope And Out-of-Scope
 
 **In scope**:
-- Rust module area: $(System.Collections.Hashtable.Module).
+- Rust module area: src/dataset.rs, src/error.rs, src/lib.rs, Cargo.toml, Cargo.lock.
 - Behavior listed in §6 acceptance criteria.
 - Unit tests and, where applicable, parity fixtures for upstream ragas semantics.
 
