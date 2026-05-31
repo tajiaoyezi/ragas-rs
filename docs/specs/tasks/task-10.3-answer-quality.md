@@ -1,6 +1,6 @@
 # Task 10.3 - answer-quality
 
-**Status**: Draft
+**Status**: Ready
 **Phase**: 10
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -15,7 +15,7 @@ answer relevancy/correctness/similarity/noise sensitivity
 ## 3. Scope And Out-of-Scope
 
 **In scope**:
-- Rust module area: $(System.Collections.Hashtable.Module).
+- Rust module area: src/metrics/rag/.
 - Behavior listed in §6 acceptance criteria.
 - Unit tests and, where applicable, parity fixtures for upstream ragas semantics.
 
