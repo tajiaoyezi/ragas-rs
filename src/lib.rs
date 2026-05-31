@@ -29,8 +29,8 @@ pub use providers::{
 };
 pub use prompts::{
     FewShotExample, JudgeOutputParser, LanguageAdapterRule, OutputParseDiagnostic,
-    ParsedJudgeOutput, PromptTemplate, PromptValue, PromptValueKind, PromptVariables,
-    RenderedPrompt, RepairStrategy,
+    MultimodalPromptMessage, MultimodalPromptPart, ParsedJudgeOutput, PromptTemplate,
+    PromptValue, PromptValueKind, PromptVariables, RenderedPrompt, RepairStrategy,
 };
 pub use runtime::{
     AsyncExecutor, CacheKey, CallbackManager, CancellationConfig, ExecutorJobResult,

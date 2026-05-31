@@ -25,6 +25,56 @@ pub struct OutputParseDiagnostic {
     pub repair_strategy: RepairStrategy,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MultimodalPromptPart {
+    Text { text: String },
+    ImageUrl { url: String, mime_type: String },
+}
+
+impl MultimodalPromptPart {
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text { text: text.into() }
+    }
+
+    pub fn image_url(url: impl Into<String>, mime_type: impl Into<String>) -> Self {
+        Self::ImageUrl {
+            url: url.into(),
+            mime_type: mime_type.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MultimodalPromptMessage {
+    pub role: String,
+    pub parts: Vec<MultimodalPromptPart>,
+}
+
+impl MultimodalPromptMessage {
+    pub fn new(role: impl Into<String>) -> Self {
+        Self {
+            role: role.into(),
+            parts: Vec::new(),
+        }
+    }
+
+    pub fn push_text(self, _text: impl Into<String>) -> Self {
+        unimplemented!("task 8.3 RED skeleton")
+    }
+
+    pub fn push_image_url(
+        self,
+        _url: impl Into<String>,
+        _mime_type: impl Into<String>,
+    ) -> Self {
+        unimplemented!("task 8.3 RED skeleton")
+    }
+
+    pub fn render_text_scaffold(&self) -> Result<String, RagasError> {
+        unimplemented!("task 8.3 RED skeleton")
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JudgeOutputParser {
     repair_strategy: RepairStrategy,
@@ -390,5 +440,60 @@ mod tests {
         assert_eq!(repaired.score, 0.5);
         assert_eq!(repaired.reason.as_deref(), Some("partial"));
         assert!(repaired.repaired);
+    }
+
+    #[test]
+    fn test_8_3_1_multimodal_message_supports_text_and_image_parts() {
+        // SCEN-8.3.1 / AC1 / TEST-8.3.1
+        let message = MultimodalPromptMessage::new("user")
+            .push_text("Describe this image")
+            .push_image_url("https://example.test/cat.png", "image/png");
+
+        assert_eq!(message.role, "user");
+        assert_eq!(
+            message.parts,
+            vec![
+                MultimodalPromptPart::Text {
+                    text: "Describe this image".to_string()
+                },
+                MultimodalPromptPart::ImageUrl {
+                    url: "https://example.test/cat.png".to_string(),
+                    mime_type: "image/png".to_string()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_8_3_2_prompt_rendering_preserves_part_order() {
+        // SCEN-8.3.2 / AC2 / TEST-8.3.2
+        let message = MultimodalPromptMessage::new("user")
+            .push_text("first")
+            .push_image_url("https://example.test/one.jpg", "image/jpeg")
+            .push_text("second");
+
+        let rendered = message.render_text_scaffold().expect("rendered multimodal scaffold");
+
+        assert_eq!(
+            rendered,
+            "[text] first\n[image image/jpeg] https://example.test/one.jpg\n[text] second"
+        );
+    }
+
+    #[test]
+    fn test_8_3_3_unsupported_media_returns_structured_error() {
+        // SCEN-8.3.3 / AC3 / TEST-8.3.3
+        let message = MultimodalPromptMessage::new("user")
+            .push_text("inspect")
+            .push_image_url("https://example.test/file.svg", "image/svg+xml");
+
+        let error = message
+            .render_text_scaffold()
+            .expect_err("unsupported media");
+        let message = error.to_string();
+
+        assert!(message.contains("unsupported media type"));
+        assert!(message.contains("image/svg+xml"));
+        assert!(message.contains("part_index=1"));
     }
 }
