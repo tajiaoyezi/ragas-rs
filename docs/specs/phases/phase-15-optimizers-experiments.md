@@ -1,6 +1,6 @@
 # Phase 15 - optimizers-experiments
 
-**Status**: In Progress
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 **Depends On**: 9,14
 

@@ -101,7 +101,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 12 | advanced-metrics | docs/specs/phases/phase-12-advanced-metrics.md | Done | 3 | - |
 | 13 | testset-generation | docs/specs/phases/phase-13-testset-generation.md | Done | 3 | - |
 | 14 | backends-integrations-cli | docs/specs/phases/phase-14-backends-integrations-cli.md | Done | 3 | - |
-| 15 | optimizers-experiments | docs/specs/phases/phase-15-optimizers-experiments.md | In Progress | 3 | - |
+| 15 | optimizers-experiments | docs/specs/phases/phase-15-optimizers-experiments.md | Done | 3 | - |
 | 16 | parity-docs-release | docs/specs/phases/phase-16-parity-docs-release.md | Draft | 3 | - |
 
 ## Task 总索引
