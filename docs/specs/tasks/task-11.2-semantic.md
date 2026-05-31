@@ -1,6 +1,6 @@
 # Task 11.2 - semantic
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 11
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
