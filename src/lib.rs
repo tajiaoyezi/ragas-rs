@@ -26,12 +26,15 @@ pub use metric::{
     RankingItem, ResponseRelevancyMetric, cosine_similarity,
 };
 pub use metrics::{
-    ContextPrecisionVariant, DetailedMetricResult, FaithfulnessJudgeContract,
-    FactualCorrectnessCounts, MetricError, MetricErrorKind, MetricEvidence, MetricMetadata,
-    MetricProviderRequirement, MetricRegistry, MetricRegistryEntry, MetricSampleKind,
-    MetricValueType, MultiTurnMetric, ParityStatus, ScoreNormalizationPolicy, SingleTurnMetric,
+    AnswerCorrectnessWeights, ContextPrecisionVariant, DetailedMetricResult,
+    FaithfulnessJudgeContract, FactualCorrectnessCounts, MetricError, MetricErrorKind,
+    MetricEvidence, MetricMetadata, MetricProviderRequirement, MetricRegistry,
+    MetricRegistryEntry, MetricSampleKind, MetricValueType, MultiTurnMetric, ParityStatus,
+    ScoreNormalizationPolicy, SingleTurnMetric, answer_correctness,
+    answer_relevancy_from_embedding_similarity, answer_relevancy_from_judge_output,
     context_entity_recall, context_precision_from_relevance, context_recall, context_relevance,
-    factual_correctness, id_based_context_precision, normalize_score, response_groundedness,
+    factual_correctness, id_based_context_precision, noise_sensitivity, normalize_score,
+    response_groundedness,
 };
 pub use providers::{
     MockEmbeddingProvider, MockLlmProvider, ProviderRegistry, record_provider_usage,

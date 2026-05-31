@@ -19,6 +19,18 @@ pub struct FactualCorrectnessCounts {
     pub false_negative: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AnswerCorrectnessWeights {
+    pub semantic: f64,
+    pub factual: f64,
+}
+
+impl AnswerCorrectnessWeights {
+    pub fn new(semantic: f64, factual: f64) -> Self {
+        Self { semantic, factual }
+    }
+}
+
 impl FactualCorrectnessCounts {
     pub fn new(true_positive: usize, false_positive: usize, false_negative: usize) -> Self {
         Self {
@@ -136,6 +148,46 @@ pub fn factual_correctness(counts: FactualCorrectnessCounts) -> DetailedMetricRe
             ),
         )],
     )
+}
+
+pub fn answer_relevancy_from_embedding_similarity(
+    _question_embedding: &[f32],
+    _answer_embedding: &[f32],
+) -> DetailedMetricResult {
+    numeric_result(
+        "answer_relevancy",
+        0.0,
+        "not implemented",
+        Vec::new(),
+    )
+}
+
+pub fn answer_relevancy_from_judge_output(
+    _output: &str,
+) -> Result<DetailedMetricResult, OutputParseDiagnostic> {
+    Ok(numeric_result(
+        "answer_relevancy",
+        0.0,
+        "not implemented",
+        Vec::new(),
+    ))
+}
+
+pub fn answer_correctness(
+    _semantic_similarity: f64,
+    _factual_counts: FactualCorrectnessCounts,
+    _weights: AnswerCorrectnessWeights,
+) -> DetailedMetricResult {
+    numeric_result(
+        "answer_correctness",
+        0.0,
+        "not implemented",
+        Vec::new(),
+    )
+}
+
+pub fn noise_sensitivity(_clean_score: f64, _noisy_score: f64) -> DetailedMetricResult {
+    numeric_result("noise_sensitivity", 0.0, "not implemented", Vec::new())
 }
 
 impl ContextPrecisionVariant {
@@ -565,5 +617,50 @@ mod tests {
         assert!(result.reason.as_deref().unwrap_or("").contains("TP=3"));
         assert!(result.reason.as_deref().unwrap_or("").contains("FP=1"));
         assert!(result.reason.as_deref().unwrap_or("").contains("FN=2"));
+    }
+
+    #[test]
+    fn test_10_3_1_answer_relevancy_supports_embedding_and_llm_judge_paths() {
+        // SCEN-10.3.1 / AC1 / TEST-10.3.1
+        let embedding = answer_relevancy_from_embedding_similarity(&[1.0, 0.0], &[0.5, 0.5]);
+        assert_score_close(&embedding, 0.70710678);
+        assert!(embedding.reason.as_deref().unwrap_or("").contains("embedding"));
+
+        let judge = answer_relevancy_from_judge_output(
+            r#"{"score":0.82,"reason":"answer directly addresses the question"}"#,
+        )
+        .expect("judge path");
+        assert_score_close(&judge, 0.82);
+        assert_eq!(
+            judge.reason.as_deref(),
+            Some("answer directly addresses the question")
+        );
+    }
+
+    #[test]
+    fn test_10_3_2_answer_correctness_combines_semantic_and_factual_signals() {
+        // SCEN-10.3.2 / AC2 / TEST-10.3.2
+        let result = answer_correctness(
+            0.8,
+            FactualCorrectnessCounts::new(2, 1, 1),
+            AnswerCorrectnessWeights::new(0.25, 0.75),
+        );
+
+        assert_score_close(&result, 0.7);
+        assert_eq!(result.metric_name, "answer_correctness");
+        assert!(result.reason.as_deref().unwrap_or("").contains("semantic=0.800"));
+        assert!(result.reason.as_deref().unwrap_or("").contains("factual=0.667"));
+        assert_eq!(result.evidence.len(), 2);
+    }
+
+    #[test]
+    fn test_10_3_3_noise_sensitivity_returns_interpretable_numeric_score() {
+        // SCEN-10.3.3 / AC3 / TEST-10.3.3
+        let result = noise_sensitivity(0.8, 0.5);
+
+        assert_score_close(&result, 0.3);
+        assert_eq!(result.metric_name, "noise_sensitivity");
+        assert!(result.reason.as_deref().unwrap_or("").contains("clean=0.800"));
+        assert!(result.reason.as_deref().unwrap_or("").contains("noisy=0.500"));
     }
 }
