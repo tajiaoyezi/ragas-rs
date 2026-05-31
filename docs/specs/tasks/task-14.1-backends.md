@@ -1,6 +1,6 @@
 # Task 14.1 - backends
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 14
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
