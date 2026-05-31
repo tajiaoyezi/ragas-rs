@@ -105,30 +105,140 @@ impl OpenAiCompatibleClient {
     }
 
     pub fn sanitize_provider_error(&self, message: impl AsRef<str>) -> String {
-        unimplemented!("TEST-3.1.3: provider error sanitization is not implemented yet")
+        let message = message.as_ref();
+        if self.api_key.is_empty() {
+            return message.to_string();
+        }
+        message.replace(&self.api_key, "[redacted-api-key]")
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("{}/{}", self.base_url.trim_end_matches('/'), path)
+    }
+
+    fn provider_error(&self, message: impl AsRef<str>) -> RagasError {
+        RagasError::Provider {
+            message: self.sanitize_provider_error(message),
+        }
     }
 }
 
 #[async_trait]
 impl LlmProvider for OpenAiCompatibleClient {
-    async fn generate(&self, _request: LlmRequest) -> Result<LlmResponse, RagasError> {
-        unimplemented!("TEST-3.1.3: OpenAI-compatible chat HTTP client is not implemented yet")
+    async fn generate(&self, request: LlmRequest) -> Result<LlmResponse, RagasError> {
+        let response = self
+            .client
+            .post(self.url("chat/completions"))
+            .bearer_auth(&self.api_key)
+            .json(&self.chat_payload(&request))
+            .send()
+            .await
+            .map_err(|error| self.provider_error(error.to_string()))?;
+
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|error| self.provider_error(error.to_string()))?;
+        if !status.is_success() {
+            return Err(self.provider_error(format!("HTTP {status}: {body}")));
+        }
+        parse_chat_response(&body)
     }
 }
 
 #[async_trait]
 impl EmbeddingProvider for OpenAiCompatibleClient {
-    async fn embed(&self, _request: EmbeddingRequest) -> Result<EmbeddingResponse, RagasError> {
-        unimplemented!("TEST-3.1.3: OpenAI-compatible embedding HTTP client is not implemented yet")
+    async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, RagasError> {
+        let response = self
+            .client
+            .post(self.url("embeddings"))
+            .bearer_auth(&self.api_key)
+            .json(&self.embedding_payload(&request))
+            .send()
+            .await
+            .map_err(|error| self.provider_error(error.to_string()))?;
+
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|error| self.provider_error(error.to_string()))?;
+        if !status.is_success() {
+            return Err(self.provider_error(format!("HTTP {status}: {body}")));
+        }
+        parse_embedding_response(&body)
     }
 }
 
-pub fn parse_chat_response(_body: &str) -> Result<LlmResponse, RagasError> {
-    unimplemented!("TEST-3.1.1: chat response parser is not implemented yet")
+pub fn parse_chat_response(body: &str) -> Result<LlmResponse, RagasError> {
+    #[derive(Deserialize)]
+    struct ChatApiResponse {
+        choices: Vec<Choice>,
+        usage: Option<TokenUsage>,
+    }
+
+    #[derive(Deserialize)]
+    struct Choice {
+        message: ChatApiMessage,
+    }
+
+    #[derive(Deserialize)]
+    struct ChatApiMessage {
+        content: String,
+    }
+
+    let parsed: ChatApiResponse = serde_json::from_str(body).map_err(|error| {
+        RagasError::Parse {
+            message: format!("chat response JSON: {error}"),
+        }
+    })?;
+
+    let content = parsed
+        .choices
+        .into_iter()
+        .next()
+        .map(|choice| choice.message.content)
+        .ok_or_else(|| RagasError::Parse {
+            message: "chat response contained no choices".to_string(),
+        })?;
+
+    Ok(LlmResponse {
+        content,
+        usage: parsed.usage,
+    })
 }
 
-pub fn parse_embedding_response(_body: &str) -> Result<EmbeddingResponse, RagasError> {
-    unimplemented!("TEST-3.1.2: embedding response parser is not implemented yet")
+pub fn parse_embedding_response(body: &str) -> Result<EmbeddingResponse, RagasError> {
+    #[derive(Deserialize)]
+    struct EmbeddingApiResponse {
+        data: Vec<EmbeddingDatum>,
+        usage: Option<TokenUsage>,
+    }
+
+    #[derive(Deserialize)]
+    struct EmbeddingDatum {
+        index: usize,
+        embedding: Vec<f32>,
+    }
+
+    let mut parsed: EmbeddingApiResponse = serde_json::from_str(body).map_err(|error| {
+        RagasError::Parse {
+            message: format!("embedding response JSON: {error}"),
+        }
+    })?;
+
+    parsed.data.sort_by_key(|datum| datum.index);
+    let embeddings = parsed
+        .data
+        .into_iter()
+        .map(|datum| datum.embedding)
+        .collect();
+
+    Ok(EmbeddingResponse {
+        embeddings,
+        usage: parsed.usage,
+    })
 }
 
 #[cfg(test)]
