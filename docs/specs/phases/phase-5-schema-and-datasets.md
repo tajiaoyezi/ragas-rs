@@ -1,6 +1,6 @@
 # Phase 5 - schema-and-datasets
 
-**Status**: Draft
+**Status**: In Progress
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 **Depends On**: 1,4
 
@@ -25,7 +25,7 @@ src/schema/ + src/dataset.rs
 
 | Task | Spec | Status |
 |---|---|---|
-| 5.1 | docs/specs/tasks/task-5.1-schema-core.md | Draft |
+| 5.1 | docs/specs/tasks/task-5.1-schema-core.md | Done |
 | 5.2 | docs/specs/tasks/task-5.2-dataset-io.md | Draft |
 | 5.3 | docs/specs/tasks/task-5.3-validation.md | Draft |
 
