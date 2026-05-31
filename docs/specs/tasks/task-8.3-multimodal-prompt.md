@@ -1,6 +1,6 @@
 # Task 8.3 - multimodal-prompt
 
-**Status**: Draft
+**Status**: Ready
 **Phase**: 8
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -15,7 +15,7 @@ image/text prompt scaffold and typed multimodal message model
 ## 3. Scope And Out-of-Scope
 
 **In scope**:
-- Rust module area: $(System.Collections.Hashtable.Module).
+- Rust module area: `src/prompts/mod.rs` and public exports in `src/lib.rs`.
 - Behavior listed in §6 acceptance criteria.
 - Unit tests and, where applicable, parity fixtures for upstream ragas semantics.
 
