@@ -1,6 +1,6 @@
 # Task 4.1 - evaluator-builtins
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 4 - evaluator-builtins
 **PRD**: docs/prds/ragas-rs.prd.md
 
