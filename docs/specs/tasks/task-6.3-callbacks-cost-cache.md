@@ -1,6 +1,6 @@
 # Task 6.3 - callbacks-cost-cache
 
-**Status**: Draft
+**Status**: Ready
 **Phase**: 6
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -15,7 +15,7 @@ callbacks、token usage/cost model、cache key/value abstraction
 ## 3. Scope And Out-of-Scope
 
 **In scope**:
-- Rust module area: $(System.Collections.Hashtable.Module).
+- Rust module area: src/runtime.rs, src/llm.rs, src/lib.rs.
 - Behavior listed in §6 acceptance criteria.
 - Unit tests and, where applicable, parity fixtures for upstream ragas semantics.
 
