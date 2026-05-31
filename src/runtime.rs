@@ -1,4 +1,8 @@
+use std::{future::Future, pin::Pin};
+
 use serde::{Deserialize, Serialize};
+
+use crate::RagasError;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunConfig {
@@ -148,6 +152,78 @@ pub struct RunConfigBuilder {
     seed: Option<u64>,
 }
 
+type ExecutorFuture<T> = Pin<Box<dyn Future<Output = Result<T, RagasError>> + Send + 'static>>;
+
+pub struct AsyncExecutor<T> {
+    config: RunConfig,
+    jobs: Vec<ExecutorJob<T>>,
+}
+
+impl<T> AsyncExecutor<T>
+where
+    T: Send + 'static,
+{
+    pub fn new(config: RunConfig) -> Self {
+        Self {
+            config,
+            jobs: Vec::new(),
+        }
+    }
+
+    pub fn submit<F>(mut self, name: impl Into<String>, future: F) -> Self
+    where
+        F: Future<Output = Result<T, RagasError>> + Send + 'static,
+    {
+        self.jobs.push(ExecutorJob {
+            name: name.into(),
+            future: Box::pin(future),
+        });
+        self
+    }
+
+    pub async fn run(self) -> ExecutorReport<T> {
+        unimplemented!("TEST-6.2.1 TEST-6.2.2 TEST-6.2.3")
+    }
+}
+
+struct ExecutorJob<T> {
+    name: String,
+    future: ExecutorFuture<T>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProgressEventKind {
+    Started,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProgressEvent {
+    pub job_index: usize,
+    pub job_name: String,
+    pub kind: ProgressEventKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecutorOutcome<T> {
+    Success(T),
+    Failure(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutorJobResult<T> {
+    pub job_index: usize,
+    pub job_name: String,
+    pub outcome: ExecutorOutcome<T>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutorReport<T> {
+    pub results: Vec<ExecutorJobResult<T>>,
+    pub events: Vec<ProgressEvent>,
+}
+
 impl RunConfigBuilder {
     pub fn timeout_ms(mut self, per_operation_ms: u64) -> Self {
         self.timeout = Some(TimeoutConfig {
@@ -215,6 +291,10 @@ impl RunConfigBuilder {
 mod tests {
     use super::*;
     use crate::EvaluationOptions;
+    use std::{
+        thread,
+        time::Duration,
+    };
 
     #[test]
     fn test_6_1_1_run_config_stores_timeout_retry_concurrency_and_cancellation() {
@@ -275,5 +355,94 @@ mod tests {
             .expect_err("initial backoff cannot exceed max backoff");
         assert_eq!(retry_error.field, "retry.initial_backoff_ms");
         assert!(retry_error.message.contains("max_backoff_ms"));
+    }
+
+    #[tokio::test]
+    async fn test_6_2_1_executor_preserves_output_order_for_concurrent_tasks() {
+        // SCEN-6.2.1 / AC1 / TEST-6.2.1
+        let config = RunConfig::builder()
+            .concurrency(3)
+            .build()
+            .expect("valid config");
+        let report = AsyncExecutor::new(config)
+            .submit("slow", async {
+                thread::sleep(Duration::from_millis(30));
+                Ok("first")
+            })
+            .submit("fast", async {
+                thread::sleep(Duration::from_millis(1));
+                Ok("second")
+            })
+            .submit("middle", async {
+                thread::sleep(Duration::from_millis(10));
+                Ok("third")
+            })
+            .run()
+            .await;
+
+        let values = report
+            .results
+            .iter()
+            .map(|result| match &result.outcome {
+                ExecutorOutcome::Success(value) => *value,
+                ExecutorOutcome::Failure(error) => panic!("unexpected failure: {error}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, vec!["first", "second", "third"]);
+    }
+
+    #[tokio::test]
+    async fn test_6_2_2_executor_records_partial_failures_without_aborting_unrelated_work() {
+        // SCEN-6.2.2 / AC2 / TEST-6.2.2
+        let config = RunConfig::builder()
+            .concurrency(2)
+            .build()
+            .expect("valid config");
+        let report = AsyncExecutor::new(config)
+            .submit("ok-1", async { Ok(10) })
+            .submit("bad", async {
+                Err(RagasError::Provider {
+                    message: "provider failed".to_string(),
+                })
+            })
+            .submit("ok-2", async { Ok(30) })
+            .run()
+            .await;
+
+        assert_eq!(report.results.len(), 3);
+        assert!(matches!(report.results[0].outcome, ExecutorOutcome::Success(10)));
+        assert!(matches!(
+            &report.results[1].outcome,
+            ExecutorOutcome::Failure(message) if message.contains("provider failed")
+        ));
+        assert!(matches!(report.results[2].outcome, ExecutorOutcome::Success(30)));
+    }
+
+    #[tokio::test]
+    async fn test_6_2_3_executor_emits_progress_events_for_start_success_and_failure() {
+        // SCEN-6.2.3 / AC3 / TEST-6.2.3
+        let report = AsyncExecutor::new(RunConfig::default())
+            .submit("ok", async { Ok("done") })
+            .submit("bad", async {
+                Err(RagasError::Provider {
+                    message: "nope".to_string(),
+                })
+            })
+            .run()
+            .await;
+
+        assert!(report.events.iter().any(|event| {
+            event.job_name == "ok" && event.kind == ProgressEventKind::Started
+        }));
+        assert!(report.events.iter().any(|event| {
+            event.job_name == "ok" && event.kind == ProgressEventKind::Succeeded
+        }));
+        assert!(report.events.iter().any(|event| {
+            event.job_name == "bad" && event.kind == ProgressEventKind::Started
+        }));
+        assert!(report.events.iter().any(|event| {
+            event.job_name == "bad" && event.kind == ProgressEventKind::Failed
+        }));
     }
 }

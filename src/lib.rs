@@ -21,7 +21,9 @@ pub use metric::{
     RankingItem, ResponseRelevancyMetric, cosine_similarity,
 };
 pub use runtime::{
-    CancellationConfig, RetryConfig, RunConfig, RunConfigBuilder, RunConfigError, TimeoutConfig,
+    AsyncExecutor, CancellationConfig, ExecutorJobResult, ExecutorOutcome, ExecutorReport,
+    ProgressEvent, ProgressEventKind, RetryConfig, RunConfig, RunConfigBuilder, RunConfigError,
+    TimeoutConfig,
 };
 pub use schema::{Message, MessageRole, MultiTurnSample, Rubric, ToolCall};
 pub use validation::{
