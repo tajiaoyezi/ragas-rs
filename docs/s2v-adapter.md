@@ -122,7 +122,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 7.2 | providers | docs/specs/tasks/task-7.2-llm-adapters.md | Done | after task 7.1 | - |
 | 7.3 | providers | docs/specs/tasks/task-7.3-embedding-adapters.md | Done | after task 7.2 | - |
 | 8.1 | prompts | docs/specs/tasks/task-8.1-prompt-core.md | Done | after task 6.3 | - |
-| 8.2 | prompts | docs/specs/tasks/task-8.2-output-parser.md | Draft | after task 8.1 | - |
+| 8.2 | prompts | docs/specs/tasks/task-8.2-output-parser.md | Done | after task 8.1 | - |
 | 8.3 | prompts | docs/specs/tasks/task-8.3-multimodal-prompt.md | Draft | after task 8.2 | - |
 | 9.1 | metrics | docs/specs/tasks/task-9.1-metric-base.md | Draft | after task 8.3 | - |
 | 9.2 | metrics | docs/specs/tasks/task-9.2-metric-result.md | Draft | after task 9.1 | - |
