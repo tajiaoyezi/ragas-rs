@@ -1,6 +1,6 @@
 # Task 13.2 - transforms
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 13
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
