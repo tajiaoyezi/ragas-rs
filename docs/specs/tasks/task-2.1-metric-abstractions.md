@@ -1,6 +1,6 @@
 # Task 2.1 - metric-abstractions
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 2 - metric-abstractions
 **PRD**: docs/prds/ragas-rs.prd.md
 
