@@ -1,6 +1,6 @@
 # Task 6.3 - callbacks-cost-cache
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 6
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-6.3.1 | TEST-6.3.1 | Not Started |
-| AC2 | SCEN-6.3.2 | TEST-6.3.2 | Not Started |
-| AC3 | SCEN-6.3.3 | TEST-6.3.3 | Not Started |
+| AC1 | SCEN-6.3.1 | TEST-6.3.1 | Done |
+| AC2 | SCEN-6.3.2 | TEST-6.3.2 | Done |
+| AC3 | SCEN-6.3.3 | TEST-6.3.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,20 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/runtime.rs`（新增 CallbackManager/RuntimeEvent、UsageTracker/UsageSummary、CacheKey stable redaction）
+  - `src/lib.rs`（导出 callbacks/cost/cache runtime API）
+  - `docs/specs/tasks/task-6.3-callbacks-cost-cache.md`（Status/traceability/Completion Notes 回填）
+- **commit 列表**：
+  - `0f1a7d7` docs(spec): task-6.3 Ready
+  - `fd095e6` docs(spec): task-6.3 进入实施
+  - `10610ac` test(runtime): 加 task-6.3 RED 测试
+  - `2aadead` feat(runtime): 实现 task-6.3 callbacks cost cache
+- **§9 Verification 结果**：
+  - install: pass (`cargo build`)
+  - typecheck: pass (`cargo check`)
+  - unit-test: 31 passed / 0 failed (`cargo test`)
+  - build: pass (`cargo build`)
+- **剩余风险 / 未做项**：本 task 提供 runtime 抽象层；实际 provider/evaluate 深度接线、token price table、持久化 cache backend 由 provider、integration、backend phases 继续扩展。
+- **下游 task 影响**：Phase 7 provider adapters 可记录 usage 并复用 CacheKey；Phase 14 integrations/CLI 可订阅 RuntimeEvent；Phase 15 benchmarks 可复用 UsageSummary 做成本汇总。
