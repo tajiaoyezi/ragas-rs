@@ -106,18 +106,105 @@ impl EvaluationDataset<SingleTurnSample> {
         Self::new(vec![sample])
     }
 
-    pub fn from_csv_str(_input: &str) -> Result<Self, RagasError> {
-        unimplemented!("TEST-5.2.2")
+    pub fn from_csv_str(input: &str) -> Result<Self, RagasError> {
+        let mut reader = csv::ReaderBuilder::new()
+            .trim(csv::Trim::All)
+            .from_reader(input.as_bytes());
+        let headers = reader
+            .headers()
+            .map_err(|error| dataset_io_error(format!("CSV header parse failed: {error}")))?
+            .clone();
+
+        let user_input_idx = required_header(&headers, "user_input")?;
+        let response_idx = required_header(&headers, "response")?;
+        let contexts_idx = required_header(&headers, "retrieved_contexts")?;
+        let reference_idx = header_index(&headers, "reference");
+        let metadata_columns = headers
+            .iter()
+            .enumerate()
+            .filter_map(|(index, header)| {
+                header
+                    .strip_prefix("metadata.")
+                    .map(|key| (index, key.to_string()))
+            })
+            .filter(|(_, key)| !key.is_empty())
+            .collect::<Vec<_>>();
+
+        let mut samples = Vec::new();
+        for (row_index, record) in reader.records().enumerate() {
+            let row_number = row_index + 2;
+            let record = record.map_err(|error| {
+                dataset_io_error(format!("CSV row {row_number} parse failed: {error}"))
+            })?;
+            let user_input = required_cell(&record, user_input_idx, "user_input", row_number)?;
+            let response = required_cell(&record, response_idx, "response", row_number)?;
+            let retrieved_contexts = parse_retrieved_contexts(
+                required_cell(&record, contexts_idx, "retrieved_contexts", row_number)?,
+                row_number,
+            )?;
+            let mut sample = SingleTurnSample::new(user_input, response, retrieved_contexts);
+
+            if let Some(index) = reference_idx {
+                if let Some(reference) = optional_cell(&record, index) {
+                    sample = sample.with_reference(reference);
+                }
+            }
+            for (index, key) in &metadata_columns {
+                if let Some(value) = optional_cell(&record, *index) {
+                    sample = sample.with_metadata(key, value);
+                }
+            }
+
+            validate_sample(row_index, &sample)?;
+            samples.push(sample);
+        }
+
+        Self::new(samples)
     }
 }
 
 impl EvaluationDataset<EvaluationSample> {
-    pub fn from_jsonl_str(_input: &str) -> Result<Self, RagasError> {
-        unimplemented!("TEST-5.2.1")
+    pub fn from_samples(samples: Vec<EvaluationSample>) -> Result<Self, RagasError> {
+        if samples.is_empty() {
+            return Err(RagasError::EmptyDataset);
+        }
+        for (index, sample) in samples.iter().enumerate() {
+            validate_evaluation_sample(index, sample)?;
+        }
+
+        Ok(Self {
+            samples,
+            metadata: HashMap::new(),
+        })
+    }
+
+    pub fn from_jsonl_str(input: &str) -> Result<Self, RagasError> {
+        let mut samples = Vec::new();
+        for (line_index, line) in input.lines().enumerate() {
+            let line_number = line_index + 1;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let sample = serde_json::from_str::<EvaluationSample>(trimmed).map_err(|error| {
+                dataset_io_error(format!("JSONL line {line_number} parse failed: {error}"))
+            })?;
+            validate_evaluation_sample(line_index, &sample)?;
+            samples.push(sample);
+        }
+
+        Self::from_samples(samples)
     }
 
     pub fn to_jsonl_string(&self) -> Result<String, RagasError> {
-        unimplemented!("TEST-5.2.1")
+        let mut output = String::new();
+        for sample in &self.samples {
+            let line = serde_json::to_string(sample)
+                .map_err(|error| dataset_io_error(format!("JSONL serialize failed: {error}")))?;
+            output.push_str(&line);
+            output.push('\n');
+        }
+        Ok(output)
     }
 }
 
@@ -151,8 +238,75 @@ impl EvaluationDatasetBuilder {
     }
 
     pub fn build(self) -> Result<EvaluationDataset<EvaluationSample>, RagasError> {
-        unimplemented!("TEST-5.2.3")
+        if self.samples.is_empty() {
+            return Err(RagasError::EmptyDataset);
+        }
+        for (index, sample) in self.samples.iter().enumerate() {
+            validate_evaluation_sample(index, sample)?;
+        }
+
+        Ok(EvaluationDataset {
+            samples: self.samples,
+            metadata: self.metadata,
+        })
     }
+}
+
+fn dataset_io_error(message: impl Into<String>) -> RagasError {
+    RagasError::DatasetIo {
+        message: message.into(),
+    }
+}
+
+fn header_index(headers: &csv::StringRecord, name: &str) -> Option<usize> {
+    headers.iter().position(|header| header == name)
+}
+
+fn required_header(headers: &csv::StringRecord, name: &str) -> Result<usize, RagasError> {
+    header_index(headers, name)
+        .ok_or_else(|| dataset_io_error(format!("CSV missing required column: {name}")))
+}
+
+fn required_cell(
+    record: &csv::StringRecord,
+    index: usize,
+    field: &str,
+    row_number: usize,
+) -> Result<String, RagasError> {
+    let value = record.get(index).unwrap_or("").trim();
+    if value.is_empty() {
+        return Err(dataset_io_error(format!(
+            "CSV row {row_number} missing required value: {field}"
+        )));
+    }
+    Ok(value.to_string())
+}
+
+fn optional_cell(record: &csv::StringRecord, index: usize) -> Option<String> {
+    record
+        .get(index)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn parse_retrieved_contexts(value: String, row_number: usize) -> Result<Vec<String>, RagasError> {
+    let trimmed = value.trim();
+    if trimmed.starts_with('[') {
+        let contexts = serde_json::from_str::<Vec<String>>(trimmed).map_err(|error| {
+            dataset_io_error(format!(
+                "CSV row {row_number} retrieved_contexts JSON parse failed: {error}"
+            ))
+        })?;
+        return Ok(contexts);
+    }
+
+    Ok(trimmed
+        .split('|')
+        .map(str::trim)
+        .filter(|context| !context.is_empty())
+        .map(ToOwned::to_owned)
+        .collect())
 }
 
 fn validate_sample(index: usize, sample: &SingleTurnSample) -> Result<(), RagasError> {
@@ -181,6 +335,21 @@ fn validate_sample(index: usize, sample: &SingleTurnSample) -> Result<(), RagasE
     Ok(())
 }
 
+fn validate_evaluation_sample(index: usize, sample: &EvaluationSample) -> Result<(), RagasError> {
+    match sample {
+        EvaluationSample::SingleTurn(sample) => validate_sample(index, sample),
+        EvaluationSample::MultiTurn(sample) => {
+            if sample.messages.is_empty() {
+                return Err(RagasError::InvalidSample {
+                    index,
+                    field: "messages".to_string(),
+                });
+            }
+            Ok(())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,17 +373,16 @@ mod tests {
             sample.reference.as_deref(),
             Some("Ragas is an evaluation toolkit.")
         );
-        assert_eq!(sample.metadata.get("source").map(String::as_str), Some("unit-test"));
+        assert_eq!(
+            sample.metadata.get("source").map(String::as_str),
+            Some("unit-test")
+        );
     }
 
     #[test]
     fn test_1_1_2_dataset_exposes_collection_helpers() {
         // SCEN-1.1.2 / AC2 / TEST-1.1.2
-        let sample = SingleTurnSample::new(
-            "Question",
-            "Answer",
-            vec!["Context".to_string()],
-        );
+        let sample = SingleTurnSample::new("Question", "Answer", vec!["Context".to_string()]);
 
         let dataset = EvaluationDataset::from_sample(sample).expect("valid dataset");
 
@@ -291,7 +459,10 @@ mod tests {
         assert_eq!(sample.response, "Answer");
         assert_eq!(sample.retrieved_contexts, vec!["ctx one", "ctx two"]);
         assert_eq!(sample.reference.as_deref(), Some("Reference"));
-        assert_eq!(sample.metadata.get("source").map(String::as_str), Some("fixture"));
+        assert_eq!(
+            sample.metadata.get("source").map(String::as_str),
+            Some("fixture")
+        );
 
         let error = EvaluationDataset::from_csv_str("user_input,response\nWhat?,Answer\n")
             .expect_err("missing retrieved_contexts column");

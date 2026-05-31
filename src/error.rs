@@ -8,6 +8,9 @@ pub enum RagasError {
     #[error("invalid sample at index {index}: {field}")]
     InvalidSample { index: usize, field: String },
 
+    #[error("dataset IO error: {message}")]
+    DatasetIo { message: String },
+
     #[error("provider error: {message}")]
     Provider { message: String },
 
