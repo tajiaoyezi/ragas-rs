@@ -1,6 +1,6 @@
 # Phase 13 - testset-generation
 
-**Status**: In Progress
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 **Depends On**: 5,7,8
 
