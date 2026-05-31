@@ -32,9 +32,10 @@ pub use metrics::{
     MetricRegistryEntry, MetricSampleKind, MetricValueType, MultiTurnMetric, ParityStatus,
     ScoreNormalizationPolicy, SingleTurnMetric, answer_correctness,
     answer_relevancy_from_embedding_similarity, answer_relevancy_from_judge_output,
-    context_entity_recall, context_precision_from_relevance, context_recall, context_relevance,
-    factual_correctness, id_based_context_precision, noise_sensitivity, normalize_score,
-    response_groundedness,
+    bleu_unigram, chrf_score, context_entity_recall, context_precision_from_relevance,
+    context_recall, context_relevance, exact_match, factual_correctness,
+    id_based_context_precision, lexical_tokenizer_assumptions, noise_sensitivity, normalize_score,
+    response_groundedness, rouge_l_recall, string_distance_similarity,
 };
 pub use providers::{
     MockEmbeddingProvider, MockLlmProvider, ProviderRegistry, record_provider_usage,

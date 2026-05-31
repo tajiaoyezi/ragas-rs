@@ -2,6 +2,7 @@ pub mod base;
 pub mod rag;
 pub mod registry;
 pub mod result;
+pub mod traditional;
 
 pub use base::{
     MetricMetadata, MetricProviderRequirement, MetricSampleKind, MultiTurnMetric,
@@ -19,3 +20,7 @@ pub use result::{
     ScoreNormalizationPolicy, normalize_score,
 };
 pub use registry::{MetricRegistry, MetricRegistryEntry, ParityStatus};
+pub use traditional::{
+    bleu_unigram, chrf_score, exact_match, lexical_tokenizer_assumptions, rouge_l_recall,
+    string_distance_similarity,
+};
