@@ -97,7 +97,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 8 | prompts-and-parsers | docs/specs/phases/phase-8-prompts-and-parsers.md | Done | 3 | - |
 | 9 | metric-framework-complete | docs/specs/phases/phase-9-metric-framework-complete.md | Done | 3 | - |
 | 10 | rag-metrics | docs/specs/phases/phase-10-rag-metrics.md | Done | 3 | - |
-| 11 | deterministic-and-similarity-metrics | docs/specs/phases/phase-11-deterministic-and-similarity-metrics.md | Draft | 3 | - |
+| 11 | deterministic-and-similarity-metrics | docs/specs/phases/phase-11-deterministic-and-similarity-metrics.md | In Progress | 3 | - |
 | 12 | advanced-metrics | docs/specs/phases/phase-12-advanced-metrics.md | Draft | 3 | - |
 | 13 | testset-generation | docs/specs/phases/phase-13-testset-generation.md | Draft | 3 | - |
 | 14 | backends-integrations-cli | docs/specs/phases/phase-14-backends-integrations-cli.md | Draft | 3 | - |
@@ -130,7 +130,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 10.1 | metrics-rag | docs/specs/tasks/task-10.1-context-metrics.md | Done | after task 9.3 | - |
 | 10.2 | metrics-rag | docs/specs/tasks/task-10.2-faithfulness-family.md | Done | after task 10.1 | - |
 | 10.3 | metrics-rag | docs/specs/tasks/task-10.3-answer-quality.md | Done | after task 10.2 | - |
-| 11.1 | metrics-traditional | docs/specs/tasks/task-11.1-lexical.md | Draft | after task 9.3 | - |
+| 11.1 | metrics-traditional | docs/specs/tasks/task-11.1-lexical.md | Done | after task 9.3 | - |
 | 11.2 | metrics-traditional | docs/specs/tasks/task-11.2-semantic.md | Draft | after task 11.1 | - |
 | 11.3 | metrics-traditional | docs/specs/tasks/task-11.3-quoted-spans.md | Draft | after task 11.2 | - |
 | 12.1 | metrics-advanced | docs/specs/tasks/task-12.1-rubrics.md | Draft | after task 9.3 | - |
