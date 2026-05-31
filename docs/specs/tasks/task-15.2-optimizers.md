@@ -1,6 +1,6 @@
 # Task 15.2 - optimizers
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 15
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
