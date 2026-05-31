@@ -27,7 +27,7 @@ src/metrics/advanced/
 |---|---|---|
 | 12.1 | docs/specs/tasks/task-12.1-rubrics.md | Done |
 | 12.2 | docs/specs/tasks/task-12.2-agents-tools.md | Done |
-| 12.3 | docs/specs/tasks/task-12.3-sql-multimodal-summary.md | Draft |
+| 12.3 | docs/specs/tasks/task-12.3-sql-multimodal-summary.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 
