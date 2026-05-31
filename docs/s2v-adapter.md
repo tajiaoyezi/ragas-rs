@@ -142,7 +142,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 14.1 | backends | docs/specs/tasks/task-14.1-backends.md | Done | after task 13.3 | - |
 | 14.2 | integrations | docs/specs/tasks/task-14.2-integrations.md | Done | after task 14.1 | - |
 | 14.3 | cli | docs/specs/tasks/task-14.3-cli.md | Done | after task 14.2 | - |
-| 15.1 | experiments | docs/specs/tasks/task-15.1-experiments.md | In Progress | after task 14.3 | - |
+| 15.1 | experiments | docs/specs/tasks/task-15.1-experiments.md | Done | after task 14.3 | - |
 | 15.2 | optimizers | docs/specs/tasks/task-15.2-optimizers.md | Draft | after task 15.1 | - |
 | 15.3 | benchmarks | docs/specs/tasks/task-15.3-benchmarks.md | Draft | after task 15.2 | - |
 | 16.1 | parity | docs/specs/tasks/task-16.1-parity-suite.md | Draft | after tasks 10-15 | - |
