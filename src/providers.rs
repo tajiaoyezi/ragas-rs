@@ -36,12 +36,22 @@ impl ProviderRegistry {
         self
     }
 
-    pub fn llm(&self, _name: &str) -> Result<Arc<dyn LlmProvider>, RagasError> {
-        unimplemented!("TEST-7.1.1")
+    pub fn llm(&self, name: &str) -> Result<Arc<dyn LlmProvider>, RagasError> {
+        self.llms
+            .get(name)
+            .cloned()
+            .ok_or_else(|| RagasError::Provider {
+                message: format!("missing provider: llm '{name}'"),
+            })
     }
 
-    pub fn embedding(&self, _name: &str) -> Result<Arc<dyn EmbeddingProvider>, RagasError> {
-        unimplemented!("TEST-7.1.1")
+    pub fn embedding(&self, name: &str) -> Result<Arc<dyn EmbeddingProvider>, RagasError> {
+        self.embeddings
+            .get(name)
+            .cloned()
+            .ok_or_else(|| RagasError::Provider {
+                message: format!("missing provider: embedding '{name}'"),
+            })
     }
 }
 
@@ -69,7 +79,7 @@ impl MockLlmProvider {
 #[async_trait]
 impl LlmProvider for MockLlmProvider {
     async fn generate(&self, _request: LlmRequest) -> Result<LlmResponse, RagasError> {
-        unimplemented!("TEST-7.1.2")
+        Ok(self.response.clone())
     }
 }
 
@@ -96,17 +106,22 @@ impl MockEmbeddingProvider {
 #[async_trait]
 impl EmbeddingProvider for MockEmbeddingProvider {
     async fn embed(&self, _request: EmbeddingRequest) -> Result<EmbeddingResponse, RagasError> {
-        unimplemented!("TEST-7.1.2")
+        Ok(EmbeddingResponse {
+            embeddings: self.embeddings.clone(),
+            usage: self.usage.clone(),
+        })
     }
 }
 
 pub fn record_provider_usage(
-    _tracker: &mut UsageTracker,
-    _provider_name: impl Into<String>,
-    _metric_name: impl Into<String>,
-    _usage: Option<&TokenUsage>,
+    tracker: &mut UsageTracker,
+    provider_name: impl Into<String>,
+    metric_name: impl Into<String>,
+    usage: Option<&TokenUsage>,
 ) {
-    unimplemented!("TEST-7.1.3")
+    if let Some(usage) = usage {
+        tracker.record(provider_name, metric_name, usage.clone());
+    }
 }
 
 #[cfg(test)]
