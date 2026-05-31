@@ -26,6 +26,14 @@ impl PromptValue {
             PromptValue::Boolean(_) => PromptValueKind::Boolean,
         }
     }
+
+    fn render(&self) -> String {
+        match self {
+            PromptValue::Text(value) => value.clone(),
+            PromptValue::Number(value) => value.to_string(),
+            PromptValue::Boolean(value) => value.to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -83,6 +91,14 @@ impl LanguageAdapterRule {
             instruction: instruction.into(),
         }
     }
+
+    fn adapt(&self, text: &str) -> String {
+        if self.instruction.is_empty() {
+            text.to_string()
+        } else {
+            format!("{}\n\n{text}", self.instruction)
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -116,20 +132,45 @@ impl PromptTemplate {
         self
     }
 
-    pub fn with_few_shot(self, _example: FewShotExample) -> Self {
-        unimplemented!("task 8.1 RED skeleton")
+    pub fn with_few_shot(mut self, example: FewShotExample) -> Self {
+        self.few_shot_examples.push(example);
+        self
     }
 
     pub fn few_shot_examples(&self) -> &[FewShotExample] {
         &self.few_shot_examples
     }
 
-    pub fn with_language_adapter(self, _adapter: LanguageAdapterRule) -> Self {
-        unimplemented!("task 8.1 RED skeleton")
+    pub fn with_language_adapter(mut self, adapter: LanguageAdapterRule) -> Self {
+        self.language_adapter = Some(adapter);
+        self
     }
 
-    pub fn render(&self, _variables: &PromptVariables) -> Result<RenderedPrompt, RagasError> {
-        unimplemented!("task 8.1 RED skeleton")
+    pub fn render(&self, variables: &PromptVariables) -> Result<RenderedPrompt, RagasError> {
+        let mut text = self.template.clone();
+        for (name, expected_kind) in &self.variables {
+            let value = variables.values.get(name).ok_or_else(|| RagasError::Prompt {
+                message: format!("missing prompt variable '{name}'"),
+            })?;
+            if value.kind() != *expected_kind {
+                return Err(RagasError::Prompt {
+                    message: format!(
+                        "prompt variable type mismatch for '{name}': expected {expected_kind:?}, got {:?}",
+                        value.kind()
+                    ),
+                });
+            }
+            text = text.replace(&format!("{{{{{name}}}}}"), &value.render());
+        }
+
+        if let Some(adapter) = &self.language_adapter {
+            text = adapter.adapt(&text);
+        }
+
+        Ok(RenderedPrompt {
+            text,
+            few_shot_examples: self.few_shot_examples.clone(),
+        })
     }
 }
 
