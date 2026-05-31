@@ -15,19 +15,27 @@ pub struct SingleTurnSample {
 
 impl SingleTurnSample {
     pub fn new(
-        _user_input: impl Into<String>,
-        _response: impl Into<String>,
-        _retrieved_contexts: Vec<String>,
+        user_input: impl Into<String>,
+        response: impl Into<String>,
+        retrieved_contexts: Vec<String>,
     ) -> Self {
-        unimplemented!("TEST-1.1.1: sample constructor is not implemented yet")
+        Self {
+            user_input: user_input.into(),
+            response: response.into(),
+            retrieved_contexts,
+            reference: None,
+            metadata: HashMap::new(),
+        }
     }
 
-    pub fn with_reference(self, _reference: impl Into<String>) -> Self {
-        unimplemented!("TEST-1.1.1: sample reference setter is not implemented yet")
+    pub fn with_reference(mut self, reference: impl Into<String>) -> Self {
+        self.reference = Some(reference.into());
+        self
     }
 
-    pub fn with_metadata(self, _key: impl Into<String>, _value: impl Into<String>) -> Self {
-        unimplemented!("TEST-1.1.1: sample metadata setter is not implemented yet")
+    pub fn with_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.metadata.insert(key.into(), value.into());
+        self
     }
 }
 
@@ -37,20 +45,28 @@ pub struct EvaluationDataset {
 }
 
 impl EvaluationDataset {
-    pub fn new(_samples: Vec<SingleTurnSample>) -> Result<Self, RagasError> {
-        unimplemented!("TEST-1.1.2: dataset constructor is not implemented yet")
+    pub fn new(samples: Vec<SingleTurnSample>) -> Result<Self, RagasError> {
+        if samples.is_empty() {
+            return Err(RagasError::EmptyDataset);
+        }
+
+        for (index, sample) in samples.iter().enumerate() {
+            validate_sample(index, sample)?;
+        }
+
+        Ok(Self { samples })
     }
 
-    pub fn from_sample(_sample: SingleTurnSample) -> Result<Self, RagasError> {
-        unimplemented!("TEST-1.1.2: single-sample dataset constructor is not implemented yet")
+    pub fn from_sample(sample: SingleTurnSample) -> Result<Self, RagasError> {
+        Self::new(vec![sample])
     }
 
     pub fn len(&self) -> usize {
-        unimplemented!("TEST-1.1.2: dataset len is not implemented yet")
+        self.samples.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        unimplemented!("TEST-1.1.2: dataset empty check is not implemented yet")
+        self.samples.is_empty()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &SingleTurnSample> {
@@ -58,8 +74,34 @@ impl EvaluationDataset {
     }
 
     pub fn samples(&self) -> &[SingleTurnSample] {
-        unimplemented!("TEST-1.1.2: dataset samples accessor is not implemented yet")
+        &self.samples
     }
+}
+
+fn validate_sample(index: usize, sample: &SingleTurnSample) -> Result<(), RagasError> {
+    if sample.user_input.trim().is_empty() {
+        return Err(RagasError::InvalidSample {
+            index,
+            field: "user_input".to_string(),
+        });
+    }
+    if sample.response.trim().is_empty() {
+        return Err(RagasError::InvalidSample {
+            index,
+            field: "response".to_string(),
+        });
+    }
+    if sample
+        .retrieved_contexts
+        .iter()
+        .all(|context| context.trim().is_empty())
+    {
+        return Err(RagasError::InvalidSample {
+            index,
+            field: "retrieved_contexts".to_string(),
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
