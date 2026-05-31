@@ -1,11 +1,67 @@
 use std::collections::BTreeSet;
 
-use crate::{DetailedMetricResult, MetricEvidence, MetricValueType, ScoreNormalizationPolicy};
+use crate::{
+    DetailedMetricResult, MetricEvidence, MetricValueType, OutputParseDiagnostic,
+    RagasError, RenderedPrompt, RepairStrategy, ScoreNormalizationPolicy, SingleTurnSample,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextPrecisionVariant {
     RankedRelevance,
     IdOverlap,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FactualCorrectnessCounts {
+    pub true_positive: usize,
+    pub false_positive: usize,
+    pub false_negative: usize,
+}
+
+impl FactualCorrectnessCounts {
+    pub fn new(true_positive: usize, false_positive: usize, false_negative: usize) -> Self {
+        Self {
+            true_positive,
+            false_positive,
+            false_negative,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FaithfulnessJudgeContract;
+
+impl FaithfulnessJudgeContract {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn render_prompt(&self, _sample: &SingleTurnSample) -> Result<RenderedPrompt, RagasError> {
+        Ok(RenderedPrompt {
+            text: String::new(),
+            few_shot_examples: Vec::new(),
+        })
+    }
+
+    pub fn parse_judge_output(
+        &self,
+        _output: &str,
+    ) -> Result<DetailedMetricResult, OutputParseDiagnostic> {
+        Ok(numeric_result(
+            "faithfulness",
+            0.0,
+            "not implemented",
+            Vec::new(),
+        ))
+    }
+}
+
+pub fn response_groundedness(_response: &str, _contexts: &[String]) -> DetailedMetricResult {
+    numeric_result("response_groundedness", 0.0, "not implemented", Vec::new())
+}
+
+pub fn factual_correctness(_counts: FactualCorrectnessCounts) -> DetailedMetricResult {
+    numeric_result("factual_correctness", 0.0, "not implemented", Vec::new())
 }
 
 impl ContextPrecisionVariant {
@@ -298,6 +354,15 @@ fn is_stopword(token: &str) -> bool {
     )
 }
 
+#[allow(dead_code)]
+fn parser_diagnostic(message: impl Into<String>) -> OutputParseDiagnostic {
+    OutputParseDiagnostic {
+        message: message.into(),
+        raw_excerpt: String::new(),
+        repair_strategy: RepairStrategy::None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,5 +434,60 @@ mod tests {
         assert_eq!(relevance.evidence[0].source, "context[0]");
         assert!(relevance.evidence[0].text.contains("Ragas evaluates"));
         assert!(relevance.reason.as_deref().unwrap_or("").contains("lexical overlap"));
+    }
+
+    #[test]
+    fn test_10_2_1_faithfulness_uses_prompt_parser_contract_from_phase_8() {
+        // SCEN-10.2.1 / AC1 / TEST-10.2.1
+        let contract = FaithfulnessJudgeContract::new();
+        let sample = SingleTurnSample::new(
+            "What does ragas evaluate?",
+            "Ragas evaluates LLM applications.",
+            vec!["Ragas evaluates LLM applications with metrics.".to_string()],
+        );
+
+        let rendered = contract.render_prompt(&sample).expect("rendered prompt");
+        assert!(rendered.text.contains("Question: What does ragas evaluate?"));
+        assert!(rendered.text.contains("Response: Ragas evaluates LLM applications."));
+        assert!(rendered.text.contains("Contexts:"));
+        assert_eq!(rendered.few_shot_examples.len(), 1);
+
+        let parsed = contract
+            .parse_judge_output(r#"{"score":0.75,"reason":"supported by context"}"#)
+            .expect("parsed judge output");
+        assert_eq!(parsed.metric_name, "faithfulness");
+        assert_score_close(&parsed, 0.75);
+        assert_eq!(parsed.reason.as_deref(), Some("supported by context"));
+    }
+
+    #[test]
+    fn test_10_2_2_response_groundedness_records_supporting_context_evidence() {
+        // SCEN-10.2.2 / AC2 / TEST-10.2.2
+        let contexts = vec![
+            "Ragas evaluates LLM applications with metrics.".to_string(),
+            "The framework can compare model outputs.".to_string(),
+        ];
+        let result = response_groundedness(
+            "Ragas evaluates LLM applications. Rust services run fast.",
+            &contexts,
+        );
+
+        assert_score_close(&result, 0.5);
+        assert_eq!(result.metric_name, "response_groundedness");
+        assert_eq!(result.evidence.len(), 1);
+        assert_eq!(result.evidence[0].source, "context[0]");
+        assert!(result.reason.as_deref().unwrap_or("").contains("response claims"));
+    }
+
+    #[test]
+    fn test_10_2_3_factual_correctness_handles_tp_fp_fn_style_output() {
+        // SCEN-10.2.3 / AC3 / TEST-10.2.3
+        let result = factual_correctness(FactualCorrectnessCounts::new(3, 1, 2));
+
+        assert_score_close(&result, 6.0 / 9.0);
+        assert_eq!(result.metric_name, "factual_correctness");
+        assert!(result.reason.as_deref().unwrap_or("").contains("TP=3"));
+        assert!(result.reason.as_deref().unwrap_or("").contains("FP=1"));
+        assert!(result.reason.as_deref().unwrap_or("").contains("FN=2"));
     }
 }

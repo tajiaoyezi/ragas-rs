@@ -8,8 +8,9 @@ pub use base::{
     SingleTurnMetric,
 };
 pub use rag::{
-    ContextPrecisionVariant, context_entity_recall, context_precision_from_relevance,
-    context_recall, context_relevance, id_based_context_precision,
+    ContextPrecisionVariant, FaithfulnessJudgeContract, FactualCorrectnessCounts,
+    context_entity_recall, context_precision_from_relevance, context_recall, context_relevance,
+    factual_correctness, id_based_context_precision, response_groundedness,
 };
 pub use result::{
     DetailedMetricResult, MetricError, MetricErrorKind, MetricEvidence, MetricValueType,
