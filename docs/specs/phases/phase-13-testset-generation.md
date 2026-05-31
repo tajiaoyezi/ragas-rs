@@ -27,7 +27,7 @@ src/testset/
 |---|---|---|
 | 13.1 | docs/specs/tasks/task-13.1-graph-core.md | Done |
 | 13.2 | docs/specs/tasks/task-13.2-transforms.md | Done |
-| 13.3 | docs/specs/tasks/task-13.3-synthesizers.md | Draft |
+| 13.3 | docs/specs/tasks/task-13.3-synthesizers.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 
