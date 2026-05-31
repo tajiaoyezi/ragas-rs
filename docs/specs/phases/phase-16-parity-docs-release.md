@@ -26,7 +26,7 @@ tests/parity/ + examples/ + docs/
 | Task | Spec | Status |
 |---|---|---|
 | 16.1 | docs/specs/tasks/task-16.1-parity-suite.md | Done |
-| 16.2 | docs/specs/tasks/task-16.2-docs-examples.md | Ready |
+| 16.2 | docs/specs/tasks/task-16.2-docs-examples.md | In Progress |
 | 16.3 | docs/specs/tasks/task-16.3-release.md | Draft |
 
 ## 6. Phase Acceptance And Smoke

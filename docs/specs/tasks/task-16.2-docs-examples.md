@@ -1,6 +1,6 @@
 # Task 16.2 - docs-examples
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 16
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
