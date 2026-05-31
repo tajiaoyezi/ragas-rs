@@ -54,25 +54,58 @@ impl TracingIntegration {
     }
 
     pub fn callback(&self) -> impl Fn(&RuntimeEvent) + Send + Sync + 'static {
-        |_event| {}
+        let destination = self.destination;
+        let events = Arc::clone(&self.events);
+        move |event| {
+            events
+                .lock()
+                .expect("integration event lock")
+                .push(IntegrationEvent {
+                    destination,
+                    kind: event.kind.clone(),
+                    run_id: event.run_id.clone(),
+                    metric_name: event.metric_name.clone(),
+                    sample_index: event.sample_index,
+                    payload: IntegrationPayload::new(),
+                });
+        }
     }
 
     pub fn export_payload(
         &self,
-        _kind: RuntimeEventKind,
-        _run_id: &str,
-        _payload: IntegrationPayload,
+        kind: RuntimeEventKind,
+        run_id: &str,
+        payload: IntegrationPayload,
     ) {
+        self.events
+            .lock()
+            .expect("integration event lock")
+            .push(IntegrationEvent {
+                destination: self.destination,
+                kind,
+                run_id: run_id.to_string(),
+                metric_name: None,
+                sample_index: None,
+                payload: redact_payload(&payload),
+            });
     }
 
     pub fn exported_events(&self) -> Vec<IntegrationEvent> {
-        Vec::new()
+        self.events.lock().expect("integration event lock").clone()
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct IntegrationFeatureRegistry {
     enabled: Vec<IntegrationDestination>,
+}
+
+impl Default for IntegrationFeatureRegistry {
+    fn default() -> Self {
+        Self {
+            enabled: vec![IntegrationDestination::Tracing],
+        }
+    }
 }
 
 impl IntegrationFeatureRegistry {
@@ -81,12 +114,14 @@ impl IntegrationFeatureRegistry {
     }
 
     pub fn with_enabled(mut self, destination: IntegrationDestination) -> Self {
-        self.enabled.push(destination);
+        if !self.enabled.contains(&destination) {
+            self.enabled.push(destination);
+        }
         self
     }
 
-    pub fn is_enabled(&self, _destination: IntegrationDestination) -> bool {
-        false
+    pub fn is_enabled(&self, destination: IntegrationDestination) -> bool {
+        self.enabled.contains(&destination)
     }
 
     pub fn require_enabled(&self, destination: IntegrationDestination) -> Result<(), RagasError> {
@@ -101,7 +136,25 @@ impl IntegrationFeatureRegistry {
 }
 
 pub fn redact_payload(payload: &IntegrationPayload) -> IntegrationPayload {
-    payload.clone()
+    let mut redacted = IntegrationPayload::new();
+    for (key, value) in &payload.fields {
+        if is_sensitive_key(key) {
+            redacted
+                .fields
+                .insert(key.clone(), "[REDACTED]".to_string());
+        } else {
+            redacted.fields.insert(key.clone(), value.clone());
+        }
+    }
+    redacted
+}
+
+fn is_sensitive_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    key.contains("authorization")
+        || key.contains("api_key")
+        || key.contains("token")
+        || key.contains("secret")
 }
 
 #[cfg(test)]
