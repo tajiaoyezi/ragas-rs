@@ -1,6 +1,6 @@
 # Task 7.2 - llm-adapters
 
-**Status**: Draft
+**Status**: Ready
 **Phase**: 7
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -15,7 +15,7 @@ OpenAI-compatible completion polish、Azure/local-compatible config
 ## 3. Scope And Out-of-Scope
 
 **In scope**:
-- Rust module area: $(System.Collections.Hashtable.Module).
+- Rust module area: `src/llm.rs` and public exports in `src/lib.rs`.
 - Behavior listed in §6 acceptance criteria.
 - Unit tests and, where applicable, parity fixtures for upstream ragas semantics.
 
