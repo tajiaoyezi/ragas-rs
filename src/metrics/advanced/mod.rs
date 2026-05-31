@@ -148,34 +148,95 @@ impl TopicAdherence {
 }
 
 pub fn tool_call_accuracy(
-    _expected: &[ToolCall],
-    _actual: &[ToolCall],
-    _order_policy: ToolCallOrderPolicy,
+    expected: &[ToolCall],
+    actual: &[ToolCall],
+    order_policy: ToolCallOrderPolicy,
 ) -> DetailedMetricResult {
-    DetailedMetricResult::new("tool_call_accuracy", MetricValueType::Numeric)
-        .with_score(0.0, ScoreNormalizationPolicy::Reject)
-        .expect("zero score is normalized")
+    let denominator = expected.len().max(actual.len());
+    let (matches, mut evidence) = match order_policy {
+        ToolCallOrderPolicy::Strict => strict_tool_call_matches(expected, actual),
+        ToolCallOrderPolicy::IgnoreOrder => unordered_tool_call_matches(expected, actual),
+    };
+    let score = ratio(matches, denominator);
+    let order = match order_policy {
+        ToolCallOrderPolicy::Strict => "strict",
+        ToolCallOrderPolicy::IgnoreOrder => "ignore",
+    };
+
+    let mut result = numeric_result(
+        "tool_call_accuracy",
+        score,
+        format!("order={order} matches={matches} denominator={denominator}"),
+    );
+    for item in evidence.drain(..) {
+        result = result.with_evidence(item);
+    }
+    result
 }
 
-pub fn tool_call_f1(_expected: &[ToolCall], _actual: &[ToolCall]) -> DetailedMetricResult {
-    DetailedMetricResult::new("tool_call_f1", MetricValueType::Numeric)
-        .with_score(0.0, ScoreNormalizationPolicy::Reject)
-        .expect("zero score is normalized")
+pub fn tool_call_f1(expected: &[ToolCall], actual: &[ToolCall]) -> DetailedMetricResult {
+    let (matches, evidence) = unordered_tool_call_matches(expected, actual);
+    let precision = ratio(matches, actual.len());
+    let recall = ratio(matches, expected.len());
+    let f1 = if precision + recall == 0.0 {
+        0.0
+    } else {
+        2.0 * precision * recall / (precision + recall)
+    };
+
+    evidence.into_iter().fold(
+        numeric_result(
+            "tool_call_f1",
+            f1,
+            format!(
+                "precision={precision:.3} recall={recall:.3} matches={matches} expected={} actual={}",
+                expected.len(),
+                actual.len()
+            ),
+        ),
+        DetailedMetricResult::with_evidence,
+    )
 }
 
 pub fn agent_goal_accuracy(
-    _sample: &MultiTurnSample,
-    _outcomes: &[AgentGoalOutcome],
+    sample: &MultiTurnSample,
+    outcomes: &[AgentGoalOutcome],
 ) -> DetailedMetricResult {
-    DetailedMetricResult::new("agent_goal_accuracy", MetricValueType::Numeric)
-        .with_score(0.0, ScoreNormalizationPolicy::Reject)
-        .expect("zero score is normalized")
+    let achieved = outcomes.iter().filter(|outcome| outcome.achieved).count();
+    let mut result = numeric_result(
+        "agent_goal_accuracy",
+        ratio(achieved, outcomes.len()),
+        format!(
+            "messages={} goals={} achieved={achieved}",
+            sample.messages.len(),
+            outcomes.len()
+        ),
+    );
+
+    for outcome in outcomes {
+        let status = if outcome.achieved {
+            "achieved"
+        } else {
+            "missed"
+        };
+        let evidence = outcome.evidence.as_deref().unwrap_or("no evidence");
+        result = result.with_evidence(MetricEvidence::new(
+            format!("goal:{}", outcome.goal),
+            format!("{status}: {evidence}"),
+        ));
+    }
+
+    result
 }
 
 pub fn topic_adherence(topics: &[TopicAdherence]) -> DetailedMetricResult {
-    let result = DetailedMetricResult::new("topic_adherence", MetricValueType::Numeric)
-        .with_score(0.0, ScoreNormalizationPolicy::Reject)
-        .expect("zero score is normalized");
+    let adhered = topics.iter().filter(|topic| topic.adhered).count();
+    let failed = topics.len().saturating_sub(adhered);
+    let result = numeric_result(
+        "topic_adherence",
+        ratio(adhered, topics.len()),
+        format!("topics={} adhered={adhered} failed={failed}", topics.len()),
+    );
 
     topics.iter().fold(result, |result, topic| {
         result.with_evidence(MetricEvidence::new(
@@ -183,6 +244,101 @@ pub fn topic_adherence(topics: &[TopicAdherence]) -> DetailedMetricResult {
             topic.evidence.clone(),
         ))
     })
+}
+
+fn strict_tool_call_matches(
+    expected: &[ToolCall],
+    actual: &[ToolCall],
+) -> (usize, Vec<MetricEvidence>) {
+    let mut matches = 0;
+    let mut evidence = Vec::new();
+    let max_len = expected.len().max(actual.len());
+
+    for index in 0..max_len {
+        let text = match (expected.get(index), actual.get(index)) {
+            (Some(expected), Some(actual)) if same_tool_call(expected, actual) => {
+                matches += 1;
+                format!("matched {}", expected.name)
+            }
+            (Some(expected), Some(actual)) => format!(
+                "mismatch expected {} {} actual {} {}",
+                expected.name, expected.arguments, actual.name, actual.arguments
+            ),
+            (Some(expected), None) => format!("missing expected {}", expected.name),
+            (None, Some(actual)) => format!("unexpected actual {}", actual.name),
+            (None, None) => continue,
+        };
+        evidence.push(MetricEvidence::new(format!("tool_call[{index}]"), text));
+    }
+
+    (matches, evidence)
+}
+
+fn unordered_tool_call_matches(
+    expected: &[ToolCall],
+    actual: &[ToolCall],
+) -> (usize, Vec<MetricEvidence>) {
+    let mut used_actual = vec![false; actual.len()];
+    let mut matches = 0;
+    let mut evidence = Vec::new();
+
+    for (expected_index, expected_call) in expected.iter().enumerate() {
+        let actual_index = actual
+            .iter()
+            .enumerate()
+            .find(|(actual_index, actual_call)| {
+                !used_actual[*actual_index] && same_tool_call(expected_call, actual_call)
+            })
+            .map(|(actual_index, _)| actual_index);
+
+        if let Some(actual_index) = actual_index {
+            used_actual[actual_index] = true;
+            matches += 1;
+            evidence.push(MetricEvidence::new(
+                format!("tool_call[{expected_index}]"),
+                format!("matched {} with actual[{actual_index}]", expected_call.name),
+            ));
+        } else {
+            evidence.push(MetricEvidence::new(
+                format!("tool_call[{expected_index}]"),
+                format!("missing expected {}", expected_call.name),
+            ));
+        }
+    }
+
+    for (actual_index, actual_call) in actual.iter().enumerate() {
+        if !used_actual[actual_index] {
+            evidence.push(MetricEvidence::new(
+                format!("actual_tool_call[{actual_index}]"),
+                format!("unexpected actual {}", actual_call.name),
+            ));
+        }
+    }
+
+    (matches, evidence)
+}
+
+fn same_tool_call(expected: &ToolCall, actual: &ToolCall) -> bool {
+    expected.name == actual.name && expected.arguments == actual.arguments
+}
+
+fn ratio(numerator: usize, denominator: usize) -> f64 {
+    if denominator == 0 {
+        1.0
+    } else {
+        numerator as f64 / denominator as f64
+    }
+}
+
+fn numeric_result(
+    metric_name: impl Into<String>,
+    score: f64,
+    reason: impl Into<String>,
+) -> DetailedMetricResult {
+    DetailedMetricResult::new(metric_name, MetricValueType::Numeric)
+        .with_score(score, ScoreNormalizationPolicy::Reject)
+        .expect("computed metric score is normalized")
+        .with_reason(reason)
 }
 
 pub fn score_aspect_critic(raw_score: f64, config: AspectCriticConfig) -> DetailedMetricResult {
