@@ -1,6 +1,6 @@
 # Task 3.1 - providers
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 3 - providers
 **PRD**: docs/prds/ragas-rs.prd.md
 
