@@ -1,9 +1,12 @@
-use std::{future::Future, pin::Pin};
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use crate::{RagasError, SingleTurnSample};
+use crate::{
+    EmbeddingProvider, EmbeddingRequest, LlmProvider, LlmRequest, RagasError, SingleTurnSample,
+};
 
 pub type BoxMetricFuture = Pin<Box<dyn Future<Output = Result<MetricResult, RagasError>> + Send>>;
 
@@ -12,6 +15,77 @@ pub enum MetricValue {
     Discrete(String),
     Numeric(f64),
     Ranking(Vec<RankingItem>),
+}
+
+pub struct FaithfulnessMetric {
+    llm: Arc<dyn LlmProvider>,
+}
+
+impl FaithfulnessMetric {
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self { llm }
+    }
+}
+
+#[async_trait]
+impl Metric for FaithfulnessMetric {
+    fn name(&self) -> &str {
+        "faithfulness"
+    }
+
+    async fn score(&self, _sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        unimplemented!("TEST-4.1.2: FaithfulnessMetric scoring is not implemented yet")
+    }
+}
+
+pub struct ResponseRelevancyMetric {
+    embedding: Arc<dyn EmbeddingProvider>,
+}
+
+impl ResponseRelevancyMetric {
+    pub fn new(embedding: Arc<dyn EmbeddingProvider>) -> Self {
+        Self { embedding }
+    }
+}
+
+#[async_trait]
+impl Metric for ResponseRelevancyMetric {
+    fn name(&self) -> &str {
+        "response_relevancy"
+    }
+
+    async fn score(&self, _sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        unimplemented!("TEST-4.1.3: ResponseRelevancyMetric scoring is not implemented yet")
+    }
+}
+
+pub struct ContextPrecisionMetric {
+    embedding: Arc<dyn EmbeddingProvider>,
+}
+
+impl ContextPrecisionMetric {
+    pub fn new(embedding: Arc<dyn EmbeddingProvider>) -> Self {
+        Self { embedding }
+    }
+}
+
+#[async_trait]
+impl Metric for ContextPrecisionMetric {
+    fn name(&self) -> &str {
+        "context_precision"
+    }
+
+    async fn score(&self, _sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        unimplemented!("TEST-4.1.4: ContextPrecisionMetric scoring is not implemented yet")
+    }
+}
+
+fn parse_judge_score(_content: &str, _metric_name: &str) -> Result<MetricResult, RagasError> {
+    unimplemented!("TEST-4.1.2: judge score parser is not implemented yet")
+}
+
+pub fn cosine_similarity(_left: &[f32], _right: &[f32]) -> f64 {
+    unimplemented!("TEST-4.1.3: cosine similarity is not implemented yet")
 }
 
 impl MetricValue {
@@ -141,6 +215,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    use crate::{EmbeddingResponse, LlmResponse};
 
     #[test]
     fn test_2_1_1_metric_values_expose_typed_accessors() {
@@ -197,5 +274,100 @@ mod tests {
 
         assert_eq!(metric.name(), "answer_length");
         assert_eq!(result.value.and_then(|value| value.as_numeric()), Some(6.0));
+    }
+
+    struct StaticLlm {
+        content: String,
+    }
+
+    #[async_trait]
+    impl LlmProvider for StaticLlm {
+        async fn generate(&self, _request: LlmRequest) -> Result<LlmResponse, RagasError> {
+            Ok(LlmResponse {
+                content: self.content.clone(),
+                usage: None,
+            })
+        }
+    }
+
+    struct MapEmbeddingProvider {
+        vectors: HashMap<String, Vec<f32>>,
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for MapEmbeddingProvider {
+        async fn embed(
+            &self,
+            request: EmbeddingRequest,
+        ) -> Result<EmbeddingResponse, RagasError> {
+            let embeddings = request
+                .input
+                .iter()
+                .map(|input| self.vectors.get(input).cloned().unwrap_or_default())
+                .collect();
+            Ok(EmbeddingResponse {
+                embeddings,
+                usage: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_4_1_2_faithfulness_parses_llm_judgement() {
+        // SCEN-4.1.2 / AC2 / TEST-4.1.2
+        let metric = FaithfulnessMetric::new(Arc::new(StaticLlm {
+            content: r#"{"score":0.7,"reason":"supported by context"}"#.to_string(),
+        }));
+        let sample = SingleTurnSample::new(
+            "What is Ragas?",
+            "Ragas evaluates LLM apps.",
+            vec!["Ragas evaluates LLM applications.".to_string()],
+        );
+
+        let result = metric.score(&sample).await.expect("faithfulness");
+
+        assert_eq!(result.metric_name, "faithfulness");
+        assert_eq!(result.value.and_then(|value| value.as_numeric()), Some(0.7));
+        assert_eq!(result.reason.as_deref(), Some("supported by context"));
+    }
+
+    #[tokio::test]
+    async fn test_4_1_3_response_relevancy_uses_cosine_similarity() {
+        // SCEN-4.1.3 / AC3 / TEST-4.1.3
+        let metric = ResponseRelevancyMetric::new(Arc::new(MapEmbeddingProvider {
+            vectors: HashMap::from([
+                ("question".to_string(), vec![1.0, 0.0]),
+                ("answer".to_string(), vec![0.5, 0.5]),
+            ]),
+        }));
+        let sample = SingleTurnSample::new("question", "answer", vec!["context".to_string()]);
+
+        let result = metric.score(&sample).await.expect("relevancy");
+        let score = result.value.and_then(|value| value.as_numeric()).unwrap();
+
+        assert!((score - 0.70710678).abs() < 0.0001);
+    }
+
+    #[tokio::test]
+    async fn test_4_1_4_context_precision_computes_average_precision() {
+        // SCEN-4.1.4 / AC4 / TEST-4.1.4
+        let metric = ContextPrecisionMetric::new(Arc::new(MapEmbeddingProvider {
+            vectors: HashMap::from([
+                ("question".to_string(), vec![1.0, 0.0]),
+                ("ctx-a".to_string(), vec![1.0, 0.0]),
+                ("ctx-b".to_string(), vec![0.0, 1.0]),
+                ("ctx-c".to_string(), vec![0.8, 0.2]),
+            ]),
+        }));
+        let sample = SingleTurnSample::new(
+            "question",
+            "answer",
+            vec!["ctx-a".to_string(), "ctx-b".to_string(), "ctx-c".to_string()],
+        );
+
+        let result = metric.score(&sample).await.expect("context precision");
+        let score = result.value.and_then(|value| value.as_numeric()).unwrap();
+
+        assert!((score - 0.83333333).abs() < 0.0001);
     }
 }
