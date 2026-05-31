@@ -15,28 +15,37 @@ pub enum MetricValue {
 }
 
 impl MetricValue {
-    pub fn numeric(_value: f64) -> Self {
-        unimplemented!("TEST-2.1.1: numeric metric value constructor is not implemented yet")
+    pub fn numeric(value: f64) -> Self {
+        Self::Numeric(value)
     }
 
-    pub fn discrete(_value: impl Into<String>) -> Self {
-        unimplemented!("TEST-2.1.1: discrete metric value constructor is not implemented yet")
+    pub fn discrete(value: impl Into<String>) -> Self {
+        Self::Discrete(value.into())
     }
 
-    pub fn ranking(_items: Vec<RankingItem>) -> Self {
-        unimplemented!("TEST-2.1.1: ranking metric value constructor is not implemented yet")
+    pub fn ranking(items: Vec<RankingItem>) -> Self {
+        Self::Ranking(items)
     }
 
     pub fn as_numeric(&self) -> Option<f64> {
-        unimplemented!("TEST-2.1.1: numeric metric value accessor is not implemented yet")
+        match self {
+            Self::Numeric(value) => Some(*value),
+            _ => None,
+        }
     }
 
     pub fn as_discrete(&self) -> Option<&str> {
-        unimplemented!("TEST-2.1.1: discrete metric value accessor is not implemented yet")
+        match self {
+            Self::Discrete(value) => Some(value),
+            _ => None,
+        }
     }
 
     pub fn as_ranking(&self) -> Option<&[RankingItem]> {
-        unimplemented!("TEST-2.1.1: ranking metric value accessor is not implemented yet")
+        match self {
+            Self::Ranking(items) => Some(items),
+            _ => None,
+        }
     }
 }
 
@@ -47,8 +56,11 @@ pub struct RankingItem {
 }
 
 impl RankingItem {
-    pub fn new(_item: impl Into<String>, _score: f64) -> Self {
-        unimplemented!("TEST-2.1.1: ranking item constructor is not implemented yet")
+    pub fn new(item: impl Into<String>, score: f64) -> Self {
+        Self {
+            item: item.into(),
+            score,
+        }
     }
 }
 
@@ -61,16 +73,27 @@ pub struct MetricResult {
 }
 
 impl MetricResult {
-    pub fn success(_metric_name: impl Into<String>, _value: MetricValue) -> Self {
-        unimplemented!("TEST-2.1.2: metric success result is not implemented yet")
+    pub fn success(metric_name: impl Into<String>, value: MetricValue) -> Self {
+        Self {
+            metric_name: metric_name.into(),
+            value: Some(value),
+            reason: None,
+            error: None,
+        }
     }
 
-    pub fn failure(_metric_name: impl Into<String>, _error: impl Into<String>) -> Self {
-        unimplemented!("TEST-2.1.2: metric failure result is not implemented yet")
+    pub fn failure(metric_name: impl Into<String>, error: impl Into<String>) -> Self {
+        Self {
+            metric_name: metric_name.into(),
+            value: None,
+            reason: None,
+            error: Some(error.into()),
+        }
     }
 
-    pub fn with_reason(self, _reason: impl Into<String>) -> Self {
-        unimplemented!("TEST-2.1.2: metric result reason is not implemented yet")
+    pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
+        self.reason = Some(reason.into());
+        self
     }
 }
 
@@ -110,8 +133,8 @@ where
         &self.name
     }
 
-    async fn score(&self, _sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
-        unimplemented!("TEST-2.1.3: closure-backed metric scoring is not implemented yet")
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        (self.scorer)(sample).await
     }
 }
 
