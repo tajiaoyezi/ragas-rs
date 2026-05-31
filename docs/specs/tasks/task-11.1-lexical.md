@@ -1,6 +1,6 @@
 # Task 11.1 - lexical
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 11
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
