@@ -14,6 +14,7 @@ pub mod optimizers;
 pub mod parity;
 pub mod prompts;
 pub mod providers;
+pub mod release;
 pub mod runtime;
 pub mod schema;
 pub mod testset;
@@ -85,6 +86,7 @@ pub use prompts::{
 pub use providers::{
     MockEmbeddingProvider, MockLlmProvider, ProviderRegistry, record_provider_usage,
 };
+pub use release::release_gate_files;
 pub use runtime::{
     AsyncExecutor, CacheKey, CallbackManager, CancellationConfig, ExecutorJobResult,
     ExecutorOutcome, ExecutorReport, ProgressEvent, ProgressEventKind, RetryConfig, RunConfig,
