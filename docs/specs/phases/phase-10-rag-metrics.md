@@ -1,6 +1,6 @@
 # Phase 10 - rag-metrics
 
-**Status**: In Progress
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 **Depends On**: 9,7
 
@@ -27,7 +27,7 @@ src/metrics/rag/
 |---|---|---|
 | 10.1 | docs/specs/tasks/task-10.1-context-metrics.md | Done |
 | 10.2 | docs/specs/tasks/task-10.2-faithfulness-family.md | Done |
-| 10.3 | docs/specs/tasks/task-10.3-answer-quality.md | Draft |
+| 10.3 | docs/specs/tasks/task-10.3-answer-quality.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 
