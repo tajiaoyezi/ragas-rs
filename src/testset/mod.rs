@@ -71,28 +71,40 @@ impl KnowledgeGraph {
         Self::default()
     }
 
-    pub fn add_node(self, _node: GraphNode) -> Self {
+    pub fn add_node(mut self, node: GraphNode) -> Self {
+        self.nodes.push(node);
         self
     }
 
-    pub fn add_edge(self, _edge: GraphEdge) -> Self {
+    pub fn add_edge(mut self, edge: GraphEdge) -> Self {
+        self.edges.push(edge);
         self
     }
 
-    pub fn node(&self, _id: &str) -> Option<&GraphNode> {
-        None
+    pub fn node(&self, id: &str) -> Option<&GraphNode> {
+        self.nodes.iter().find(|node| node.id == id)
     }
 
-    pub fn nodes_by_type(&self, _node_type: &str) -> Vec<&GraphNode> {
-        Vec::new()
+    pub fn nodes_by_type(&self, node_type: &str) -> Vec<&GraphNode> {
+        self.nodes
+            .iter()
+            .filter(|node| node.node_type == node_type)
+            .collect()
     }
 
-    pub fn edges_by_relationship(&self, _relationship: &str) -> Vec<&GraphEdge> {
-        Vec::new()
+    pub fn edges_by_relationship(&self, relationship: &str) -> Vec<&GraphEdge> {
+        self.edges
+            .iter()
+            .filter(|edge| edge.relationship == relationship)
+            .collect()
     }
 
-    pub fn neighbors(&self, _source_id: &str, _relationship: &str) -> Vec<&GraphNode> {
-        Vec::new()
+    pub fn neighbors(&self, source_id: &str, relationship: &str) -> Vec<&GraphNode> {
+        self.edges
+            .iter()
+            .filter(|edge| edge.source_id == source_id && edge.relationship == relationship)
+            .filter_map(|edge| self.node(&edge.target_id))
+            .collect()
     }
 }
 
