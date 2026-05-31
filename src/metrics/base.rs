@@ -1,8 +1,7 @@
 use async_trait::async_trait;
 
 use crate::{
-    MetricRequirements, MetricResult, MetricValue, MultiTurnSample, RagasError, SampleField,
-    SingleTurnSample,
+    MetricRequirements, MetricResult, MultiTurnSample, RagasError, SampleField, SingleTurnSample,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,47 +25,56 @@ pub struct MetricMetadata {
 }
 
 impl MetricMetadata {
-    pub fn new(_name: impl Into<String>, _sample_kind: MetricSampleKind) -> Self {
-        unimplemented!("task 9.1 RED skeleton")
+    pub fn new(name: impl Into<String>, sample_kind: MetricSampleKind) -> Self {
+        Self {
+            name: name.into(),
+            sample_kind,
+            required_fields: Vec::new(),
+            provider_requirements: Vec::new(),
+        }
     }
 
-    pub fn with_required_fields(self, _fields: Vec<SampleField>) -> Self {
-        unimplemented!("task 9.1 RED skeleton")
+    pub fn with_required_fields(mut self, fields: Vec<SampleField>) -> Self {
+        self.required_fields = fields;
+        self
     }
 
     pub fn with_provider_requirements(
-        self,
-        _requirements: Vec<MetricProviderRequirement>,
+        mut self,
+        requirements: Vec<MetricProviderRequirement>,
     ) -> Self {
-        unimplemented!("task 9.1 RED skeleton")
+        self.provider_requirements = requirements;
+        self
     }
 
     pub fn name(&self) -> &str {
-        unimplemented!("task 9.1 RED skeleton")
+        &self.name
     }
 
     pub fn sample_kind(&self) -> MetricSampleKind {
-        unimplemented!("task 9.1 RED skeleton")
+        self.sample_kind
     }
 
     pub fn required_fields(&self) -> &[SampleField] {
-        unimplemented!("task 9.1 RED skeleton")
+        &self.required_fields
     }
 
     pub fn provider_requirements(&self) -> &[MetricProviderRequirement] {
-        unimplemented!("task 9.1 RED skeleton")
+        &self.provider_requirements
     }
 
     pub fn requires_llm(&self) -> bool {
-        unimplemented!("task 9.1 RED skeleton")
+        self.provider_requirements
+            .contains(&MetricProviderRequirement::Llm)
     }
 
     pub fn requires_embedding(&self) -> bool {
-        unimplemented!("task 9.1 RED skeleton")
+        self.provider_requirements
+            .contains(&MetricProviderRequirement::Embedding)
     }
 
     pub fn to_requirements(&self) -> MetricRequirements {
-        unimplemented!("task 9.1 RED skeleton")
+        MetricRequirements::new(&self.name, self.required_fields.clone())
     }
 }
 
@@ -78,9 +86,13 @@ pub trait SingleTurnMetric: Send + Sync {
 
     async fn score_batch(
         &self,
-        _samples: &[SingleTurnSample],
+        samples: &[SingleTurnSample],
     ) -> Result<Vec<MetricResult>, RagasError> {
-        unimplemented!("task 9.1 RED skeleton")
+        let mut results = Vec::with_capacity(samples.len());
+        for sample in samples {
+            results.push(self.score_single(sample).await?);
+        }
+        Ok(results)
     }
 }
 
@@ -95,9 +107,13 @@ pub trait MultiTurnMetric: Send + Sync {
 
     async fn score_batch(
         &self,
-        _samples: &[MultiTurnSample],
+        samples: &[MultiTurnSample],
     ) -> Result<Vec<MetricResult>, RagasError> {
-        unimplemented!("task 9.1 RED skeleton")
+        let mut results = Vec::with_capacity(samples.len());
+        for sample in samples {
+            results.push(self.score_multi_turn(sample).await?);
+        }
+        Ok(results)
     }
 }
 
@@ -105,6 +121,8 @@ pub trait MultiTurnMetric: Send + Sync {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    use crate::MetricValue;
 
     struct ProviderAwareSingleTurnMetric;
 
