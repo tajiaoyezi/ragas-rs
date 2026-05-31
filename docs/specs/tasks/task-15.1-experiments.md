@@ -82,6 +82,7 @@ Function signatures are owned by this task's RED tests and must be added before 
   - `5bb704c` docs(spec): task-15.1 进入实施
   - `2a0625b` test(experiments): 加 task-15.1 RED 测试
   - `71b0511` feat(experiments): 实现 task-15.1 run records
+  - `95aa877` refactor(style): 格式化 experiments exports
 - **§9 Verification 结果**：
   - install: ✅ `cargo build`
   - typecheck: ✅ `cargo check`
