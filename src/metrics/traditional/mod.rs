@@ -1,6 +1,31 @@
 use std::collections::BTreeMap;
 
-use crate::{DetailedMetricResult, MetricEvidence, MetricValueType, ScoreNormalizationPolicy};
+use crate::{
+    DetailedMetricResult, EmbeddingProvider, MetricEvidence, MetricValueType, RagasError,
+    ScoreNormalizationPolicy,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SemanticThresholdPolicy {
+    pub threshold: f64,
+    pub inclusive: bool,
+}
+
+impl SemanticThresholdPolicy {
+    pub fn inclusive(threshold: f64) -> Self {
+        Self {
+            threshold,
+            inclusive: true,
+        }
+    }
+
+    pub fn exclusive(threshold: f64) -> Self {
+        Self {
+            threshold,
+            inclusive: false,
+        }
+    }
+}
 
 pub fn lexical_tokenizer_assumptions() -> Vec<&'static str> {
     vec!["whitespace-lowercase", "character-unigram"]
@@ -155,6 +180,50 @@ pub fn chrf_score(candidate: &str, reference: &str) -> DetailedMetricResult {
     )
 }
 
+pub async fn semantic_similarity_batch<P>(
+    _provider: &P,
+    pairs: &[(String, String)],
+) -> Result<Vec<DetailedMetricResult>, RagasError>
+where
+    P: EmbeddingProvider + ?Sized,
+{
+    Ok(pairs
+        .iter()
+        .map(|_| {
+            numeric_result(
+                "semantic_similarity",
+                0.0,
+                "not implemented",
+                Vec::new(),
+            )
+        })
+        .collect())
+}
+
+pub fn threshold_semantic_similarity(
+    _score: f64,
+    _policy: SemanticThresholdPolicy,
+) -> DetailedMetricResult {
+    numeric_result(
+        "threshold_semantic_similarity",
+        0.0,
+        "not implemented",
+        Vec::new(),
+    )
+}
+
+pub fn semantic_similarity_from_vectors(
+    _left: &[f32],
+    _right: &[f32],
+) -> DetailedMetricResult {
+    numeric_result(
+        "semantic_similarity",
+        0.0,
+        "not implemented",
+        Vec::new(),
+    )
+}
+
 fn numeric_result(
     metric_name: &str,
     score: f64,
@@ -252,6 +321,13 @@ fn longest_common_subsequence_len(left: &[String], right: &[String]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Mutex},
+    };
+
+    use async_trait::async_trait;
+    use crate::{EmbeddingRequest, EmbeddingResponse};
 
     fn assert_score_close(result: &DetailedMetricResult, expected: f64) {
         let actual = result.score.expect("score");
@@ -306,5 +382,86 @@ mod tests {
         let chrf = chrf_score("", "");
         assert_score_close(&chrf, 1.0);
         assert!(chrf.reason.as_deref().unwrap_or("").contains("both strings empty"));
+    }
+
+    struct RecordingEmbeddingProvider {
+        calls: Arc<Mutex<Vec<Vec<String>>>>,
+        vectors: HashMap<String, Vec<f32>>,
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for RecordingEmbeddingProvider {
+        async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, RagasError> {
+            self.calls
+                .lock()
+                .expect("calls")
+                .push(request.input.clone());
+            let embeddings = request
+                .input
+                .iter()
+                .map(|input| self.vectors.get(input).cloned().unwrap_or_default())
+                .collect();
+            Ok(EmbeddingResponse {
+                embeddings,
+                usage: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_11_2_1_semantic_similarity_uses_embedding_provider_with_batching() {
+        // SCEN-11.2.1 / AC1 / TEST-11.2.1
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let provider = RecordingEmbeddingProvider {
+            calls: calls.clone(),
+            vectors: HashMap::from([
+                ("q1".to_string(), vec![1.0, 0.0]),
+                ("a1".to_string(), vec![0.5, 0.5]),
+                ("q2".to_string(), vec![0.0, 1.0]),
+                ("a2".to_string(), vec![0.0, 1.0]),
+            ]),
+        };
+        let pairs = vec![
+            ("q1".to_string(), "a1".to_string()),
+            ("q2".to_string(), "a2".to_string()),
+        ];
+
+        let results = semantic_similarity_batch(&provider, &pairs)
+            .await
+            .expect("semantic batch");
+
+        assert_eq!(
+            *calls.lock().expect("calls"),
+            vec![vec![
+                "q1".to_string(),
+                "a1".to_string(),
+                "q2".to_string(),
+                "a2".to_string()
+            ]]
+        );
+        assert_score_close(&results[0], 0.70710678);
+        assert_score_close(&results[1], 1.0);
+    }
+
+    #[test]
+    fn test_11_2_2_threshold_policy_is_configurable() {
+        // SCEN-11.2.2 / AC2 / TEST-11.2.2
+        let inclusive = threshold_semantic_similarity(0.8, SemanticThresholdPolicy::inclusive(0.8));
+        assert_score_close(&inclusive, 1.0);
+        assert!(inclusive.reason.as_deref().unwrap_or("").contains("inclusive"));
+
+        let exclusive = threshold_semantic_similarity(0.8, SemanticThresholdPolicy::exclusive(0.8));
+        assert_score_close(&exclusive, 0.0);
+        assert!(exclusive.reason.as_deref().unwrap_or("").contains("exclusive"));
+    }
+
+    #[test]
+    fn test_11_2_3_scores_are_stable_for_zero_vectors() {
+        // SCEN-11.2.3 / AC3 / TEST-11.2.3
+        let result = semantic_similarity_from_vectors(&[0.0, 0.0], &[1.0, 0.0]);
+
+        assert_score_close(&result, 0.0);
+        assert!(result.score.expect("score").is_finite());
+        assert!(result.reason.as_deref().unwrap_or("").contains("zero vector"));
     }
 }

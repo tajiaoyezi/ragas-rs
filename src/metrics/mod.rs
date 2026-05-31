@@ -22,5 +22,6 @@ pub use result::{
 pub use registry::{MetricRegistry, MetricRegistryEntry, ParityStatus};
 pub use traditional::{
     bleu_unigram, chrf_score, exact_match, lexical_tokenizer_assumptions, rouge_l_recall,
-    string_distance_similarity,
+    semantic_similarity_batch, semantic_similarity_from_vectors, string_distance_similarity,
+    threshold_semantic_similarity, SemanticThresholdPolicy,
 };

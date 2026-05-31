@@ -35,7 +35,9 @@ pub use metrics::{
     bleu_unigram, chrf_score, context_entity_recall, context_precision_from_relevance,
     context_recall, context_relevance, exact_match, factual_correctness,
     id_based_context_precision, lexical_tokenizer_assumptions, noise_sensitivity, normalize_score,
-    response_groundedness, rouge_l_recall, string_distance_similarity,
+    response_groundedness, rouge_l_recall, semantic_similarity_batch,
+    semantic_similarity_from_vectors, string_distance_similarity, threshold_semantic_similarity,
+    SemanticThresholdPolicy,
 };
 pub use providers::{
     MockEmbeddingProvider, MockLlmProvider, ProviderRegistry, record_provider_usage,
