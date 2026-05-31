@@ -1,6 +1,6 @@
 # Task 13.3 - synthesizers
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 13
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
