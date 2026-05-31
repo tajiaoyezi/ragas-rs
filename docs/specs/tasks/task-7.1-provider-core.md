@@ -1,6 +1,6 @@
 # Task 7.1 - provider-core
 
-**Status**: Draft
+**Status**: Ready
 **Phase**: 7
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -15,7 +15,7 @@ provider registry、mock providers、usage accounting
 ## 3. Scope And Out-of-Scope
 
 **In scope**:
-- Rust module area: $(System.Collections.Hashtable.Module).
+- Rust module area: src/providers.rs, src/llm.rs, src/runtime.rs, src/lib.rs.
 - Behavior listed in §6 acceptance criteria.
 - Unit tests and, where applicable, parity fixtures for upstream ragas semantics.
 
