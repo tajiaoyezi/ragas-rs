@@ -1,6 +1,6 @@
 # Task 6.2 - executor
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 6
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-6.2.1 | TEST-6.2.1 | Not Started |
-| AC2 | SCEN-6.2.2 | TEST-6.2.2 | Not Started |
-| AC3 | SCEN-6.2.3 | TEST-6.2.3 | Not Started |
+| AC1 | SCEN-6.2.1 | TEST-6.2.1 | Done |
+| AC2 | SCEN-6.2.2 | TEST-6.2.2 | Done |
+| AC3 | SCEN-6.2.3 | TEST-6.2.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,20 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/runtime.rs`（新增 AsyncExecutor、ExecutorReport、ExecutorOutcome、ProgressEvent，并实现并发执行、顺序回填、失败隔离）
+  - `src/lib.rs`（导出 executor API）
+  - `docs/specs/tasks/task-6.2-executor.md`（Status/traceability/Completion Notes 回填）
+- **commit 列表**：
+  - `844271b` docs(spec): task-6.2 Ready
+  - `583c309` docs(spec): task-6.2 进入实施
+  - `c561db5` test(runtime): 加 task-6.2 RED 测试
+  - `043da05` feat(runtime): 实现 task-6.2 async executor
+- **§9 Verification 结果**：
+  - install: pass (`cargo build`)
+  - typecheck: pass (`cargo check`)
+  - unit-test: 28 passed / 0 failed (`cargo test`)
+  - build: pass (`cargo build`)
+- **剩余风险 / 未做项**：本 task 只实现 executor 核心并发、顺序和 progress event；retry/timeout/cancellation 与 callbacks/cost/cache 的具体集成将在 task 6.3 和后续 provider/runtime tasks 扩展。
+- **下游 task 影响**：task 6.3 可在 AsyncExecutor progress events 上接 callbacks/cost/cache；task 7 provider adapters 可由 AsyncExecutor 批量调度；task 14 CLI 可复用 ExecutorReport 做执行摘要。
