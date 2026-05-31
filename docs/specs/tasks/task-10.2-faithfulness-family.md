@@ -1,6 +1,6 @@
 # Task 10.2 - faithfulness-family
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 10
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-10.2.1 | TEST-10.2.1 | Not Started |
-| AC2 | SCEN-10.2.2 | TEST-10.2.2 | Not Started |
-| AC3 | SCEN-10.2.3 | TEST-10.2.3 | Not Started |
+| AC1 | SCEN-10.2.1 | TEST-10.2.1 | Done |
+| AC2 | SCEN-10.2.2 | TEST-10.2.2 | Done |
+| AC3 | SCEN-10.2.3 | TEST-10.2.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,19 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/metrics/rag/mod.rs`（修改）
+  - `src/metrics/mod.rs`（修改）
+  - `src/lib.rs`（修改）
+  - `docs/specs/tasks/task-10.2-faithfulness-family.md`（修改）
+- **commit 列表**：
+  - `0eec028` test(metrics-rag): 加 task-10.2 RED 测试
+  - `d007fa1` feat(metrics-rag): 实现 task-10.2 faithfulness family
+- **§9 Verification 结果**：
+  - install: ✅ `cargo build`
+  - typecheck: ✅ `cargo check`
+  - unit-test: 64 passed / 0 failed (`cargo test`)
+  - build: ✅ `cargo build`
+- **剩余风险 / 未做项**：faithfulness prompt/parser 契约已接入 phase 8；groundedness/factual correctness 当前为 deterministic scoring，Python ragas golden parity 待 task-16.1 登记。
+- **下游 task 影响**：task-10.3 可复用 `FaithfulnessJudgeContract`、`response_groundedness` 和 `factual_correctness` 的 evidence/result 模型；task-16.1 需要补 parity fixture 或 Known Gap。
