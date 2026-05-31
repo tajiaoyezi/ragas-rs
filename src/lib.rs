@@ -10,6 +10,7 @@ pub mod llm;
 pub mod metric;
 pub mod metrics;
 pub mod optimizers;
+pub mod parity;
 pub mod prompts;
 pub mod providers;
 pub mod runtime;
@@ -69,6 +70,10 @@ pub use metrics::{
 pub use optimizers::{
     CandidateGenerator, GeneticOptimizer, GeneticOptimizerConfig, ObjectiveMetric,
     OptimizationCandidate, OptimizationResult, OptimizationStep, Optimizer,
+};
+pub use parity::{
+    GapMatrixEntry, ParityCheck, ParityFeatureStatus, ParityFixture, check_parity_fixture,
+    parse_parity_fixture, validate_gap_matrix,
 };
 pub use prompts::{
     FewShotExample, JudgeOutputParser, LanguageAdapterRule, MultimodalPromptMessage,
