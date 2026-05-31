@@ -3,6 +3,7 @@ pub mod error;
 pub mod eval;
 pub mod llm;
 pub mod metric;
+pub mod metrics;
 pub mod prompts;
 pub mod providers;
 pub mod runtime;
@@ -23,6 +24,10 @@ pub use llm::{
 pub use metric::{
     ContextPrecisionMetric, FaithfulnessMetric, FnMetric, Metric, MetricResult, MetricValue,
     RankingItem, ResponseRelevancyMetric, cosine_similarity,
+};
+pub use metrics::{
+    MetricMetadata, MetricProviderRequirement, MetricSampleKind, MultiTurnMetric,
+    SingleTurnMetric,
 };
 pub use providers::{
     MockEmbeddingProvider, MockLlmProvider, ProviderRegistry, record_provider_usage,
