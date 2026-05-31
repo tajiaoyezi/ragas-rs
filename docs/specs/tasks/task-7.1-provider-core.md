@@ -1,6 +1,6 @@
 # Task 7.1 - provider-core
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 7
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-7.1.1 | TEST-7.1.1 | Not Started |
-| AC2 | SCEN-7.1.2 | TEST-7.1.2 | Not Started |
-| AC3 | SCEN-7.1.3 | TEST-7.1.3 | Not Started |
+| AC1 | SCEN-7.1.1 | TEST-7.1.1 | Done |
+| AC2 | SCEN-7.1.2 | TEST-7.1.2 | Done |
+| AC3 | SCEN-7.1.3 | TEST-7.1.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,20 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/providers.rs`（新增 ProviderRegistry、MockLlmProvider、MockEmbeddingProvider、record_provider_usage 与 unit tests）
+  - `src/lib.rs`（导出 provider core API）
+  - `docs/specs/tasks/task-7.1-provider-core.md`（Status/traceability/Completion Notes 回填）
+- **commit 列表**：
+  - `c9bdde4` docs(spec): task-7.1 Ready
+  - `0f1eedb` docs(spec): task-7.1 进入实施
+  - `f9559c9` test(providers): 加 task-7.1 RED 测试
+  - `fc96059` feat(providers): 实现 task-7.1 provider core
+- **§9 Verification 结果**：
+  - install: pass (`cargo build`)
+  - typecheck: pass (`cargo check`)
+  - unit-test: 34 passed / 0 failed (`cargo test`)
+  - build: pass (`cargo build`)
+- **剩余风险 / 未做项**：本 task 只实现 provider registry、mock provider 和 usage 记录；OpenAI/Azure/local/http adapter 细节由 task 7.2/7.3 继续实现。
+- **下游 task 影响**：task 7.2/7.3 可把具体 LLM/embedding adapters 注册进 ProviderRegistry；phase 9/10 metrics 可用 mock providers 做 deterministic testing；phase 15 benchmarks 可复用 provider usage accounting。
