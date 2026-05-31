@@ -16,4 +16,7 @@ pub enum RagasError {
 
     #[error("parse error: {message}")]
     Parse { message: String },
+
+    #[error("prompt error: {message}")]
+    Prompt { message: String },
 }
