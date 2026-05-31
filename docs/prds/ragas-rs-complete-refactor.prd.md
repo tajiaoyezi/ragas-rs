@@ -106,19 +106,22 @@ upstream Python ragas 以 `src/ragas` 为核心，包含 top-level runtime 文�
 
 | # | Phase 名称（kebab）| 描述（完成后能做什么）| 范围（涉及模块 / 文件）| 依赖 | 可并行 |
 |---|---|---|---|---|---|
-| 0 | core-mvp-completed | 当前 4-task MVP 已完成，作为完整重构 foundation | `src/dataset.rs` + `src/metric.rs` + `src/llm.rs` + `src/eval.rs` | - | 否 |
-| 1 | schema-and-datasets | 完整样本、消息、tool call、多轮数据集、serde schema 与 validation | `src/schema/` + `src/dataset.rs` | 0 | 否 |
-| 2 | runtime-executor | executor、run config、retry、timeout、cancellation、callbacks、cost、cache | `src/runtime/` + `src/eval.rs` | 1 | 否 |
-| 3 | providers-and-adapters | LLM/embedding provider matrix、adapter registry、mock/local/http providers | `src/providers/` + `src/llm.rs` | 1,2 | 是（可与 phase 4 并行） |
-| 4 | prompts-and-parsers | prompt templates、few-shot、typed output parser、judge JSON parser、多模态 prompt scaffold | `src/prompts/` | 1,2 | 是（可与 phase 3 并行） |
-| 5 | metric-framework-complete | metric base、validators、result schema、metric collection registry、parity labels | `src/metrics/base.rs` + `src/metrics/result.rs` + `src/metrics/validators.rs` | 1,2,4 | 否 |
-| 6 | rag-metrics | faithfulness/context/answer/factual/noise/RAG 指标全批次迁移 | `src/metrics/rag/` | 5,3 | 是（可与 phase 7 并行） |
-| 7 | deterministic-and-similarity-metrics | BLEU/ROUGE/CHRF/string/semantic similarity/classic metrics | `src/metrics/traditional/` | 5,3 | 是（可与 phase 6 并行） |
-| 8 | advanced-metrics | rubrics、agent、tool call、SQL、多模态、summarization metrics | `src/metrics/advanced/` | 5,3,4 | 否 |
-| 9 | testset-generation | graph、transforms、extractors、splitters、relationship builders、persona、single/multi-hop synthesizers | `src/testset/` | 1,3,4 | 否 |
-| 10 | backends-integrations-cli | JSONL/CSV/in-memory backend、optional integrations、CLI evaluate/testset/benchmark | `src/backends/` + `src/integrations/` + `src/cli/` | 2,5,9 | 否 |
-| 11 | optimizers-experiments | experiment model、prompt/model optimizer、benchmark llm/embedding flows | `src/experiments/` + `src/optimizers/` | 5,10 | 是（可与 phase 12 并行） |
-| 12 | parity-docs-release | upstream parity fixtures、docs/examples、feature flags、release packaging | `tests/parity/` + `examples/` + `docs/` | 6,7,8,9,10 | 否 |
+| 1 | foundation-dataset | 已完成：Rust crate、基础错误模型、EvaluationDataset 与 SingleTurnSample | `Cargo.toml` + `src/lib.rs` + `src/dataset.rs` + `src/error.rs` | - | 否 |
+| 2 | metric-abstractions | 已完成：Metric trait、MetricValue/MetricResult 和自定义 metric helper | `src/metric.rs` + `src/lib.rs` | 1 | 否 |
+| 3 | providers | 已完成：LLM/Embedding provider trait 与 OpenAI 兼容 HTTP DTO/client | `src/llm.rs` + `src/lib.rs` | 1,2 | 否 |
+| 4 | evaluator-builtins | 已完成：异步 evaluate 批量调度、report 汇总和三项内置 RAG 指标 | `src/eval.rs` + `src/metric.rs` + `src/llm.rs` + `src/lib.rs` | 1,2,3 | 否 |
+| 5 | schema-and-datasets | 完整样本、消息、tool call、多轮数据集、serde schema 与 validation | `src/schema/` + `src/dataset.rs` | 1,4 | 否 |
+| 6 | runtime-executor | executor、run config、retry、timeout、cancellation、callbacks、cost、cache | `src/runtime/` + `src/eval.rs` | 5 | 否 |
+| 7 | providers-and-adapters | LLM/embedding provider matrix、adapter registry、mock/local/http providers | `src/providers/` + `src/llm.rs` | 5,6 | 是（可与 phase 8 并行） |
+| 8 | prompts-and-parsers | prompt templates、few-shot、typed output parser、judge JSON parser、多模态 prompt scaffold | `src/prompts/` | 5,6 | 是（可与 phase 7 并行） |
+| 9 | metric-framework-complete | metric base、validators、result schema、metric collection registry、parity labels | `src/metrics/base.rs` + `src/metrics/result.rs` + `src/metrics/validators.rs` | 5,6,8 | 否 |
+| 10 | rag-metrics | faithfulness/context/answer/factual/noise/RAG 指标全批次迁移 | `src/metrics/rag/` | 9,7 | 是（可与 phase 11 并行） |
+| 11 | deterministic-and-similarity-metrics | BLEU/ROUGE/CHRF/string/semantic similarity/classic metrics | `src/metrics/traditional/` | 9,7 | 是（可与 phase 10 并行） |
+| 12 | advanced-metrics | rubrics、agent、tool call、SQL、多模态、summarization metrics | `src/metrics/advanced/` | 9,7,8 | 否 |
+| 13 | testset-generation | graph、transforms、extractors、splitters、relationship builders、persona、single/multi-hop synthesizers | `src/testset/` | 5,7,8 | 否 |
+| 14 | backends-integrations-cli | JSONL/CSV/in-memory backend、optional integrations、CLI evaluate/testset/benchmark | `src/backends/` + `src/integrations/` + `src/cli/` | 6,9,13 | 否 |
+| 15 | optimizers-experiments | experiment model、prompt/model optimizer、benchmark llm/embedding flows | `src/experiments/` + `src/optimizers/` | 9,14 | 是（可与 phase 16 并行） |
+| 16 | parity-docs-release | upstream parity fixtures、docs/examples、feature flags、release packaging | `tests/parity/` + `examples/` + `docs/` | 10,11,12,13,14 | 否 |
 
 ---
 
@@ -126,42 +129,42 @@ upstream Python ragas 以 `src/ragas` 为核心，包含 top-level runtime 文�
 
 | Task | Phase | 模块 | 目标 |
 |---|---|---|---|
-| 1.1 | schema-and-datasets | schema-core | MultiTurnSample、Message、ToolCall、rubric/reference/metadata schema |
-| 1.2 | schema-and-datasets | dataset-io | JSONL/CSV serde roundtrip、dataset builders、validation diagnostics |
-| 1.3 | schema-and-datasets | validation | sample/metric compatibility validator、required column checker |
-| 2.1 | runtime-executor | run-config | timeout/retry/concurrency/cancellation model |
-| 2.2 | runtime-executor | executor | ordered async executor、partial failure isolation、progress events |
-| 2.3 | runtime-executor | callbacks-cost-cache | callbacks、token usage/cost model、cache key/value abstraction |
-| 3.1 | providers-and-adapters | provider-core | provider registry、mock providers、usage accounting |
-| 3.2 | providers-and-adapters | llm-adapters | OpenAI-compatible completion polish、Azure/local-compatible config |
-| 3.3 | providers-and-adapters | embedding-adapters | OpenAI-compatible embeddings、batching、normalization |
-| 4.1 | prompts-and-parsers | prompt-core | typed prompt template、few-shot examples、language adaptation hooks |
-| 4.2 | prompts-and-parsers | output-parser | JSON/schema parser、repair strategy、malformed output diagnostics |
-| 4.3 | prompts-and-parsers | multimodal-prompt | image/text prompt scaffold and typed multimodal message model |
-| 5.1 | metric-framework-complete | metric-base | full metric traits: single/multi-turn, LLM/embedding requirements, batch hooks |
-| 5.2 | metric-framework-complete | metric-result | result schema, score normalization, reason/evidence, error taxonomy |
-| 5.3 | metric-framework-complete | metric-registry | metric collection registry, feature flags, parity status labels |
-| 6.1 | rag-metrics | context-metrics | context precision/recall/entity recall/relevance variants |
-| 6.2 | rag-metrics | faithfulness-family | faithfulness, response groundedness, factual correctness |
-| 6.3 | rag-metrics | answer-quality | answer relevancy/correctness/similarity/noise sensitivity |
-| 7.1 | deterministic-and-similarity-metrics | lexical | exact match/string distance/BLEU/ROUGE/CHRF |
-| 7.2 | deterministic-and-similarity-metrics | semantic | embedding similarity and thresholded semantic metrics |
-| 7.3 | deterministic-and-similarity-metrics | quoted-spans | quoted spans and citation overlap metrics |
-| 8.1 | advanced-metrics | rubrics | aspect critic, simple criteria, domain/instance rubrics |
-| 8.2 | advanced-metrics | agents-tools | goal accuracy, tool call accuracy, tool call F1, topic adherence |
-| 8.3 | advanced-metrics | sql-multimodal-summary | SQL semantic equivalence, multimodal faithfulness/relevance, summarization |
-| 9.1 | testset-generation | graph-core | knowledge graph node/edge model and graph queries |
-| 9.2 | testset-generation | transforms | splitters, extractors, filters, relationship builders |
-| 9.3 | testset-generation | synthesizers | persona, single-hop, multi-hop synthesizers |
-| 10.1 | backends-integrations-cli | backends | in-memory, JSONL, CSV backend registry |
-| 10.2 | backends-integrations-cli | integrations | tracing hooks and optional LangSmith/Langfuse/Opik-style adapters |
-| 10.3 | backends-integrations-cli | cli | `ragas evaluate`, `ragas testset`, `ragas benchmark` |
-| 11.1 | optimizers-experiments | experiments | experiment record model, compare runs, report summaries |
-| 11.2 | optimizers-experiments | optimizers | prompt/model optimization abstractions and genetic optimizer scaffold |
-| 11.3 | optimizers-experiments | benchmarks | LLM/embedding benchmark runner and cost summaries |
-| 12.1 | parity-docs-release | parity-suite | upstream golden fixtures, gap matrix, parity status reports |
-| 12.2 | parity-docs-release | docs-examples | Rust examples mapped to upstream howtos/tutorials |
-| 12.3 | parity-docs-release | release | feature flags, crate metadata, CI gates, release checklist |
+| 5.1 | schema-and-datasets | schema-core | MultiTurnSample、Message、ToolCall、rubric/reference/metadata schema |
+| 5.2 | schema-and-datasets | dataset-io | JSONL/CSV serde roundtrip、dataset builders、validation diagnostics |
+| 5.3 | schema-and-datasets | validation | sample/metric compatibility validator、required column checker |
+| 6.1 | runtime-executor | run-config | timeout/retry/concurrency/cancellation model |
+| 6.2 | runtime-executor | executor | ordered async executor、partial failure isolation、progress events |
+| 6.3 | runtime-executor | callbacks-cost-cache | callbacks、token usage/cost model、cache key/value abstraction |
+| 7.1 | providers-and-adapters | provider-core | provider registry、mock providers、usage accounting |
+| 7.2 | providers-and-adapters | llm-adapters | OpenAI-compatible completion polish、Azure/local-compatible config |
+| 7.3 | providers-and-adapters | embedding-adapters | OpenAI-compatible embeddings、batching、normalization |
+| 8.1 | prompts-and-parsers | prompt-core | typed prompt template、few-shot examples、language adaptation hooks |
+| 8.2 | prompts-and-parsers | output-parser | JSON/schema parser、repair strategy、malformed output diagnostics |
+| 8.3 | prompts-and-parsers | multimodal-prompt | image/text prompt scaffold and typed multimodal message model |
+| 9.1 | metric-framework-complete | metric-base | full metric traits: single/multi-turn, LLM/embedding requirements, batch hooks |
+| 9.2 | metric-framework-complete | metric-result | result schema, score normalization, reason/evidence, error taxonomy |
+| 9.3 | metric-framework-complete | metric-registry | metric collection registry, feature flags, parity status labels |
+| 10.1 | rag-metrics | context-metrics | context precision/recall/entity recall/relevance variants |
+| 10.2 | rag-metrics | faithfulness-family | faithfulness, response groundedness, factual correctness |
+| 10.3 | rag-metrics | answer-quality | answer relevancy/correctness/similarity/noise sensitivity |
+| 11.1 | deterministic-and-similarity-metrics | lexical | exact match/string distance/BLEU/ROUGE/CHRF |
+| 11.2 | deterministic-and-similarity-metrics | semantic | embedding similarity and thresholded semantic metrics |
+| 11.3 | deterministic-and-similarity-metrics | quoted-spans | quoted spans and citation overlap metrics |
+| 12.1 | advanced-metrics | rubrics | aspect critic, simple criteria, domain/instance rubrics |
+| 12.2 | advanced-metrics | agents-tools | goal accuracy, tool call accuracy, tool call F1, topic adherence |
+| 12.3 | advanced-metrics | sql-multimodal-summary | SQL semantic equivalence, multimodal faithfulness/relevance, summarization |
+| 13.1 | testset-generation | graph-core | knowledge graph node/edge model and graph queries |
+| 13.2 | testset-generation | transforms | splitters, extractors, filters, relationship builders |
+| 13.3 | testset-generation | synthesizers | persona, single-hop, multi-hop synthesizers |
+| 14.1 | backends-integrations-cli | backends | in-memory, JSONL, CSV backend registry |
+| 14.2 | backends-integrations-cli | integrations | tracing hooks and optional LangSmith/Langfuse/Opik-style adapters |
+| 14.3 | backends-integrations-cli | cli | `ragas evaluate`, `ragas testset`, `ragas benchmark` |
+| 15.1 | optimizers-experiments | experiments | experiment record model, compare runs, report summaries |
+| 15.2 | optimizers-experiments | optimizers | prompt/model optimization abstractions and genetic optimizer scaffold |
+| 15.3 | optimizers-experiments | benchmarks | LLM/embedding benchmark runner and cost summaries |
+| 16.1 | parity-docs-release | parity-suite | upstream golden fixtures, gap matrix, parity status reports |
+| 16.2 | parity-docs-release | docs-examples | Rust examples mapped to upstream howtos/tutorials |
+| 16.3 | parity-docs-release | release | feature flags, crate metadata, CI gates, release checklist |
 
 ---
 
@@ -222,6 +225,5 @@ upstream Python ragas 以 `src/ragas` 为核心，包含 top-level runtime 文�
 ## Next Steps｜后续步骤
 
 1. 把本 PRD 作为新的 master scope，更新 `docs/s2v-adapter.md` 的 phase/task 索引。
-2. 生成 phase 1-12 的 phase specs 和 task specs；原 4 个 task 保留 Done，映射为 phase 0 foundation。
-3. 从 task 1.1 `schema-core` 开始执行 S2V RED/GREEN/§9/§10。
-
+2. 生成 phase 5-16 的 phase specs 和 task specs；原 phase 1-4 / task 1.1-4.1 保留 Done。
+3. 从 task 5.1 `schema-core` 开始执行 S2V RED/GREEN/§9/§10。
