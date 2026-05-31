@@ -1,6 +1,6 @@
 # Phase 9 - metric-framework-complete
 
-**Status**: Draft
+**Status**: In Progress
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 **Depends On**: 5,6,8
 
@@ -25,7 +25,7 @@ src/metrics/base.rs + src/metrics/result.rs + src/metrics/validators.rs
 
 | Task | Spec | Status |
 |---|---|---|
-| 9.1 | docs/specs/tasks/task-9.1-metric-base.md | Draft |
+| 9.1 | docs/specs/tasks/task-9.1-metric-base.md | Done |
 | 9.2 | docs/specs/tasks/task-9.2-metric-result.md | Draft |
 | 9.3 | docs/specs/tasks/task-9.3-metric-registry.md | Draft |
 
