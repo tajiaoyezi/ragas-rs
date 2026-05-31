@@ -1,6 +1,6 @@
 # Task 9.3 - metric-registry
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 9
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
