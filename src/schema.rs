@@ -19,8 +19,12 @@ pub struct ToolCall {
 }
 
 impl ToolCall {
-    pub fn new(_id: impl Into<String>, _name: impl Into<String>, _arguments: Value) -> Self {
-        unimplemented!("TEST-5.1.1: tool call construction is not implemented yet")
+    pub fn new(id: impl Into<String>, name: impl Into<String>, arguments: Value) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            arguments,
+        }
     }
 }
 
@@ -33,24 +37,39 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn system(_content: impl Into<String>) -> Self {
-        unimplemented!("TEST-5.1.1: system message construction is not implemented yet")
+    pub fn system(content: impl Into<String>) -> Self {
+        Self::new(MessageRole::System, content)
     }
 
-    pub fn user(_content: impl Into<String>) -> Self {
-        unimplemented!("TEST-5.1.1: user message construction is not implemented yet")
+    pub fn user(content: impl Into<String>) -> Self {
+        Self::new(MessageRole::User, content)
     }
 
-    pub fn assistant(_content: impl Into<String>) -> Self {
-        unimplemented!("TEST-5.1.1: assistant message construction is not implemented yet")
+    pub fn assistant(content: impl Into<String>) -> Self {
+        Self::new(MessageRole::Assistant, content)
     }
 
-    pub fn tool(_tool_call_id: impl Into<String>, _content: impl Into<String>) -> Self {
-        unimplemented!("TEST-5.1.1: tool message construction is not implemented yet")
+    pub fn tool(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: MessageRole::Tool,
+            content: content.into(),
+            tool_call_id: Some(tool_call_id.into()),
+            tool_calls: Vec::new(),
+        }
     }
 
-    pub fn with_tool_call(self, _tool_call: ToolCall) -> Self {
-        unimplemented!("TEST-5.1.1: attaching tool calls is not implemented yet")
+    pub fn with_tool_call(mut self, tool_call: ToolCall) -> Self {
+        self.tool_calls.push(tool_call);
+        self
+    }
+
+    fn new(role: MessageRole, content: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+        }
     }
 }
 
@@ -62,12 +81,17 @@ pub struct Rubric {
 }
 
 impl Rubric {
-    pub fn new(_name: impl Into<String>, _criteria: impl Into<String>) -> Self {
-        unimplemented!("TEST-5.1.2: rubric construction is not implemented yet")
+    pub fn new(name: impl Into<String>, criteria: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            criteria: criteria.into(),
+            weight: None,
+        }
     }
 
-    pub fn with_weight(self, _weight: f64) -> Self {
-        unimplemented!("TEST-5.1.2: rubric weighting is not implemented yet")
+    pub fn with_weight(mut self, weight: f64) -> Self {
+        self.weight = Some(weight);
+        self
     }
 }
 
@@ -80,20 +104,28 @@ pub struct MultiTurnSample {
 }
 
 impl MultiTurnSample {
-    pub fn new(_messages: Vec<Message>) -> Self {
-        unimplemented!("TEST-5.1.2: multi-turn sample construction is not implemented yet")
+    pub fn new(messages: Vec<Message>) -> Self {
+        Self {
+            messages,
+            reference: None,
+            rubrics: Vec::new(),
+            metadata: HashMap::new(),
+        }
     }
 
-    pub fn with_reference(self, _reference: impl Into<String>) -> Self {
-        unimplemented!("TEST-5.1.2: multi-turn reference setter is not implemented yet")
+    pub fn with_reference(mut self, reference: impl Into<String>) -> Self {
+        self.reference = Some(reference.into());
+        self
     }
 
-    pub fn with_rubric(self, _rubric: Rubric) -> Self {
-        unimplemented!("TEST-5.1.2: multi-turn rubric setter is not implemented yet")
+    pub fn with_rubric(mut self, rubric: Rubric) -> Self {
+        self.rubrics.push(rubric);
+        self
     }
 
-    pub fn with_metadata(self, _key: impl Into<String>, _value: impl Into<String>) -> Self {
-        unimplemented!("TEST-5.1.2: multi-turn metadata setter is not implemented yet")
+    pub fn with_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.metadata.insert(key.into(), value.into());
+        self
     }
 }
 
