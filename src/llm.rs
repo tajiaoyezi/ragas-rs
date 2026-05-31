@@ -69,6 +69,7 @@ pub struct OpenAiCompatibleConfig {
     embedding_model: Option<String>,
     headers: BTreeMap<String, String>,
     query_params: BTreeMap<String, String>,
+    auth_strategy: AuthStrategy,
 }
 
 impl OpenAiCompatibleConfig {
@@ -84,11 +85,13 @@ impl OpenAiCompatibleConfig {
             embedding_model: None,
             headers: BTreeMap::new(),
             query_params: BTreeMap::new(),
+            auth_strategy: AuthStrategy::Bearer,
         }
     }
 
-    pub fn with_header(self, _name: impl Into<String>, _value: impl Into<String>) -> Self {
-        unimplemented!("task 7.2 RED skeleton")
+    pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.insert(name.into(), value.into());
+        self
     }
 
     pub fn with_embedding_model(mut self, model: impl Into<String>) -> Self {
@@ -96,9 +99,21 @@ impl OpenAiCompatibleConfig {
         self
     }
 
-    pub fn with_query_param(self, _name: impl Into<String>, _value: impl Into<String>) -> Self {
-        unimplemented!("task 7.2 RED skeleton")
+    pub fn with_query_param(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.query_params.insert(name.into(), value.into());
+        self
     }
+
+    fn with_header_only_auth(mut self) -> Self {
+        self.auth_strategy = AuthStrategy::HeaderOnly;
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthStrategy {
+    Bearer,
+    HeaderOnly,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,7 +140,17 @@ impl AzureOpenAiConfig {
     }
 
     pub fn into_openai_compatible_config(self) -> OpenAiCompatibleConfig {
-        unimplemented!("task 7.2 RED skeleton")
+        let base_url = format!(
+            "{}/openai/deployments/{}",
+            self.endpoint.trim_end_matches('/'),
+            self.deployment
+        );
+        let api_key = self.api_key;
+
+        OpenAiCompatibleConfig::new(base_url, api_key.clone(), self.deployment)
+            .with_header("api-key", api_key)
+            .with_query_param("api-version", self.api_version)
+            .with_header_only_auth()
     }
 }
 
@@ -137,6 +162,7 @@ pub struct OpenAiCompatibleClient {
     embedding_model: String,
     headers: BTreeMap<String, String>,
     query_params: BTreeMap<String, String>,
+    auth_strategy: AuthStrategy,
     client: reqwest::Client,
 }
 
@@ -154,12 +180,26 @@ impl OpenAiCompatibleClient {
             model,
             headers: BTreeMap::new(),
             query_params: BTreeMap::new(),
+            auth_strategy: AuthStrategy::Bearer,
             client: reqwest::Client::new(),
         }
     }
 
-    pub fn from_config(_config: OpenAiCompatibleConfig) -> Self {
-        unimplemented!("task 7.2 RED skeleton")
+    pub fn from_config(config: OpenAiCompatibleConfig) -> Self {
+        let embedding_model = config
+            .embedding_model
+            .unwrap_or_else(|| config.model.clone());
+
+        Self {
+            base_url: config.base_url,
+            api_key: config.api_key,
+            model: config.model,
+            embedding_model,
+            headers: config.headers,
+            query_params: config.query_params,
+            auth_strategy: config.auth_strategy,
+            client: reqwest::Client::new(),
+        }
     }
 
     pub fn with_embedding_model(mut self, model: impl Into<String>) -> Self {
@@ -167,24 +207,26 @@ impl OpenAiCompatibleClient {
         self
     }
 
-    pub fn with_header(self, _name: impl Into<String>, _value: impl Into<String>) -> Self {
-        unimplemented!("task 7.2 RED skeleton")
+    pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.insert(name.into(), value.into());
+        self
     }
 
     pub fn headers(&self) -> &BTreeMap<String, String> {
-        unimplemented!("task 7.2 RED skeleton")
+        &self.headers
     }
 
     pub fn chat_url(&self) -> String {
-        unimplemented!("task 7.2 RED skeleton")
+        self.url("chat/completions")
     }
 
     pub fn embedding_url(&self) -> String {
-        unimplemented!("task 7.2 RED skeleton")
+        self.url("embeddings")
     }
 
-    pub fn provider_http_error(&self, _status: u16, _body: impl AsRef<str>) -> RagasError {
-        unimplemented!("task 7.2 RED skeleton")
+    pub fn provider_http_error(&self, status: u16, body: impl AsRef<str>) -> RagasError {
+        let body = summarize_body(body.as_ref(), 2048);
+        self.provider_error(format!("HTTP {status}: {body}"))
     }
 
     pub fn chat_payload(&self, request: &LlmRequest) -> serde_json::Value {
@@ -203,15 +245,31 @@ impl OpenAiCompatibleClient {
     }
 
     pub fn sanitize_provider_error(&self, message: impl AsRef<str>) -> String {
-        let message = message.as_ref();
-        if self.api_key.is_empty() {
-            return message.to_string();
+        let mut sanitized = message.as_ref().to_string();
+        if !self.api_key.is_empty() {
+            sanitized = sanitized.replace(&self.api_key, "[redacted-api-key]");
         }
-        message.replace(&self.api_key, "[redacted-api-key]")
+        for value in self.headers.values() {
+            if !value.is_empty() {
+                sanitized = sanitized.replace(value, "[redacted-header]");
+            }
+        }
+        redact_bearer_tokens(&sanitized)
     }
 
     fn url(&self, path: &str) -> String {
-        format!("{}/{}", self.base_url.trim_end_matches('/'), path)
+        let mut url = format!("{}/{}", self.base_url.trim_end_matches('/'), path);
+        if !self.query_params.is_empty() {
+            let query = self
+                .query_params
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect::<Vec<_>>()
+                .join("&");
+            url.push('?');
+            url.push_str(&query);
+        }
+        url
     }
 
     fn provider_error(&self, message: impl AsRef<str>) -> RagasError {
@@ -219,6 +277,49 @@ impl OpenAiCompatibleClient {
             message: self.sanitize_provider_error(message),
         }
     }
+
+    fn apply_request_config(
+        &self,
+        mut request: reqwest::RequestBuilder,
+    ) -> reqwest::RequestBuilder {
+        if !self.api_key.is_empty() && matches!(self.auth_strategy, AuthStrategy::Bearer) {
+            request = request.bearer_auth(&self.api_key);
+        }
+        for (name, value) in &self.headers {
+            request = request.header(name.as_str(), value.as_str());
+        }
+        request
+    }
+}
+
+fn summarize_body(body: &str, max_chars: usize) -> String {
+    let mut chars = body.chars();
+    let summary: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{summary}...")
+    } else {
+        summary
+    }
+}
+
+fn redact_bearer_tokens(message: &str) -> String {
+    const MARKER: &str = "Bearer ";
+
+    let mut output = String::new();
+    let mut cursor = 0;
+    while let Some(relative_start) = message[cursor..].find(MARKER) {
+        let marker_start = cursor + relative_start;
+        output.push_str(&message[cursor..marker_start]);
+        output.push_str("[redacted-bearer-token]");
+
+        let token_start = marker_start + MARKER.len();
+        let token_end = message[token_start..]
+            .find(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | ',' | ';' | '}' | ']'))
+            .map_or(message.len(), |relative_end| token_start + relative_end);
+        cursor = token_end;
+    }
+    output.push_str(&message[cursor..]);
+    output
 }
 
 #[async_trait]
@@ -226,9 +327,10 @@ impl LlmProvider for OpenAiCompatibleClient {
     async fn generate(&self, request: LlmRequest) -> Result<LlmResponse, RagasError> {
         let response = self
             .client
-            .post(self.url("chat/completions"))
-            .bearer_auth(&self.api_key)
-            .json(&self.chat_payload(&request))
+            .post(self.chat_url())
+            .json(&self.chat_payload(&request));
+        let response = self
+            .apply_request_config(response)
             .send()
             .await
             .map_err(|error| self.provider_error(error.to_string()))?;
@@ -239,7 +341,7 @@ impl LlmProvider for OpenAiCompatibleClient {
             .await
             .map_err(|error| self.provider_error(error.to_string()))?;
         if !status.is_success() {
-            return Err(self.provider_error(format!("HTTP {status}: {body}")));
+            return Err(self.provider_http_error(status.as_u16(), body));
         }
         parse_chat_response(&body)
     }
@@ -250,9 +352,10 @@ impl EmbeddingProvider for OpenAiCompatibleClient {
     async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, RagasError> {
         let response = self
             .client
-            .post(self.url("embeddings"))
-            .bearer_auth(&self.api_key)
-            .json(&self.embedding_payload(&request))
+            .post(self.embedding_url())
+            .json(&self.embedding_payload(&request));
+        let response = self
+            .apply_request_config(response)
             .send()
             .await
             .map_err(|error| self.provider_error(error.to_string()))?;
@@ -263,7 +366,7 @@ impl EmbeddingProvider for OpenAiCompatibleClient {
             .await
             .map_err(|error| self.provider_error(error.to_string()))?;
         if !status.is_success() {
-            return Err(self.provider_error(format!("HTTP {status}: {body}")));
+            return Err(self.provider_http_error(status.as_u16(), body));
         }
         parse_embedding_response(&body)
     }
@@ -286,11 +389,10 @@ pub fn parse_chat_response(body: &str) -> Result<LlmResponse, RagasError> {
         content: String,
     }
 
-    let parsed: ChatApiResponse = serde_json::from_str(body).map_err(|error| {
-        RagasError::Parse {
+    let parsed: ChatApiResponse =
+        serde_json::from_str(body).map_err(|error| RagasError::Parse {
             message: format!("chat response JSON: {error}"),
-        }
-    })?;
+        })?;
 
     let content = parsed
         .choices
@@ -320,11 +422,10 @@ pub fn parse_embedding_response(body: &str) -> Result<EmbeddingResponse, RagasEr
         embedding: Vec<f32>,
     }
 
-    let mut parsed: EmbeddingApiResponse = serde_json::from_str(body).map_err(|error| {
-        RagasError::Parse {
+    let mut parsed: EmbeddingApiResponse =
+        serde_json::from_str(body).map_err(|error| RagasError::Parse {
             message: format!("embedding response JSON: {error}"),
-        }
-    })?;
+        })?;
 
     parsed.data.sort_by_key(|datum| datum.index);
     let embeddings = parsed
@@ -379,12 +480,9 @@ mod tests {
     #[test]
     fn test_3_1_3_client_payloads_and_errors_do_not_expose_api_key() {
         // SCEN-3.1.3 / AC3 / TEST-3.1.3
-        let client = OpenAiCompatibleClient::new(
-            "https://example.test/v1",
-            "sk-secret-value",
-            "gpt-test",
-        )
-        .with_embedding_model("embed-test");
+        let client =
+            OpenAiCompatibleClient::new("https://example.test/v1", "sk-secret-value", "gpt-test")
+                .with_embedding_model("embed-test");
 
         let chat_payload = client.chat_payload(&LlmRequest {
             messages: vec![ChatMessage::user("judge this")],
@@ -468,12 +566,9 @@ mod tests {
     #[test]
     fn test_7_2_3_http_errors_are_sanitized_and_preserve_status_body_summary() {
         // SCEN-7.2.3 / AC3 / TEST-7.2.3
-        let client = OpenAiCompatibleClient::new(
-            "https://provider.test/v1",
-            "sk-secret-value",
-            "gpt-test",
-        )
-        .with_header("X-Provider-Key", "provider-header-secret");
+        let client =
+            OpenAiCompatibleClient::new("https://provider.test/v1", "sk-secret-value", "gpt-test")
+                .with_header("X-Provider-Key", "provider-header-secret");
 
         let error = client.provider_http_error(
             401,
