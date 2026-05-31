@@ -1,6 +1,6 @@
 # Phase 6 - runtime-executor
 
-**Status**: Draft
+**Status**: In Progress
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 **Depends On**: 5
 
@@ -25,7 +25,7 @@ src/runtime/ + src/eval.rs
 
 | Task | Spec | Status |
 |---|---|---|
-| 6.1 | docs/specs/tasks/task-6.1-run-config.md | Draft |
+| 6.1 | docs/specs/tasks/task-6.1-run-config.md | Done |
 | 6.2 | docs/specs/tasks/task-6.2-executor.md | Draft |
 | 6.3 | docs/specs/tasks/task-6.3-callbacks-cost-cache.md | Draft |
 

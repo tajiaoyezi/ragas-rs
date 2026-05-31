@@ -92,7 +92,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 3 | providers | docs/specs/phases/phase-3-providers.md | Done | 1 | - |
 | 4 | evaluator-builtins | docs/specs/phases/phase-4-evaluator-builtins.md | Done | 1 | - |
 | 5 | schema-and-datasets | docs/specs/phases/phase-5-schema-and-datasets.md | Done | 3 | - |
-| 6 | runtime-executor | docs/specs/phases/phase-6-runtime-executor.md | Draft | 3 | - |
+| 6 | runtime-executor | docs/specs/phases/phase-6-runtime-executor.md | In Progress | 3 | - |
 | 7 | providers-and-adapters | docs/specs/phases/phase-7-providers-and-adapters.md | Draft | 3 | - |
 | 8 | prompts-and-parsers | docs/specs/phases/phase-8-prompts-and-parsers.md | Draft | 3 | - |
 | 9 | metric-framework-complete | docs/specs/phases/phase-9-metric-framework-complete.md | Draft | 3 | - |
@@ -115,7 +115,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 5.1 | schema | docs/specs/tasks/task-5.1-schema-core.md | Done | after task 4.1 | - |
 | 5.2 | dataset | docs/specs/tasks/task-5.2-dataset-io.md | Done | after task 5.1 | - |
 | 5.3 | validation | docs/specs/tasks/task-5.3-validation.md | Done | after task 5.2 | - |
-| 6.1 | runtime | docs/specs/tasks/task-6.1-run-config.md | Draft | after task 5.3 | - |
+| 6.1 | runtime | docs/specs/tasks/task-6.1-run-config.md | Done | after task 5.3 | - |
 | 6.2 | runtime | docs/specs/tasks/task-6.2-executor.md | Draft | after task 6.1 | - |
 | 6.3 | runtime | docs/specs/tasks/task-6.3-callbacks-cost-cache.md | Draft | after task 6.2 | - |
 | 7.1 | providers | docs/specs/tasks/task-7.1-provider-core.md | Draft | after task 6.3 | - |
