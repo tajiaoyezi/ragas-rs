@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{DetailedMetricResult, MetricValueType, ScoreNormalizationPolicy};
+use crate::{
+    DetailedMetricResult, MetricEvidence, MetricValueType, MultiTurnSample,
+    ScoreNormalizationPolicy, ToolCall,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RubricCriterion {
@@ -96,6 +99,92 @@ impl InstanceRubric {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolCallOrderPolicy {
+    Strict,
+    IgnoreOrder,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentGoalOutcome {
+    pub goal: String,
+    pub achieved: bool,
+    pub evidence: Option<String>,
+}
+
+impl AgentGoalOutcome {
+    pub fn achieved(goal: impl Into<String>, evidence: impl Into<String>) -> Self {
+        Self {
+            goal: goal.into(),
+            achieved: true,
+            evidence: Some(evidence.into()),
+        }
+    }
+
+    pub fn missed(goal: impl Into<String>, evidence: impl Into<String>) -> Self {
+        Self {
+            goal: goal.into(),
+            achieved: false,
+            evidence: Some(evidence.into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TopicAdherence {
+    pub topic: String,
+    pub adhered: bool,
+    pub evidence: String,
+}
+
+impl TopicAdherence {
+    pub fn new(topic: impl Into<String>, adhered: bool, evidence: impl Into<String>) -> Self {
+        Self {
+            topic: topic.into(),
+            adhered,
+            evidence: evidence.into(),
+        }
+    }
+}
+
+pub fn tool_call_accuracy(
+    _expected: &[ToolCall],
+    _actual: &[ToolCall],
+    _order_policy: ToolCallOrderPolicy,
+) -> DetailedMetricResult {
+    DetailedMetricResult::new("tool_call_accuracy", MetricValueType::Numeric)
+        .with_score(0.0, ScoreNormalizationPolicy::Reject)
+        .expect("zero score is normalized")
+}
+
+pub fn tool_call_f1(_expected: &[ToolCall], _actual: &[ToolCall]) -> DetailedMetricResult {
+    DetailedMetricResult::new("tool_call_f1", MetricValueType::Numeric)
+        .with_score(0.0, ScoreNormalizationPolicy::Reject)
+        .expect("zero score is normalized")
+}
+
+pub fn agent_goal_accuracy(
+    _sample: &MultiTurnSample,
+    _outcomes: &[AgentGoalOutcome],
+) -> DetailedMetricResult {
+    DetailedMetricResult::new("agent_goal_accuracy", MetricValueType::Numeric)
+        .with_score(0.0, ScoreNormalizationPolicy::Reject)
+        .expect("zero score is normalized")
+}
+
+pub fn topic_adherence(topics: &[TopicAdherence]) -> DetailedMetricResult {
+    let result = DetailedMetricResult::new("topic_adherence", MetricValueType::Numeric)
+        .with_score(0.0, ScoreNormalizationPolicy::Reject)
+        .expect("zero score is normalized");
+
+    topics.iter().fold(result, |result, topic| {
+        result.with_evidence(MetricEvidence::new(
+            format!("topic:{}", topic.topic),
+            topic.evidence.clone(),
+        ))
+    })
+}
+
 pub fn score_aspect_critic(raw_score: f64, config: AspectCriticConfig) -> DetailedMetricResult {
     let raw_score = raw_score.clamp(0.0, 1.0);
     let (score, reason) = match config.mode {
@@ -121,6 +210,8 @@ pub fn score_aspect_critic(raw_score: f64, config: AspectCriticConfig) -> Detail
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Message;
+    use serde_json::json;
 
     fn assert_score_close(result: &DetailedMetricResult, expected: f64) {
         let actual = result.score.expect("score");
@@ -158,7 +249,8 @@ mod tests {
         // SCEN-12.1.3 / AC3 / TEST-12.1.3
         let criterion = RubricCriterion::new("style", "Use concise wording", 0.4);
         let domain = DomainRubric::new("support", vec![criterion.clone()]);
-        let instance = InstanceRubric::new("row-42", vec![criterion]).with_notes("customer tier: enterprise");
+        let instance =
+            InstanceRubric::new("row-42", vec![criterion]).with_notes("customer tier: enterprise");
 
         let domain_json = serde_json::to_string(&domain).expect("domain rubric JSON");
         let instance_json = serde_json::to_string(&instance).expect("instance rubric JSON");
@@ -170,7 +262,128 @@ mod tests {
 
         let roundtrip: InstanceRubric =
             serde_json::from_str(&instance_json).expect("roundtrip instance rubric");
-        assert_eq!(roundtrip.notes.as_deref(), Some("customer tier: enterprise"));
+        assert_eq!(
+            roundtrip.notes.as_deref(),
+            Some("customer tier: enterprise")
+        );
         assert_eq!(roundtrip.criteria.len(), 1);
+    }
+
+    #[test]
+    fn test_12_2_1_tool_call_metrics_compare_names_args_and_order_policy() {
+        // SCEN-12.2.1 / AC1 / TEST-12.2.1
+        let expected = vec![
+            ToolCall::new("expected-1", "search", json!({"query": "ragas"})),
+            ToolCall::new("expected-2", "open", json!({"url": "docs"})),
+        ];
+        let actual_one_arg_mismatch = vec![
+            ToolCall::new("actual-1", "search", json!({"query": "ragas"})),
+            ToolCall::new("actual-2", "open", json!({"url": "wrong"})),
+        ];
+        let swapped_actual = vec![
+            ToolCall::new("actual-2", "open", json!({"url": "docs"})),
+            ToolCall::new("actual-1", "search", json!({"query": "ragas"})),
+        ];
+
+        let strict = tool_call_accuracy(
+            &expected,
+            &actual_one_arg_mismatch,
+            ToolCallOrderPolicy::Strict,
+        );
+        assert_score_close(&strict, 0.5);
+        assert!(
+            strict
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("order=strict")
+        );
+
+        let strict_swapped =
+            tool_call_accuracy(&expected, &swapped_actual, ToolCallOrderPolicy::Strict);
+        assert_score_close(&strict_swapped, 0.0);
+
+        let unordered =
+            tool_call_accuracy(&expected, &swapped_actual, ToolCallOrderPolicy::IgnoreOrder);
+        assert_score_close(&unordered, 1.0);
+        assert!(
+            unordered
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("order=ignore")
+        );
+
+        let with_extra_call = vec![
+            expected[0].clone(),
+            expected[1].clone(),
+            ToolCall::new("extra", "lookup_price", json!({"ticker": "RAG"})),
+        ];
+        let f1 = tool_call_f1(&expected, &with_extra_call);
+        assert_score_close(&f1, 0.8);
+        assert!(
+            f1.reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("precision=0.667")
+        );
+    }
+
+    #[test]
+    fn test_12_2_2_agent_goal_accuracy_supports_multi_turn_traces() {
+        // SCEN-12.2.2 / AC2 / TEST-12.2.2
+        let sample = MultiTurnSample::new(vec![
+            Message::user("Find the refund policy."),
+            Message::assistant("I will search the policy docs.").with_tool_call(ToolCall::new(
+                "call-1",
+                "search",
+                json!({"query": "refund policy"}),
+            )),
+            Message::tool("call-1", "Refunds are available within 30 days."),
+            Message::assistant("Refunds are available within 30 days."),
+        ]);
+        let outcomes = vec![
+            AgentGoalOutcome::achieved("locate policy", "search tool returned refund policy"),
+            AgentGoalOutcome::missed("ask clarifying question", "assistant answered directly"),
+        ];
+
+        let result = agent_goal_accuracy(&sample, &outcomes);
+
+        assert_score_close(&result, 0.5);
+        assert!(
+            result
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("messages=4")
+        );
+        assert_eq!(result.evidence.len(), 2);
+        assert_eq!(result.evidence[0].source, "goal:locate policy");
+        assert!(
+            result.evidence[1]
+                .text
+                .contains("assistant answered directly")
+        );
+    }
+
+    #[test]
+    fn test_12_2_3_topic_adherence_records_per_topic_evidence() {
+        // SCEN-12.2.3 / AC3 / TEST-12.2.3
+        let topics = vec![
+            TopicAdherence::new("refunds", true, "answer states the 30 day refund window"),
+            TopicAdherence::new(
+                "medical advice",
+                false,
+                "answer never discusses medical advice",
+            ),
+        ];
+
+        let result = topic_adherence(&topics);
+
+        assert_score_close(&result, 0.5);
+        assert!(result.reason.as_deref().unwrap_or("").contains("failed=1"));
+        assert_eq!(result.evidence.len(), 2);
+        assert_eq!(result.evidence[0].source, "topic:refunds");
+        assert_eq!(result.evidence[1].source, "topic:medical advice");
     }
 }
