@@ -13,7 +13,12 @@ pub enum ParityStatus {
 
 impl ParityStatus {
     pub fn as_label(&self) -> &'static str {
-        unimplemented!("task 9.3 RED skeleton")
+        match self {
+            ParityStatus::ParityComplete => "parity-complete",
+            ParityStatus::SemanticApproximation => "semantic-approximation",
+            ParityStatus::KnownGap => "known-gap",
+            ParityStatus::NotStarted => "not-started",
+        }
     }
 }
 
@@ -26,32 +31,39 @@ pub struct MetricRegistryEntry {
 }
 
 impl MetricRegistryEntry {
-    pub fn new(_name: impl Into<String>, _metadata: MetricMetadata) -> Self {
-        unimplemented!("task 9.3 RED skeleton")
+    pub fn new(name: impl Into<String>, metadata: MetricMetadata) -> Self {
+        Self {
+            name: name.into(),
+            metadata,
+            feature: None,
+            parity_status: ParityStatus::NotStarted,
+        }
     }
 
-    pub fn with_feature(self, _feature: impl Into<String>) -> Self {
-        unimplemented!("task 9.3 RED skeleton")
+    pub fn with_feature(mut self, feature: impl Into<String>) -> Self {
+        self.feature = Some(feature.into());
+        self
     }
 
-    pub fn with_parity_status(self, _status: ParityStatus) -> Self {
-        unimplemented!("task 9.3 RED skeleton")
+    pub fn with_parity_status(mut self, status: ParityStatus) -> Self {
+        self.parity_status = status;
+        self
     }
 
     pub fn name(&self) -> &str {
-        unimplemented!("task 9.3 RED skeleton")
+        &self.name
     }
 
     pub fn feature(&self) -> Option<&str> {
-        unimplemented!("task 9.3 RED skeleton")
+        self.feature.as_deref()
     }
 
     pub fn parity_status(&self) -> ParityStatus {
-        unimplemented!("task 9.3 RED skeleton")
+        self.parity_status
     }
 
     pub fn parity_label(&self) -> &'static str {
-        unimplemented!("task 9.3 RED skeleton")
+        self.parity_status.as_label()
     }
 }
 
@@ -63,23 +75,48 @@ pub struct MetricRegistry {
 
 impl MetricRegistry {
     pub fn new() -> Self {
-        unimplemented!("task 9.3 RED skeleton")
+        Self::default()
     }
 
-    pub fn register(self, _entry: MetricRegistryEntry) -> Self {
-        unimplemented!("task 9.3 RED skeleton")
+    pub fn register(mut self, entry: MetricRegistryEntry) -> Self {
+        self.entries.insert(entry.name.clone(), entry);
+        self
     }
 
-    pub fn enable_feature(self, _feature: impl Into<String>) -> Self {
-        unimplemented!("task 9.3 RED skeleton")
+    pub fn enable_feature(mut self, feature: impl Into<String>) -> Self {
+        self.enabled_features.insert(feature.into());
+        self
     }
 
-    pub fn resolve(&self, _name: &str) -> Result<&MetricRegistryEntry, RagasError> {
-        unimplemented!("task 9.3 RED skeleton")
+    pub fn resolve(&self, name: &str) -> Result<&MetricRegistryEntry, RagasError> {
+        let entry = self.entries.get(name).ok_or_else(|| RagasError::Provider {
+            message: format!("missing metric: {name}"),
+        })?;
+        if self.is_visible(entry) {
+            Ok(entry)
+        } else {
+            Err(RagasError::Provider {
+                message: format!(
+                    "metric '{name}' requires feature '{}'",
+                    entry.feature.as_deref().unwrap_or("")
+                ),
+            })
+        }
     }
 
     pub fn list_visible_names(&self) -> Vec<String> {
-        unimplemented!("task 9.3 RED skeleton")
+        self.entries
+            .values()
+            .filter(|entry| self.is_visible(entry))
+            .map(|entry| entry.name.clone())
+            .collect()
+    }
+
+    fn is_visible(&self, entry: &MetricRegistryEntry) -> bool {
+        entry
+            .feature
+            .as_ref()
+            .is_none_or(|feature| self.enabled_features.contains(feature))
     }
 }
 
