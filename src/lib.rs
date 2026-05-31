@@ -27,8 +27,9 @@ pub use metric::{
 };
 pub use metrics::{
     DetailedMetricResult, MetricError, MetricErrorKind, MetricEvidence, MetricMetadata,
-    MetricProviderRequirement, MetricSampleKind, MetricValueType, MultiTurnMetric,
-    ScoreNormalizationPolicy, SingleTurnMetric, normalize_score,
+    MetricProviderRequirement, MetricRegistry, MetricRegistryEntry, MetricSampleKind,
+    MetricValueType, MultiTurnMetric, ParityStatus, ScoreNormalizationPolicy, SingleTurnMetric,
+    normalize_score,
 };
 pub use providers::{
     MockEmbeddingProvider, MockLlmProvider, ProviderRegistry, record_provider_usage,
