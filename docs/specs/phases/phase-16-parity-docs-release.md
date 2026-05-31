@@ -1,6 +1,6 @@
 # Phase 16 - parity-docs-release
 
-**Status**: In Progress
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 **Depends On**: 10,11,12,13,14
 
