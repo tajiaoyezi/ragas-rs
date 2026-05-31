@@ -15,8 +15,9 @@ pub use error::RagasError;
 pub use eval::{EvaluationOptions, EvaluationReport, SampleEvaluation, evaluate};
 pub use llm::{
     AzureOpenAiConfig, ChatMessage, EmbeddingProvider, EmbeddingRequest, EmbeddingResponse,
-    LlmProvider, LlmRequest, LlmResponse, OpenAiCompatibleClient, OpenAiCompatibleConfig,
-    TokenUsage, parse_chat_response, parse_embedding_response,
+    EmbeddingAdapter, LlmProvider, LlmRequest, LlmResponse, OpenAiCompatibleClient,
+    OpenAiCompatibleConfig, TokenUsage, normalize_embedding_vector, parse_chat_response,
+    parse_embedding_response,
 };
 pub use metric::{
     ContextPrecisionMetric, FaithfulnessMetric, FnMetric, Metric, MetricResult, MetricValue,

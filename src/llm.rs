@@ -61,6 +61,45 @@ pub trait EmbeddingProvider: Send + Sync {
     async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, RagasError>;
 }
 
+#[derive(Debug, Clone)]
+pub struct EmbeddingAdapter<P> {
+    provider: P,
+    batch_size: usize,
+    normalize: bool,
+}
+
+impl<P> EmbeddingAdapter<P> {
+    pub fn new(provider: P) -> Self {
+        Self {
+            provider,
+            batch_size: usize::MAX,
+            normalize: false,
+        }
+    }
+
+    pub fn with_batch_size(self, _batch_size: usize) -> Self {
+        unimplemented!("task 7.3 RED skeleton")
+    }
+
+    pub fn with_normalization(self, _normalize: bool) -> Self {
+        unimplemented!("task 7.3 RED skeleton")
+    }
+}
+
+pub fn normalize_embedding_vector(_vector: &mut [f32]) {
+    unimplemented!("task 7.3 RED skeleton")
+}
+
+#[async_trait]
+impl<P> EmbeddingProvider for EmbeddingAdapter<P>
+where
+    P: EmbeddingProvider,
+{
+    async fn embed(&self, _request: EmbeddingRequest) -> Result<EmbeddingResponse, RagasError> {
+        unimplemented!("task 7.3 RED skeleton")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenAiCompatibleConfig {
     base_url: String,
@@ -443,6 +482,7 @@ pub fn parse_embedding_response(body: &str) -> Result<EmbeddingResponse, RagasEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_3_1_1_chat_parser_extracts_assistant_content_and_usage() {
@@ -584,5 +624,134 @@ mod tests {
         assert!(message.contains("[redacted-api-key]"));
         assert!(message.contains("[redacted-header]"));
         assert!(message.contains("[redacted-bearer-token]"));
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingEmbeddingProvider {
+        calls: Arc<Mutex<Vec<Vec<String>>>>,
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for RecordingEmbeddingProvider {
+        async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, RagasError> {
+            self.calls.lock().expect("calls").push(request.input.clone());
+            let embeddings = request
+                .input
+                .iter()
+                .map(|value| vec![value.parse::<f32>().expect("numeric input")])
+                .collect();
+            Ok(EmbeddingResponse {
+                embeddings,
+                usage: None,
+            })
+        }
+    }
+
+    #[derive(Clone)]
+    struct StaticEmbeddingProvider {
+        embeddings: Vec<Vec<f32>>,
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for StaticEmbeddingProvider {
+        async fn embed(&self, _request: EmbeddingRequest) -> Result<EmbeddingResponse, RagasError> {
+            Ok(EmbeddingResponse {
+                embeddings: self.embeddings.clone(),
+                usage: None,
+            })
+        }
+    }
+
+    #[derive(Clone)]
+    struct FailingEmbeddingProvider;
+
+    #[async_trait]
+    impl EmbeddingProvider for FailingEmbeddingProvider {
+        async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, RagasError> {
+            if request.input.iter().any(|value| value == "bad") {
+                return Err(RagasError::Provider {
+                    message: "upstream embedding failed".to_string(),
+                });
+            }
+            Ok(EmbeddingResponse {
+                embeddings: request.input.iter().map(|_| vec![1.0]).collect(),
+                usage: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_7_3_1_embedding_provider_batches_inputs_without_reordering_outputs() {
+        // SCEN-7.3.1 / AC1 / TEST-7.3.1
+        let provider = RecordingEmbeddingProvider::default();
+        let calls = provider.calls.clone();
+        let adapter = EmbeddingAdapter::new(provider).with_batch_size(2);
+
+        let response = adapter
+            .embed(EmbeddingRequest {
+                input: vec![
+                    "1".to_string(),
+                    "2".to_string(),
+                    "3".to_string(),
+                    "4".to_string(),
+                    "5".to_string(),
+                ],
+            })
+            .await
+            .expect("embedding response");
+
+        assert_eq!(
+            *calls.lock().expect("calls"),
+            vec![
+                vec!["1".to_string(), "2".to_string()],
+                vec!["3".to_string(), "4".to_string()],
+                vec!["5".to_string()],
+            ]
+        );
+        assert_eq!(
+            response.embeddings,
+            vec![vec![1.0], vec![2.0], vec![3.0], vec![4.0], vec![5.0]]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_7_3_2_optional_vector_normalization_is_deterministic() {
+        // SCEN-7.3.2 / AC2 / TEST-7.3.2
+        let provider = StaticEmbeddingProvider {
+            embeddings: vec![vec![3.0, 4.0], vec![0.0, 0.0]],
+        };
+        let adapter = EmbeddingAdapter::new(provider).with_normalization(true);
+
+        let response = adapter
+            .embed(EmbeddingRequest {
+                input: vec!["a".to_string(), "b".to_string()],
+            })
+            .await
+            .expect("embedding response");
+
+        assert_eq!(response.embeddings, vec![vec![0.6, 0.8], vec![0.0, 0.0]]);
+    }
+
+    #[tokio::test]
+    async fn test_7_3_3_embedding_errors_include_request_batch_position() {
+        // SCEN-7.3.3 / AC3 / TEST-7.3.3
+        let adapter = EmbeddingAdapter::new(FailingEmbeddingProvider).with_batch_size(2);
+
+        let error = adapter
+            .embed(EmbeddingRequest {
+                input: vec![
+                    "ok-1".to_string(),
+                    "ok-2".to_string(),
+                    "bad".to_string(),
+                    "ok-4".to_string(),
+                ],
+            })
+            .await
+            .expect_err("batch failure");
+        let message = error.to_string();
+
+        assert!(message.contains("batch_start=2"));
+        assert!(message.contains("batch_end=4"));
+        assert!(message.contains("upstream embedding failed"));
     }
 }
