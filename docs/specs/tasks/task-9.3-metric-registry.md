@@ -1,6 +1,6 @@
 # Task 9.3 - metric-registry
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 9
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-9.3.1 | TEST-9.3.1 | Not Started |
-| AC2 | SCEN-9.3.2 | TEST-9.3.2 | Not Started |
-| AC3 | SCEN-9.3.3 | TEST-9.3.3 | Not Started |
+| AC1 | SCEN-9.3.1 | TEST-9.3.1 | Done |
+| AC2 | SCEN-9.3.2 | TEST-9.3.2 | Done |
+| AC3 | SCEN-9.3.3 | TEST-9.3.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,22 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/metrics/registry.rs`（新增 metric registry、feature gating、parity status labels 和 task 9.3 unit tests）
+  - `src/metrics/mod.rs`（导出 registry API）
+  - `src/lib.rs`（导出 metric registry API）
+  - `docs/specs/tasks/task-9.3-metric-registry.md`（Status/traceability/Completion Notes 回填）
+- **commit 列表**：
+  - `eb39b7b` docs(spec): task-9.3 Ready
+  - `a765fba` docs(spec): task-9.3 进入实施
+  - `852d55d` test(metrics): 加 task-9.3 RED 测试
+  - `f5cccf3` feat(metrics): 实现 task-9.3 metric registry
+- **§9 Verification 结果**：
+  - install: pass (`cargo build`)
+  - typecheck: pass (`cargo check`)
+  - unit-test: 58 passed / 0 failed (`cargo test`)
+  - build: pass (`cargo build`)
+  - note: project helper `s2v_verify_full` still cannot parse lowercase generated §9 keys, so adapter commands were executed directly and recorded here.
+- **剩余风险 / 未做项**：本 task 只实现 registry metadata/gating，不实例化 all future metric implementations; built-in concrete registration will expand in phase 10+ as metrics are migrated.
+- **下游 task 影响**：phase 10/11/12 can register migrated metrics by stable name, optional feature and parity label; phase 16 docs/tests can render parity labels from `ParityStatus`.
