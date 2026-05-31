@@ -1,6 +1,6 @@
 # Task 13.3 - synthesizers
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 13
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-13.3.1 | TEST-13.3.1 | Not Started |
-| AC2 | SCEN-13.3.2 | TEST-13.3.2 | Not Started |
-| AC3 | SCEN-13.3.3 | TEST-13.3.3 | Not Started |
+| AC1 | SCEN-13.3.1 | TEST-13.3.1 | Done |
+| AC2 | SCEN-13.3.2 | TEST-13.3.2 | Done |
+| AC3 | SCEN-13.3.3 | TEST-13.3.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,19 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/testset/mod.rs`（新增 Persona、PersonaGenerator、SynthesizedSample、single-hop/multi-hop synthesizer 与 TEST-13.3.1~13.3.3）
+  - `src/lib.rs`（导出 task-13.3 public crate API）
+- **commit 列表**：
+  - `7063ff2` docs(spec): task-13.3 Ready
+  - `dcfcfcf` docs(spec): task-13.3 进入实施
+  - `862e81e` test(testset): 加 task-13.3 RED 测试
+  - `9effd1c` feat(testset): 实现 task-13.3 synthesizers
+- **§9 Verification 结果**：
+  - install: ✅ `cargo build`
+  - typecheck: ✅ `cargo check`
+  - unit-test: 94 passed / 0 failed (`cargo test`)
+  - build: ✅ `cargo build`
+- **剩余风险 / 未做项**：当前 synthesizer 是 deterministic template scaffold，不调用 LLM 生成自然语言问题；Python ragas synthesizer prompt parity 和采样策略由 parity/docs task 登记或扩展。
+- **下游 task 影响**：phase 14 backends/CLI 可把 SynthesizedSample 序列化或导出；phase 16 parity/docs 需要说明 deterministic template 与 Python LLM-driven synthesizer 的差异。
