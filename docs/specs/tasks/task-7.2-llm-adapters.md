@@ -1,6 +1,6 @@
 # Task 7.2 - llm-adapters
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 7
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-7.2.1 | TEST-7.2.1 | Not Started |
-| AC2 | SCEN-7.2.2 | TEST-7.2.2 | Not Started |
-| AC3 | SCEN-7.2.3 | TEST-7.2.3 | Not Started |
+| AC1 | SCEN-7.2.1 | TEST-7.2.1 | Done |
+| AC2 | SCEN-7.2.2 | TEST-7.2.2 | Done |
+| AC3 | SCEN-7.2.3 | TEST-7.2.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,21 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/llm.rs`（新增 OpenAI-compatible config、Azure config 映射、headers/query URL 支持、HTTP error sanitization 和 task 7.2 unit tests）
+  - `src/lib.rs`（导出 `OpenAiCompatibleConfig` 和 `AzureOpenAiConfig`）
+  - `docs/specs/tasks/task-7.2-llm-adapters.md`（Status/traceability/Completion Notes 回填）
+- **commit 列表**：
+  - `6168605` docs(spec): task-7.2 Ready
+  - `544f3af` docs(spec): task-7.2 进入实施
+  - `7c129e9` test(llm): 加 task-7.2 RED 测试
+  - `076112c` feat(llm): 实现 task-7.2 llm adapters
+- **§9 Verification 结果**：
+  - install: pass (`cargo build`)
+  - typecheck: pass (`cargo check`)
+  - unit-test: 37 passed / 0 failed (`cargo test`)
+  - build: pass (`cargo build`)
+  - note: project helper `s2v_verify_full` could not parse lowercase generated §9 keys, so adapter commands were executed directly and recorded here.
+- **剩余风险 / 未做项**：本 task 覆盖 OpenAI-compatible/Azure adapter config 和错误脱敏；真实网络端到端 fixture、local model protocol variants 和 embedding-specific adapter details 留给 task 7.3/后续 integration task。
+- **下游 task 影响**：task 7.3 可复用 `OpenAiCompatibleConfig` 的 base URL/header/query 支持实现 embedding adapters；phase 9/10 metric judge flows 可通过 `provider_http_error` 获得脱敏后的 provider failure。
