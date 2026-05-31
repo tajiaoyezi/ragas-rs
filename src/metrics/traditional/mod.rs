@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    DetailedMetricResult, EmbeddingProvider, MetricEvidence, MetricValueType, RagasError,
-    ScoreNormalizationPolicy,
+    DetailedMetricResult, EmbeddingProvider, EmbeddingRequest, MetricEvidence, MetricValueType,
+    RagasError, ScoreNormalizationPolicy, cosine_similarity,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -181,45 +181,89 @@ pub fn chrf_score(candidate: &str, reference: &str) -> DetailedMetricResult {
 }
 
 pub async fn semantic_similarity_batch<P>(
-    _provider: &P,
+    provider: &P,
     pairs: &[(String, String)],
 ) -> Result<Vec<DetailedMetricResult>, RagasError>
 where
     P: EmbeddingProvider + ?Sized,
 {
-    Ok(pairs
-        .iter()
-        .map(|_| {
-            numeric_result(
-                "semantic_similarity",
-                0.0,
-                "not implemented",
-                Vec::new(),
-            )
+    if pairs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut input = Vec::with_capacity(pairs.len() * 2);
+    for (left, right) in pairs {
+        input.push(left.clone());
+        input.push(right.clone());
+    }
+
+    let response = provider.embed(EmbeddingRequest { input }).await?;
+    if response.embeddings.len() != pairs.len() * 2 {
+        return Err(RagasError::Parse {
+            message: format!(
+                "semantic similarity embedding count mismatch: expected {}, got {}",
+                pairs.len() * 2,
+                response.embeddings.len()
+            ),
+        });
+    }
+
+    Ok(response
+        .embeddings
+        .chunks_exact(2)
+        .enumerate()
+        .map(|(pair_index, chunk)| {
+            let mut result = semantic_similarity_from_vectors(&chunk[0], &chunk[1]);
+            result = result.with_evidence(MetricEvidence::new(
+                format!("pair[{pair_index}]"),
+                "embedding cosine similarity",
+            ));
+            result
         })
         .collect())
 }
 
 pub fn threshold_semantic_similarity(
-    _score: f64,
-    _policy: SemanticThresholdPolicy,
+    score: f64,
+    policy: SemanticThresholdPolicy,
 ) -> DetailedMetricResult {
+    let normalized = score.clamp(0.0, 1.0);
+    let passed = if policy.inclusive {
+        normalized >= policy.threshold
+    } else {
+        normalized > policy.threshold
+    };
+    let mode = if policy.inclusive {
+        "inclusive"
+    } else {
+        "exclusive"
+    };
     numeric_result(
         "threshold_semantic_similarity",
-        0.0,
-        "not implemented",
+        if passed { 1.0 } else { 0.0 },
+        format!(
+            "{mode} threshold policy: score={normalized:.3} threshold={:.3}",
+            policy.threshold
+        ),
         Vec::new(),
     )
 }
 
 pub fn semantic_similarity_from_vectors(
-    _left: &[f32],
-    _right: &[f32],
+    left: &[f32],
+    right: &[f32],
 ) -> DetailedMetricResult {
+    let has_zero = vector_is_zero(left) || vector_is_zero(right);
+    let score = cosine_similarity(left, right).clamp(0.0, 1.0);
+    let reason = if has_zero {
+        "embedding cosine similarity is stable for zero vector inputs".to_string()
+    } else {
+        "embedding cosine similarity".to_string()
+    };
     numeric_result(
         "semantic_similarity",
-        0.0,
-        "not implemented",
+        score,
+        reason,
         Vec::new(),
     )
 }
@@ -256,6 +300,10 @@ fn character_unigrams(text: &str) -> Vec<char> {
         .filter(|character| !character.is_whitespace())
         .map(|character| character.to_ascii_lowercase())
         .collect()
+}
+
+fn vector_is_zero(vector: &[f32]) -> bool {
+    vector.is_empty() || vector.iter().all(|value| *value == 0.0)
 }
 
 fn token_counts(tokens: &[String]) -> BTreeMap<String, usize> {
