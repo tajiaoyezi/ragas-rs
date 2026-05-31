@@ -1,6 +1,6 @@
 # Task 5.3 - validation
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 5
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-5.3.1 | TEST-5.3.1 | Not Started |
-| AC2 | SCEN-5.3.2 | TEST-5.3.2 | Not Started |
-| AC3 | SCEN-5.3.3 | TEST-5.3.3 | Not Started |
+| AC1 | SCEN-5.3.1 | TEST-5.3.1 | Done |
+| AC2 | SCEN-5.3.2 | TEST-5.3.2 | Done |
+| AC3 | SCEN-5.3.3 | TEST-5.3.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,21 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/validation.rs`（新增 metric requirement、ValidationReport、pre-evaluate validation、unit tests）
+  - `src/metric.rs`（为 Metric/FnMetric/内置指标暴露 requirements）
+  - `src/lib.rs`（导出 validation API）
+  - `docs/specs/tasks/task-5.3-validation.md`（Status/traceability/Completion Notes 回填）
+- **commit 列表**：
+  - `2633a24` docs(spec): task-5.3 Ready
+  - `badcd68` docs(spec): task-5.3 进入实施
+  - `334e727` test(validation): 加 task-5.3 RED 测试
+  - `21ac782` feat(validation): 实现 task-5.3 预评估校验
+- **§9 Verification 结果**：
+  - install: pass (`cargo build`)
+  - typecheck: pass (`cargo check`)
+  - unit-test: 22 passed / 0 failed (`cargo test`)
+  - build: pass (`cargo build`)
+- **剩余风险 / 未做项**：当前 validator 覆盖 SingleTurnSample 必填字段和 metric requirement；MultiTurnSample/agent/tool/sql/multimodal 的兼容校验将在 phase 9/12 对应 metric framework 与 advanced metrics 中扩展。
+- **下游 task 影响**：phase 6 的 executor/evaluate wrapper 可在 provider 调用前复用 validate_before_evaluate；phase 9 的 metric framework 可扩展 requirements 模型；phase 16 parity suite 可基于 ValidationReport 做失败快照。
