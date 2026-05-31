@@ -26,7 +26,7 @@ src/metrics/traditional/
 | Task | Spec | Status |
 |---|---|---|
 | 11.1 | docs/specs/tasks/task-11.1-lexical.md | Done |
-| 11.2 | docs/specs/tasks/task-11.2-semantic.md | Draft |
+| 11.2 | docs/specs/tasks/task-11.2-semantic.md | Done |
 | 11.3 | docs/specs/tasks/task-11.3-quoted-spans.md | Draft |
 
 ## 6. Phase Acceptance And Smoke
