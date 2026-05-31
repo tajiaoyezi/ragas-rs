@@ -1,6 +1,6 @@
 # Task 8.1 - prompt-core
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 8
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
