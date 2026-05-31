@@ -295,25 +295,106 @@ pub fn semantic_similarity_from_vectors(
     )
 }
 
-pub fn extract_quoted_spans(_text: &str) -> Vec<QuotedSpan> {
-    Vec::new()
+pub fn extract_quoted_spans(text: &str) -> Vec<QuotedSpan> {
+    let mut spans = Vec::new();
+    let mut open: Option<(usize, usize)> = None;
+
+    for (char_index, (byte_index, character)) in text.char_indices().enumerate() {
+        if character != '"' {
+            continue;
+        }
+
+        if let Some((byte_start, char_start)) = open.take() {
+            let byte_end = byte_index;
+            let char_end = char_index;
+            spans.push(QuotedSpan::new(
+                text[byte_start..byte_end].to_string(),
+                byte_start,
+                byte_end,
+                char_start,
+                char_end,
+            ));
+        } else {
+            open = Some((byte_index + character.len_utf8(), char_index + 1));
+        }
+    }
+
+    spans
 }
 
-pub fn quoted_span_overlap(_candidate: &QuotedSpan, _reference: &QuotedSpan) -> DetailedMetricResult {
+pub fn quoted_span_overlap(candidate: &QuotedSpan, reference: &QuotedSpan) -> DetailedMetricResult {
+    let intersection_start = candidate.char_start.max(reference.char_start);
+    let intersection_end = candidate.char_end.min(reference.char_end);
+    let intersection = intersection_end.saturating_sub(intersection_start);
+    let union_start = candidate.char_start.min(reference.char_start);
+    let union_end = candidate.char_end.max(reference.char_end);
+    let union = union_end.saturating_sub(union_start);
+    let score = if union == 0 {
+        0.0
+    } else {
+        intersection as f64 / union as f64
+    };
+    let reason = if intersection == 0 {
+        "no quoted span overlap".to_string()
+    } else if score < 1.0 {
+        format!("partial overlap: intersection={intersection} union={union}")
+    } else {
+        format!("complete overlap: intersection={intersection} union={union}")
+    };
     numeric_result(
         "quoted_span_overlap",
-        0.0,
-        "not implemented",
-        Vec::new(),
+        score,
+        reason,
+        vec![MetricEvidence::new(
+            "char_range",
+            format!(
+                "candidate={}..{} reference={}..{}",
+                candidate.char_start, candidate.char_end, reference.char_start, reference.char_end
+            ),
+        )],
     )
 }
 
-pub fn quoted_citation_coverage(_answer: &str, _sources: &[String]) -> DetailedMetricResult {
+pub fn quoted_citation_coverage(answer: &str, sources: &[String]) -> DetailedMetricResult {
+    let spans = extract_quoted_spans(answer);
+    if spans.is_empty() {
+        return numeric_result(
+            "quoted_citation_coverage",
+            0.0,
+            "missing citations: answer contains no quoted spans",
+            Vec::new(),
+        );
+    }
+    if sources.is_empty() {
+        return numeric_result(
+            "quoted_citation_coverage",
+            0.0,
+            "missing citation sources",
+            Vec::new(),
+        );
+    }
+
+    let mut matched = 0usize;
+    let mut evidence = Vec::new();
+    for span in &spans {
+        if let Some((source_index, _)) = sources
+            .iter()
+            .enumerate()
+            .find(|(_, source)| source.contains(&span.text))
+        {
+            matched += 1;
+            evidence.push(MetricEvidence::new(
+                format!("source[{source_index}]"),
+                span.text.clone(),
+            ));
+        }
+    }
+
     numeric_result(
         "quoted_citation_coverage",
-        0.0,
-        "not implemented",
-        Vec::new(),
+        matched as f64 / spans.len() as f64,
+        format!("quoted citation coverage: matched={matched} total={}", spans.len()),
+        evidence,
     )
 }
 
