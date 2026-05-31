@@ -1,6 +1,6 @@
 # Task 6.1 - run-config
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 6
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
