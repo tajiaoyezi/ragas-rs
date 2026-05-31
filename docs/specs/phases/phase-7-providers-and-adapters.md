@@ -1,6 +1,6 @@
 # Phase 7 - providers-and-adapters
 
-**Status**: Draft
+**Status**: In Progress
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 **Depends On**: 5,6
 
@@ -25,7 +25,7 @@ src/providers/ + src/llm.rs
 
 | Task | Spec | Status |
 |---|---|---|
-| 7.1 | docs/specs/tasks/task-7.1-provider-core.md | Draft |
+| 7.1 | docs/specs/tasks/task-7.1-provider-core.md | Done |
 | 7.2 | docs/specs/tasks/task-7.2-llm-adapters.md | Draft |
 | 7.3 | docs/specs/tasks/task-7.3-embedding-adapters.md | Draft |
 
