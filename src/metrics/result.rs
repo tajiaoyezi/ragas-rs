@@ -28,20 +28,32 @@ pub struct MetricError {
 }
 
 impl MetricError {
-    pub fn provider(_message: impl Into<String>) -> Self {
-        unimplemented!("task 9.2 RED skeleton")
+    pub fn provider(message: impl Into<String>) -> Self {
+        Self {
+            kind: MetricErrorKind::Provider,
+            message: message.into(),
+        }
     }
 
-    pub fn parse(_message: impl Into<String>) -> Self {
-        unimplemented!("task 9.2 RED skeleton")
+    pub fn parse(message: impl Into<String>) -> Self {
+        Self {
+            kind: MetricErrorKind::Parse,
+            message: message.into(),
+        }
     }
 
-    pub fn validation(_message: impl Into<String>) -> Self {
-        unimplemented!("task 9.2 RED skeleton")
+    pub fn validation(message: impl Into<String>) -> Self {
+        Self {
+            kind: MetricErrorKind::Validation,
+            message: message.into(),
+        }
     }
 
-    pub fn metric(_message: impl Into<String>) -> Self {
-        unimplemented!("task 9.2 RED skeleton")
+    pub fn metric(message: impl Into<String>) -> Self {
+        Self {
+            kind: MetricErrorKind::Metric,
+            message: message.into(),
+        }
     }
 }
 
@@ -52,8 +64,11 @@ pub struct MetricEvidence {
 }
 
 impl MetricEvidence {
-    pub fn new(_source: impl Into<String>, _text: impl Into<String>) -> Self {
-        unimplemented!("task 9.2 RED skeleton")
+    pub fn new(source: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            source: source.into(),
+            text: text.into(),
+        }
     }
 }
 
@@ -68,36 +83,59 @@ pub struct DetailedMetricResult {
 }
 
 impl DetailedMetricResult {
-    pub fn new(_metric_name: impl Into<String>, _value_type: MetricValueType) -> Self {
-        unimplemented!("task 9.2 RED skeleton")
+    pub fn new(metric_name: impl Into<String>, value_type: MetricValueType) -> Self {
+        Self {
+            metric_name: metric_name.into(),
+            value_type,
+            score: None,
+            reason: None,
+            evidence: Vec::new(),
+            error: None,
+        }
     }
 
     pub fn with_score(
-        self,
-        _score: f64,
-        _policy: ScoreNormalizationPolicy,
+        mut self,
+        score: f64,
+        policy: ScoreNormalizationPolicy,
     ) -> Result<Self, MetricError> {
-        unimplemented!("task 9.2 RED skeleton")
+        self.score = Some(normalize_score(score, policy)?);
+        Ok(self)
     }
 
-    pub fn with_reason(self, _reason: impl Into<String>) -> Self {
-        unimplemented!("task 9.2 RED skeleton")
+    pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
+        self.reason = Some(reason.into());
+        self
     }
 
-    pub fn with_evidence(self, _evidence: MetricEvidence) -> Self {
-        unimplemented!("task 9.2 RED skeleton")
+    pub fn with_evidence(mut self, evidence: MetricEvidence) -> Self {
+        self.evidence.push(evidence);
+        self
     }
 
-    pub fn with_error(self, _error: MetricError) -> Self {
-        unimplemented!("task 9.2 RED skeleton")
+    pub fn with_error(mut self, error: MetricError) -> Self {
+        self.error = Some(error);
+        self
     }
 }
 
 pub fn normalize_score(
-    _score: f64,
-    _policy: ScoreNormalizationPolicy,
+    score: f64,
+    policy: ScoreNormalizationPolicy,
 ) -> Result<f64, MetricError> {
-    unimplemented!("task 9.2 RED skeleton")
+    if !score.is_finite() {
+        return Err(MetricError::validation("score must be finite"));
+    }
+
+    match policy {
+        ScoreNormalizationPolicy::Clamp => Ok(score.clamp(0.0, 1.0)),
+        ScoreNormalizationPolicy::Reject if !(0.0..=1.0).contains(&score) => {
+            Err(MetricError::validation(format!(
+                "score out of range [0, 1]: {score}"
+            )))
+        }
+        ScoreNormalizationPolicy::Reject => Ok(score),
+    }
 }
 
 #[cfg(test)]
