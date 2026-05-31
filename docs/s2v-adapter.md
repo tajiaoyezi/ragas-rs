@@ -147,7 +147,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 15.3 | benchmarks | docs/specs/tasks/task-15.3-benchmarks.md | Done | after task 15.2 | - |
 | 16.1 | parity | docs/specs/tasks/task-16.1-parity-suite.md | Done | after tasks 10-15 | - |
 | 16.2 | docs | docs/specs/tasks/task-16.2-docs-examples.md | Done | after task 16.1 | - |
-| 16.3 | release | docs/specs/tasks/task-16.3-release.md | In Progress | after task 16.2 | - |
+| 16.3 | release | docs/specs/tasks/task-16.3-release.md | Done | after task 16.2 | - |
 
 ## ADR 索引
 
