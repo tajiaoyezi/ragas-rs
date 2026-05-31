@@ -102,7 +102,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 13 | testset-generation | docs/specs/phases/phase-13-testset-generation.md | Done | 3 | - |
 | 14 | backends-integrations-cli | docs/specs/phases/phase-14-backends-integrations-cli.md | Done | 3 | - |
 | 15 | optimizers-experiments | docs/specs/phases/phase-15-optimizers-experiments.md | Done | 3 | - |
-| 16 | parity-docs-release | docs/specs/phases/phase-16-parity-docs-release.md | Draft | 3 | - |
+| 16 | parity-docs-release | docs/specs/phases/phase-16-parity-docs-release.md | In Progress | 3 | - |
 
 ## Task 总索引
 
@@ -145,7 +145,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 15.1 | experiments | docs/specs/tasks/task-15.1-experiments.md | Done | after task 14.3 | - |
 | 15.2 | optimizers | docs/specs/tasks/task-15.2-optimizers.md | Done | after task 15.1 | - |
 | 15.3 | benchmarks | docs/specs/tasks/task-15.3-benchmarks.md | Done | after task 15.2 | - |
-| 16.1 | parity | docs/specs/tasks/task-16.1-parity-suite.md | Draft | after tasks 10-15 | - |
+| 16.1 | parity | docs/specs/tasks/task-16.1-parity-suite.md | Ready | after tasks 10-15 | - |
 | 16.2 | docs | docs/specs/tasks/task-16.2-docs-examples.md | Draft | after task 16.1 | - |
 | 16.3 | release | docs/specs/tasks/task-16.3-release.md | Draft | after task 16.2 | - |
 

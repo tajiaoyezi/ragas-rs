@@ -1,6 +1,6 @@
 # Task 16.1 - parity-suite
 
-**Status**: Draft
+**Status**: Ready
 **Phase**: 16
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -15,7 +15,7 @@ upstream golden fixtures, gap matrix, parity status reports
 ## 3. Scope And Out-of-Scope
 
 **In scope**:
-- Rust module area: $(System.Collections.Hashtable.Module).
+- Rust module area: `src/parity/` and `tests/parity/`.
 - Behavior listed in §6 acceptance criteria.
 - Unit tests and, where applicable, parity fixtures for upstream ragas semantics.
 

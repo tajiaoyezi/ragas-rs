@@ -1,6 +1,6 @@
 # Phase 16 - parity-docs-release
 
-**Status**: Draft
+**Status**: In Progress
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 **Depends On**: 10,11,12,13,14
 
@@ -25,7 +25,7 @@ tests/parity/ + examples/ + docs/
 
 | Task | Spec | Status |
 |---|---|---|
-| 16.1 | docs/specs/tasks/task-16.1-parity-suite.md | Draft |
+| 16.1 | docs/specs/tasks/task-16.1-parity-suite.md | Ready |
 | 16.2 | docs/specs/tasks/task-16.2-docs-examples.md | Draft |
 | 16.3 | docs/specs/tasks/task-16.3-release.md | Draft |
 
