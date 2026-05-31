@@ -1,6 +1,6 @@
 # Phase 13 - testset-generation
 
-**Status**: Draft
+**Status**: In Progress
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 **Depends On**: 5,7,8
 
@@ -25,7 +25,7 @@ src/testset/
 
 | Task | Spec | Status |
 |---|---|---|
-| 13.1 | docs/specs/tasks/task-13.1-graph-core.md | Draft |
+| 13.1 | docs/specs/tasks/task-13.1-graph-core.md | Done |
 | 13.2 | docs/specs/tasks/task-13.2-transforms.md | Draft |
 | 13.3 | docs/specs/tasks/task-13.3-synthesizers.md | Draft |
 
