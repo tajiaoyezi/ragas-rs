@@ -1,6 +1,6 @@
 # Task 12.2 - agents-tools
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 12
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-12.2.1 | TEST-12.2.1 | Not Started |
-| AC2 | SCEN-12.2.2 | TEST-12.2.2 | Not Started |
-| AC3 | SCEN-12.2.3 | TEST-12.2.3 | Not Started |
+| AC1 | SCEN-12.2.1 | TEST-12.2.1 | Done |
+| AC2 | SCEN-12.2.2 | TEST-12.2.2 | Done |
+| AC3 | SCEN-12.2.3 | TEST-12.2.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,22 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/metrics/advanced/mod.rs`（新增 tool call、agent goal、topic adherence 指标 API 与 TEST-12.2.1~12.2.3）
+  - `src/metrics/mod.rs`（导出 task-12.2 advanced metrics API）
+  - `src/lib.rs`（导出 task-12.2 public crate API）
+  - `src/eval.rs`, `src/llm.rs`, `src/metric.rs`, `src/metrics/base.rs`, `src/metrics/rag/mod.rs`, `src/metrics/registry.rs`, `src/metrics/result.rs`, `src/metrics/traditional/mod.rs`, `src/prompts/mod.rs`, `src/providers.rs`, `src/runtime.rs`, `src/validation.rs`（cargo fmt-only refactor）
+- **commit 列表**：
+  - `4bf1a7c` docs(spec): task-12.2 Ready
+  - `e8e1f1e` docs(spec): task-12.2 进入实施
+  - `5a6abfa` test(metrics-advanced): 加 task-12.2 RED 测试
+  - `3b6567a` feat(metrics-advanced): 实现 task-12.2 agents tools
+  - `a11583c` refactor(style): cargo fmt source tree
+- **§9 Verification 结果**：
+  - install: ✅ `cargo build`
+  - typecheck: ✅ `cargo check`
+  - unit-test: 82 passed / 0 failed (`cargo test`)
+  - build: ✅ `cargo build`
+- **剩余风险 / 未做项**：Python ragas 的 LLM judge prompt parity 未在本 task 内声称完成；本 task 交付确定性 aggregation contract 和可审计 evidence，后续由 parity suite 补 golden fixtures。
+- **下游 task 影响**：task 12.3 可复用 advanced metrics result/evidence 模式；task 16.1 需要为 agent/tool/topic metrics 登记 parity fixtures 或 Known Gap。
