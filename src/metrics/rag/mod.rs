@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    DetailedMetricResult, MetricEvidence, MetricValueType, OutputParseDiagnostic,
-    RagasError, RenderedPrompt, RepairStrategy, ScoreNormalizationPolicy, SingleTurnSample,
+    DetailedMetricResult, FewShotExample, JudgeOutputParser, MetricEvidence, MetricValueType,
+    OutputParseDiagnostic, PromptTemplate, PromptValueKind, PromptVariables, RagasError,
+    RenderedPrompt, ScoreNormalizationPolicy, SingleTurnSample,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,32 +37,105 @@ impl FaithfulnessJudgeContract {
         Self
     }
 
-    pub fn render_prompt(&self, _sample: &SingleTurnSample) -> Result<RenderedPrompt, RagasError> {
-        Ok(RenderedPrompt {
-            text: String::new(),
-            few_shot_examples: Vec::new(),
-        })
+    pub fn render_prompt(&self, sample: &SingleTurnSample) -> Result<RenderedPrompt, RagasError> {
+        let template = PromptTemplate::new(
+            "faithfulness",
+            "Question: {{question}}\nResponse: {{response}}\nContexts:\n{{contexts}}\nReturn JSON with numeric score and reason.",
+        )
+        .require_variable("question", PromptValueKind::Text)
+        .require_variable("response", PromptValueKind::Text)
+        .require_variable("contexts", PromptValueKind::Text)
+        .with_few_shot(FewShotExample::new(
+            PromptVariables::new()
+                .with_text("question", "What does ragas evaluate?")
+                .with_text("response", "Ragas evaluates LLM applications.")
+                .with_text("contexts", "Ragas evaluates LLM applications."),
+            r#"{"score":1.0,"reason":"response is supported by context"}"#,
+        ));
+
+        template.render(
+            &PromptVariables::new()
+                .with_text("question", &sample.user_input)
+                .with_text("response", &sample.response)
+                .with_text("contexts", sample.retrieved_contexts.join("\n")),
+        )
     }
 
     pub fn parse_judge_output(
         &self,
-        _output: &str,
+        output: &str,
     ) -> Result<DetailedMetricResult, OutputParseDiagnostic> {
+        let parsed = JudgeOutputParser::new().parse(output)?;
+        let reason = parsed
+            .reason
+            .unwrap_or_else(|| "faithfulness judge returned a score".to_string());
         Ok(numeric_result(
             "faithfulness",
-            0.0,
-            "not implemented",
+            parsed.score,
+            reason,
             Vec::new(),
         ))
     }
 }
 
-pub fn response_groundedness(_response: &str, _contexts: &[String]) -> DetailedMetricResult {
-    numeric_result("response_groundedness", 0.0, "not implemented", Vec::new())
+pub fn response_groundedness(response: &str, contexts: &[String]) -> DetailedMetricResult {
+    let claims = split_reference_claims(response);
+    if claims.is_empty() {
+        return numeric_result(
+            "response_groundedness",
+            0.0,
+            "response groundedness has no response claims",
+            Vec::new(),
+        );
+    }
+
+    let mut grounded = 0usize;
+    let mut evidence = Vec::new();
+    for claim in &claims {
+        if let Some((context_index, context)) = contexts
+            .iter()
+            .enumerate()
+            .find(|(_, context)| claim_is_supported_by_context(claim, context))
+        {
+            grounded += 1;
+            evidence.push(MetricEvidence::new(
+                format!("context[{context_index}]"),
+                context.clone(),
+            ));
+        }
+    }
+
+    numeric_result(
+        "response_groundedness",
+        grounded as f64 / claims.len() as f64,
+        "response claims grounded in retrieved contexts",
+        evidence,
+    )
 }
 
-pub fn factual_correctness(_counts: FactualCorrectnessCounts) -> DetailedMetricResult {
-    numeric_result("factual_correctness", 0.0, "not implemented", Vec::new())
+pub fn factual_correctness(counts: FactualCorrectnessCounts) -> DetailedMetricResult {
+    let numerator = 2 * counts.true_positive;
+    let denominator = numerator + counts.false_positive + counts.false_negative;
+    let score = if denominator == 0 {
+        0.0
+    } else {
+        numerator as f64 / denominator as f64
+    };
+    numeric_result(
+        "factual_correctness",
+        score,
+        format!(
+            "F1 from TP={} FP={} FN={}",
+            counts.true_positive, counts.false_positive, counts.false_negative
+        ),
+        vec![MetricEvidence::new(
+            "factual_counts",
+            format!(
+                "TP={} FP={} FN={}",
+                counts.true_positive, counts.false_positive, counts.false_negative
+            ),
+        )],
+    )
 }
 
 impl ContextPrecisionVariant {
@@ -293,6 +367,17 @@ fn split_reference_claims(reference: &str) -> Vec<String> {
         .collect()
 }
 
+fn claim_is_supported_by_context(claim: &str, context: &str) -> bool {
+    let claim_tokens = meaningful_tokens(claim);
+    if claim_tokens.is_empty() {
+        return false;
+    }
+    let context_tokens = meaningful_tokens(context).into_iter().collect::<BTreeSet<_>>();
+    claim_tokens
+        .iter()
+        .all(|token| context_tokens.contains(token))
+}
+
 fn extract_entities(text: &str) -> Vec<String> {
     let mut seen = BTreeSet::new();
     let mut entities = Vec::new();
@@ -352,15 +437,6 @@ fn is_stopword(token: &str) -> bool {
             | "to"
             | "with"
     )
-}
-
-#[allow(dead_code)]
-fn parser_diagnostic(message: impl Into<String>) -> OutputParseDiagnostic {
-    OutputParseDiagnostic {
-        message: message.into(),
-        raw_excerpt: String::new(),
-        repair_strategy: RepairStrategy::None,
-    }
 }
 
 #[cfg(test)]
