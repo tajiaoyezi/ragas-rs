@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::SingleTurnSample;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GraphProperty {
     Text(String),
@@ -235,6 +237,73 @@ pub fn build_chunk_relationships(
     graph
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Persona {
+    pub name: String,
+    pub role: String,
+    pub goals: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersonaGenerator {
+    pub seed: String,
+}
+
+impl PersonaGenerator {
+    pub fn new(seed: impl Into<String>) -> Self {
+        Self { seed: seed.into() }
+    }
+
+    pub fn generate(
+        &self,
+        _name: impl Into<String>,
+        _role: impl Into<String>,
+        _goals: Vec<String>,
+    ) -> Persona {
+        Persona {
+            name: String::new(),
+            role: String::new(),
+            goals: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SynthesizedSample {
+    pub sample: SingleTurnSample,
+    pub persona: Persona,
+    pub source_node_ids: Vec<String>,
+    pub hop_count: usize,
+}
+
+impl SynthesizedSample {
+    fn placeholder(persona: Persona, hop_count: usize) -> Self {
+        Self {
+            sample: SingleTurnSample::new("", "", Vec::new()),
+            persona,
+            source_node_ids: Vec::new(),
+            hop_count,
+        }
+    }
+}
+
+pub fn synthesize_single_hop_sample(
+    _graph: &KnowledgeGraph,
+    _chunk_id: &str,
+    persona: &Persona,
+) -> Option<SynthesizedSample> {
+    Some(SynthesizedSample::placeholder(persona.clone(), 1))
+}
+
+pub fn synthesize_multi_hop_sample(
+    _graph: &KnowledgeGraph,
+    _start_node_id: &str,
+    _relationship: &str,
+    persona: &Persona,
+) -> Option<SynthesizedSample> {
+    Some(SynthesizedSample::placeholder(persona.clone(), 2))
+}
+
 fn make_chunk(source_id: &str, index: usize, text: String) -> TextChunk {
     let mut chunk = TextChunk::new(
         format!("{source_id}-chunk-{index}"),
@@ -427,5 +496,133 @@ mod tests {
         assert_eq!(next.len(), chunks.len() - 1);
         assert_eq!(next[0].source_id, "doc-1-chunk-0");
         assert_eq!(next[0].target_id, "doc-1-chunk-1");
+    }
+
+    fn synthesizer_graph() -> KnowledgeGraph {
+        KnowledgeGraph::new()
+            .add_node(
+                GraphNode::new("chunk-1", "chunk")
+                    .with_property(
+                        "text",
+                        GraphProperty::Text("RAG evaluates retrieval".to_string()),
+                    )
+                    .with_property(
+                        "summary",
+                        GraphProperty::Text("retrieval evaluation summary".to_string()),
+                    ),
+            )
+            .add_node(
+                GraphNode::new("chunk-2", "chunk")
+                    .with_property(
+                        "text",
+                        GraphProperty::Text("LLM judges score answers".to_string()),
+                    )
+                    .with_property(
+                        "summary",
+                        GraphProperty::Text("answer scoring summary".to_string()),
+                    ),
+            )
+            .add_edge(
+                GraphEdge::new("chunk-1", "chunk-2", "next")
+                    .with_property("order", GraphProperty::Number(0.0)),
+            )
+    }
+
+    #[test]
+    fn test_13_3_1_persona_generator_stores_name_role_and_goals() {
+        // SCEN-13.3.1 / AC1 / TEST-13.3.1
+        let persona = PersonaGenerator::new("deterministic-seed").generate(
+            "QA Lead",
+            "evaluation engineer",
+            vec![
+                "verify grounding".to_string(),
+                "stress retrieval".to_string(),
+            ],
+        );
+
+        assert_eq!(persona.name, "QA Lead");
+        assert_eq!(persona.role, "evaluation engineer");
+        assert_eq!(
+            persona.goals,
+            vec![
+                "verify grounding".to_string(),
+                "stress retrieval".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_13_3_2_single_hop_synthesizer_creates_samples_from_one_chunk() {
+        // SCEN-13.3.2 / AC2 / TEST-13.3.2
+        let graph = synthesizer_graph();
+        let persona = PersonaGenerator::new("deterministic-seed").generate(
+            "Research Analyst",
+            "domain evaluator",
+            vec!["ask grounded questions".to_string()],
+        );
+
+        let synthesized =
+            synthesize_single_hop_sample(&graph, "chunk-1", &persona).expect("single-hop sample");
+
+        assert_eq!(synthesized.hop_count, 1);
+        assert_eq!(synthesized.source_node_ids, vec!["chunk-1"]);
+        assert_eq!(
+            synthesized.sample.retrieved_contexts,
+            vec!["RAG evaluates retrieval".to_string()]
+        );
+        assert!(synthesized.sample.user_input.contains("domain evaluator"));
+        assert!(
+            synthesized
+                .sample
+                .response
+                .contains("retrieval evaluation summary")
+        );
+        assert_eq!(
+            synthesized
+                .sample
+                .metadata
+                .get("synthesis_type")
+                .map(String::as_str),
+            Some("single-hop")
+        );
+    }
+
+    #[test]
+    fn test_13_3_3_multi_hop_synthesizer_combines_related_graph_nodes() {
+        // SCEN-13.3.3 / AC3 / TEST-13.3.3
+        let graph = synthesizer_graph();
+        let persona = PersonaGenerator::new("deterministic-seed").generate(
+            "Research Analyst",
+            "domain evaluator",
+            vec!["compare related evidence".to_string()],
+        );
+
+        let synthesized = synthesize_multi_hop_sample(&graph, "chunk-1", "next", &persona)
+            .expect("multi-hop sample");
+
+        assert_eq!(synthesized.hop_count, 2);
+        assert_eq!(synthesized.source_node_ids, vec!["chunk-1", "chunk-2"]);
+        assert_eq!(synthesized.sample.retrieved_contexts.len(), 2);
+        assert!(synthesized.sample.user_input.contains("multi-hop"));
+        assert!(
+            synthesized
+                .sample
+                .response
+                .contains("retrieval evaluation summary")
+        );
+        assert!(
+            synthesized
+                .sample
+                .response
+                .contains("answer scoring summary")
+        );
+        assert_eq!(
+            synthesized
+                .sample
+                .metadata
+                .get("relationship")
+                .map(String::as_str),
+            Some("next")
+        );
     }
 }
