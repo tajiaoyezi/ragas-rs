@@ -77,17 +77,29 @@ impl<P> EmbeddingAdapter<P> {
         }
     }
 
-    pub fn with_batch_size(self, _batch_size: usize) -> Self {
-        unimplemented!("task 7.3 RED skeleton")
+    pub fn with_batch_size(mut self, batch_size: usize) -> Self {
+        self.batch_size = batch_size.max(1);
+        self
     }
 
-    pub fn with_normalization(self, _normalize: bool) -> Self {
-        unimplemented!("task 7.3 RED skeleton")
+    pub fn with_normalization(mut self, normalize: bool) -> Self {
+        self.normalize = normalize;
+        self
     }
 }
 
-pub fn normalize_embedding_vector(_vector: &mut [f32]) {
-    unimplemented!("task 7.3 RED skeleton")
+pub fn normalize_embedding_vector(vector: &mut [f32]) {
+    let norm = vector
+        .iter()
+        .map(|value| value * value)
+        .sum::<f32>()
+        .sqrt();
+    if norm == 0.0 {
+        return;
+    }
+    for value in vector {
+        *value /= norm;
+    }
 }
 
 #[async_trait]
@@ -95,8 +107,59 @@ impl<P> EmbeddingProvider for EmbeddingAdapter<P>
 where
     P: EmbeddingProvider,
 {
-    async fn embed(&self, _request: EmbeddingRequest) -> Result<EmbeddingResponse, RagasError> {
-        unimplemented!("task 7.3 RED skeleton")
+    async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, RagasError> {
+        let mut embeddings = Vec::with_capacity(request.input.len());
+        let mut usage = None;
+
+        for (batch_index, batch) in request.input.chunks(self.batch_size).enumerate() {
+            let batch_start = batch_index * self.batch_size;
+            let batch_end = batch_start + batch.len();
+            let response = self
+                .provider
+                .embed(EmbeddingRequest {
+                    input: batch.to_vec(),
+                })
+                .await
+                .map_err(|error| embedding_batch_error(error, batch_start, batch_end))?;
+
+            merge_token_usage(&mut usage, response.usage);
+            for mut embedding in response.embeddings {
+                if self.normalize {
+                    normalize_embedding_vector(&mut embedding);
+                }
+                embeddings.push(embedding);
+            }
+        }
+
+        Ok(EmbeddingResponse { embeddings, usage })
+    }
+}
+
+fn embedding_batch_error(error: RagasError, batch_start: usize, batch_end: usize) -> RagasError {
+    RagasError::Provider {
+        message: format!(
+            "embedding batch failed batch_start={batch_start} batch_end={batch_end}: {error}"
+        ),
+    }
+}
+
+fn merge_token_usage(total: &mut Option<TokenUsage>, usage: Option<TokenUsage>) {
+    let Some(usage) = usage else {
+        return;
+    };
+    let total = total.get_or_insert(TokenUsage {
+        prompt_tokens: None,
+        completion_tokens: None,
+        total_tokens: None,
+    });
+    add_tokens(&mut total.prompt_tokens, usage.prompt_tokens);
+    add_tokens(&mut total.completion_tokens, usage.completion_tokens);
+    add_tokens(&mut total.total_tokens, usage.total_tokens);
+}
+
+fn add_tokens(total: &mut Option<u32>, value: Option<u32>) {
+    if let Some(value) = value {
+        *total = Some(total.unwrap_or(0) + value);
     }
 }
 
