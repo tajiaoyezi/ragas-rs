@@ -15,13 +15,65 @@ impl RunConfig {
     }
 
     pub fn validate(&self) -> Result<(), RunConfigError> {
-        unimplemented!("TEST-6.1.3")
+        if self.timeout.per_operation_ms == 0 {
+            return Err(RunConfigError::new(
+                "timeout.per_operation_ms",
+                "per-operation timeout must be greater than 0 ms",
+            ));
+        }
+        if self
+            .timeout
+            .total_ms
+            .is_some_and(|total_ms| total_ms < self.timeout.per_operation_ms)
+        {
+            return Err(RunConfigError::new(
+                "timeout.total_ms",
+                "total timeout must be greater than or equal to per_operation_ms",
+            ));
+        }
+        if self.retry.max_attempts == 0 {
+            return Err(RunConfigError::new(
+                "retry.max_attempts",
+                "retry max_attempts must be at least 1",
+            ));
+        }
+        if self.retry.initial_backoff_ms == 0 {
+            return Err(RunConfigError::new(
+                "retry.initial_backoff_ms",
+                "initial_backoff_ms must be greater than 0",
+            ));
+        }
+        if self.retry.max_backoff_ms == 0 {
+            return Err(RunConfigError::new(
+                "retry.max_backoff_ms",
+                "max_backoff_ms must be greater than 0",
+            ));
+        }
+        if self.retry.initial_backoff_ms > self.retry.max_backoff_ms {
+            return Err(RunConfigError::new(
+                "retry.initial_backoff_ms",
+                "initial_backoff_ms must be less than or equal to max_backoff_ms",
+            ));
+        }
+        if self.concurrency == 0 {
+            return Err(RunConfigError::new(
+                "concurrency",
+                "concurrency must be at least 1",
+            ));
+        }
+        Ok(())
     }
 }
 
 impl Default for RunConfig {
     fn default() -> Self {
-        unimplemented!("TEST-6.1.2")
+        Self {
+            timeout: TimeoutConfig::default(),
+            retry: RetryConfig::default(),
+            concurrency: 16,
+            cancellation: CancellationConfig::default(),
+            seed: 42,
+        }
     }
 }
 
@@ -31,11 +83,30 @@ pub struct TimeoutConfig {
     pub total_ms: Option<u64>,
 }
 
+impl Default for TimeoutConfig {
+    fn default() -> Self {
+        Self {
+            per_operation_ms: 180_000,
+            total_ms: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetryConfig {
     pub max_attempts: u32,
     pub initial_backoff_ms: u64,
     pub max_backoff_ms: u64,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: 10,
+            initial_backoff_ms: 1_000,
+            max_backoff_ms: 60_000,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,10 +115,28 @@ pub struct CancellationConfig {
     pub cancel_on_first_error: bool,
 }
 
+impl Default for CancellationConfig {
+    fn default() -> Self {
+        Self {
+            cooperative: true,
+            cancel_on_first_error: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunConfigError {
     pub field: String,
     pub message: String,
+}
+
+impl RunConfigError {
+    fn new(field: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            field: field.into(),
+            message: message.into(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -109,7 +198,16 @@ impl RunConfigBuilder {
     }
 
     pub fn build(self) -> Result<RunConfig, RunConfigError> {
-        unimplemented!("TEST-6.1.1 and TEST-6.1.3")
+        let default = RunConfig::default();
+        let config = RunConfig {
+            timeout: self.timeout.unwrap_or(default.timeout),
+            retry: self.retry.unwrap_or(default.retry),
+            concurrency: self.concurrency.unwrap_or(default.concurrency),
+            cancellation: self.cancellation.unwrap_or(default.cancellation),
+            seed: self.seed.unwrap_or(default.seed),
+        };
+        config.validate()?;
+        Ok(config)
     }
 }
 

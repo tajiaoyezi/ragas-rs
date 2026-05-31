@@ -18,8 +18,10 @@ impl Default for EvaluationOptions {
 }
 
 impl EvaluationOptions {
-    pub fn from_run_config(_config: &RunConfig) -> Self {
-        unimplemented!("TEST-6.1.1")
+    pub fn from_run_config(config: &RunConfig) -> Self {
+        Self {
+            concurrency: config.concurrency.max(1),
+        }
     }
 }
 
