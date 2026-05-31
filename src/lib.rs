@@ -26,10 +26,11 @@ pub use metric::{
     RankingItem, ResponseRelevancyMetric, cosine_similarity,
 };
 pub use metrics::{
-    DetailedMetricResult, MetricError, MetricErrorKind, MetricEvidence, MetricMetadata,
-    MetricProviderRequirement, MetricRegistry, MetricRegistryEntry, MetricSampleKind,
-    MetricValueType, MultiTurnMetric, ParityStatus, ScoreNormalizationPolicy, SingleTurnMetric,
-    normalize_score,
+    ContextPrecisionVariant, DetailedMetricResult, MetricError, MetricErrorKind, MetricEvidence,
+    MetricMetadata, MetricProviderRequirement, MetricRegistry, MetricRegistryEntry,
+    MetricSampleKind, MetricValueType, MultiTurnMetric, ParityStatus, ScoreNormalizationPolicy,
+    SingleTurnMetric, context_entity_recall, context_precision_from_relevance, context_recall,
+    context_relevance, id_based_context_precision, normalize_score,
 };
 pub use providers::{
     MockEmbeddingProvider, MockLlmProvider, ProviderRegistry, record_provider_usage,
