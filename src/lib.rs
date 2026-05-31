@@ -1,3 +1,4 @@
+pub mod backends;
 pub mod dataset;
 pub mod error;
 pub mod eval;
@@ -11,6 +12,9 @@ pub mod schema;
 pub mod testset;
 pub mod validation;
 
+pub use backends::{
+    CsvDatasetBackend, DatasetBackend, InMemoryDatasetBackend, JsonlDatasetBackend,
+};
 pub use dataset::{
     EvaluationDataset, EvaluationDatasetBuilder, EvaluationSample, SingleTurnSample,
 };
