@@ -1,6 +1,6 @@
 # Task 9.1 - metric-base
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 9
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
