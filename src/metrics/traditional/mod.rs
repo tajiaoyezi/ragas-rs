@@ -11,6 +11,33 @@ pub struct SemanticThresholdPolicy {
     pub inclusive: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuotedSpan {
+    pub text: String,
+    pub byte_start: usize,
+    pub byte_end: usize,
+    pub char_start: usize,
+    pub char_end: usize,
+}
+
+impl QuotedSpan {
+    pub fn new(
+        text: impl Into<String>,
+        byte_start: usize,
+        byte_end: usize,
+        char_start: usize,
+        char_end: usize,
+    ) -> Self {
+        Self {
+            text: text.into(),
+            byte_start,
+            byte_end,
+            char_start,
+            char_end,
+        }
+    }
+}
+
 impl SemanticThresholdPolicy {
     pub fn inclusive(threshold: f64) -> Self {
         Self {
@@ -268,6 +295,28 @@ pub fn semantic_similarity_from_vectors(
     )
 }
 
+pub fn extract_quoted_spans(_text: &str) -> Vec<QuotedSpan> {
+    Vec::new()
+}
+
+pub fn quoted_span_overlap(_candidate: &QuotedSpan, _reference: &QuotedSpan) -> DetailedMetricResult {
+    numeric_result(
+        "quoted_span_overlap",
+        0.0,
+        "not implemented",
+        Vec::new(),
+    )
+}
+
+pub fn quoted_citation_coverage(_answer: &str, _sources: &[String]) -> DetailedMetricResult {
+    numeric_result(
+        "quoted_citation_coverage",
+        0.0,
+        "not implemented",
+        Vec::new(),
+    )
+}
+
 fn numeric_result(
     metric_name: &str,
     score: f64,
@@ -511,5 +560,42 @@ mod tests {
         assert_score_close(&result, 0.0);
         assert!(result.score.expect("score").is_finite());
         assert!(result.reason.as_deref().unwrap_or("").contains("zero vector"));
+    }
+
+    #[test]
+    fn test_11_3_1_quoted_span_extraction_preserves_byte_and_char_ranges() {
+        // SCEN-11.3.1 / AC1 / TEST-11.3.1
+        let spans = extract_quoted_spans("A \"猫\" and \"dog\"");
+
+        assert_eq!(spans.len(), 2);
+        assert_eq!(
+            spans[0],
+            QuotedSpan::new("猫", 3, 6, 3, 4)
+        );
+        assert_eq!(spans[1].text, "dog");
+    }
+
+    #[test]
+    fn test_11_3_2_overlap_scoring_handles_partial_matches() {
+        // SCEN-11.3.2 / AC2 / TEST-11.3.2
+        let candidate = QuotedSpan::new("candidate", 10, 20, 10, 20);
+        let reference = QuotedSpan::new("reference", 15, 25, 15, 25);
+
+        let result = quoted_span_overlap(&candidate, &reference);
+
+        assert_score_close(&result, 1.0 / 3.0);
+        assert!(result.reason.as_deref().unwrap_or("").contains("partial overlap"));
+    }
+
+    #[test]
+    fn test_11_3_3_missing_citations_produce_explicit_zero_score_reason() {
+        // SCEN-11.3.3 / AC3 / TEST-11.3.3
+        let result = quoted_citation_coverage(
+            "The answer summarizes retrieval but has no citation.",
+            &["Ragas evaluates LLM applications.".to_string()],
+        );
+
+        assert_score_close(&result, 0.0);
+        assert!(result.reason.as_deref().unwrap_or("").contains("missing citations"));
     }
 }
