@@ -1,6 +1,7 @@
-use std::{future::Future, pin::Pin};
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::{Mutex, Semaphore};
 
 use crate::RagasError;
 
@@ -182,8 +183,104 @@ where
     }
 
     pub async fn run(self) -> ExecutorReport<T> {
-        unimplemented!("TEST-6.2.1 TEST-6.2.2 TEST-6.2.3")
+        let job_count = self.jobs.len();
+        let events = Arc::new(Mutex::new(Vec::with_capacity(job_count * 2)));
+        let semaphore = Arc::new(Semaphore::new(self.config.concurrency.max(1)));
+        let mut handles = Vec::with_capacity(job_count);
+
+        for (job_index, job) in self.jobs.into_iter().enumerate() {
+            let events = Arc::clone(&events);
+            let semaphore = Arc::clone(&semaphore);
+            handles.push(tokio::spawn(async move {
+                let _permit = semaphore.acquire_owned().await.expect("semaphore open");
+                push_progress_event(
+                    &events,
+                    ProgressEvent {
+                        job_index,
+                        job_name: job.name.clone(),
+                        kind: ProgressEventKind::Started,
+                    },
+                )
+                .await;
+
+                let outcome = match job.future.await {
+                    Ok(value) => {
+                        push_progress_event(
+                            &events,
+                            ProgressEvent {
+                                job_index,
+                                job_name: job.name.clone(),
+                                kind: ProgressEventKind::Succeeded,
+                            },
+                        )
+                        .await;
+                        ExecutorOutcome::Success(value)
+                    }
+                    Err(error) => {
+                        push_progress_event(
+                            &events,
+                            ProgressEvent {
+                                job_index,
+                                job_name: job.name.clone(),
+                                kind: ProgressEventKind::Failed,
+                            },
+                        )
+                        .await;
+                        ExecutorOutcome::Failure(error.to_string())
+                    }
+                };
+
+                ExecutorJobResult {
+                    job_index,
+                    job_name: job.name,
+                    outcome,
+                }
+            }));
+        }
+
+        let mut ordered_results = (0..job_count).map(|_| None).collect::<Vec<_>>();
+        for handle in handles {
+            match handle.await {
+                Ok(result) => {
+                    let index = result.job_index;
+                    if let Some(slot) = ordered_results.get_mut(index) {
+                        *slot = Some(result);
+                    }
+                }
+                Err(error) => {
+                    let index = ordered_results
+                        .iter()
+                        .position(Option::is_none)
+                        .unwrap_or(job_count);
+                    if let Some(slot) = ordered_results.get_mut(index) {
+                        *slot = Some(ExecutorJobResult {
+                            job_index: index,
+                            job_name: format!("job-{index}"),
+                            outcome: ExecutorOutcome::Failure(format!(
+                                "executor task join failed: {error}"
+                            )),
+                        });
+                    }
+                }
+            }
+        }
+
+        let events = {
+            let events = events.lock().await;
+            events.clone()
+        };
+        let results = ordered_results
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+
+        ExecutorReport { results, events }
     }
+}
+
+async fn push_progress_event(events: &Mutex<Vec<ProgressEvent>>, event: ProgressEvent) {
+    let mut events = events.lock().await;
+    events.push(event);
 }
 
 struct ExecutorJob<T> {
