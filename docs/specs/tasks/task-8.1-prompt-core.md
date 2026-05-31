@@ -1,6 +1,6 @@
 # Task 8.1 - prompt-core
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 8
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -55,9 +55,9 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-8.1.1 | TEST-8.1.1 | Not Started |
-| AC2 | SCEN-8.1.2 | TEST-8.1.2 | Not Started |
-| AC3 | SCEN-8.1.3 | TEST-8.1.3 | Not Started |
+| AC1 | SCEN-8.1.1 | TEST-8.1.1 | Done |
+| AC2 | SCEN-8.1.2 | TEST-8.1.2 | Done |
+| AC3 | SCEN-8.1.3 | TEST-8.1.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,22 @@ Function signatures are owned by this task's RED tests and must be added before 
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施
-- **改动文件**：待实施
-- **commit 列表**：待实施
-- **§9 Verification 结果**：待实施
-- **剩余风险 / 未做项**：待实施
-- **下游 task 影响**：待实施
+- **完成日期**：2026-05-31
+- **改动文件**：
+  - `src/prompts/mod.rs`（新增 typed prompt variables、PromptTemplate、FewShotExample、LanguageAdapterRule、render diagnostics 和 task 8.1 unit tests）
+  - `src/error.rs`（新增 `RagasError::Prompt`）
+  - `src/lib.rs`（导出 prompt core API）
+  - `docs/specs/tasks/task-8.1-prompt-core.md`（Status/traceability/Completion Notes 回填）
+- **commit 列表**：
+  - `7623fc6` docs(spec): task-8.1 Ready
+  - `43032cf` docs(spec): task-8.1 进入实施
+  - `142619e` test(prompts): 加 task-8.1 RED 测试
+  - `d80c590` feat(prompts): 实现 task-8.1 prompt core
+- **§9 Verification 结果**：
+  - install: pass (`cargo build`)
+  - typecheck: pass (`cargo check`)
+  - unit-test: 43 passed / 0 failed (`cargo test`)
+  - build: pass (`cargo build`)
+  - note: project helper `s2v_verify_full` still cannot parse lowercase generated §9 keys, so adapter commands were executed directly and recorded here.
+- **剩余风险 / 未做项**：本 task 只实现 prompt core data model/rendering；typed output parser、repair strategy 和 multimodal prompt payload 留给 task 8.2/8.3。
+- **下游 task 影响**：task 8.2 can consume `RenderedPrompt` and `RagasError::Prompt` for parser diagnostics; task 9/10 metric prompts can reuse `PromptTemplate` and few-shot examples without adding Python prompt dependencies.
