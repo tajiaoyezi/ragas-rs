@@ -87,7 +87,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 
 | # | Phase | Phase Spec | Status | Tasks | Worktree（仅 team）|
 |---|---|---|---|---|---|
-| 1 | foundation-dataset | docs/specs/phases/phase-1-foundation-dataset.md | Draft | 1 | - |
+| 1 | foundation-dataset | docs/specs/phases/phase-1-foundation-dataset.md | Done | 1 | - |
 | 2 | metric-abstractions | docs/specs/phases/phase-2-metric-abstractions.md | Draft | 1 | - |
 | 3 | providers | docs/specs/phases/phase-3-providers.md | Draft | 1 | - |
 | 4 | evaluator-builtins | docs/specs/phases/phase-4-evaluator-builtins.md | Draft | 1 | - |
@@ -96,7 +96,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 
 | Task | 模块 | Spec 文件 | Status | 依赖 / Phase 内顺序 | Worktree（仅 team）|
 |---|---|---|---|---|---|
-| 1.1 | dataset | docs/specs/tasks/task-1.1-foundation-dataset.md | Draft | phase 1, first | - |
+| 1.1 | dataset | docs/specs/tasks/task-1.1-foundation-dataset.md | Done | phase 1, first | - |
 | 2.1 | metric | docs/specs/tasks/task-2.1-metric-abstractions.md | Draft | after task 1.1 | - |
 | 3.1 | llm | docs/specs/tasks/task-3.1-providers.md | Draft | after task 2.1 | - |
 | 4.1 | eval | docs/specs/tasks/task-4.1-evaluator-builtins.md | Draft | after task 3.1 | - |

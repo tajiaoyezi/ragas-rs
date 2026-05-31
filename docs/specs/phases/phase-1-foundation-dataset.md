@@ -1,6 +1,6 @@
 # Phase 1 - foundation-dataset
 
-**Status**: Draft
+**Status**: Done
 **PRD**: docs/prds/ragas-rs.prd.md
 **Tasks**: docs/specs/tasks/task-1.1-foundation-dataset.md
 
@@ -28,7 +28,7 @@ None.
 
 | Task | Spec | Status |
 |---|---|---|
-| 1.1 | docs/specs/tasks/task-1.1-foundation-dataset.md | Draft |
+| 1.1 | docs/specs/tasks/task-1.1-foundation-dataset.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 
