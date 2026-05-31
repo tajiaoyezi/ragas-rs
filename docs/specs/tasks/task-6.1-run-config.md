@@ -1,6 +1,6 @@
 # Task 6.1 - run-config
 
-**Status**: Draft
+**Status**: Ready
 **Phase**: 6
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
@@ -15,7 +15,7 @@ timeout/retry/concurrency/cancellation model
 ## 3. Scope And Out-of-Scope
 
 **In scope**:
-- Rust module area: $(System.Collections.Hashtable.Module).
+- Rust module area: src/runtime.rs, src/eval.rs, src/error.rs, src/lib.rs.
 - Behavior listed in §6 acceptance criteria.
 - Unit tests and, where applicable, parity fixtures for upstream ragas semantics.
 
