@@ -36,29 +36,59 @@ pub struct ParityCheck {
     pub drift: Option<String>,
 }
 
-pub fn parse_parity_fixture(_input: &str) -> Result<ParityFixture, RagasError> {
-    Ok(ParityFixture {
-        feature: String::new(),
-        upstream_commit: String::new(),
-        python_baseline: Value::Null,
-        rust_output: Value::Null,
-        tolerance: None,
-        known_gap: None,
+pub fn parse_parity_fixture(input: &str) -> Result<ParityFixture, RagasError> {
+    serde_json::from_str(input).map_err(|error| RagasError::Parse {
+        message: format!("parity fixture parse failed: {error}"),
     })
 }
 
-pub fn validate_gap_matrix(_entries: &[GapMatrixEntry]) -> BTreeSet<ParityFeatureStatus> {
-    BTreeSet::new()
+pub fn validate_gap_matrix(entries: &[GapMatrixEntry]) -> BTreeSet<ParityFeatureStatus> {
+    entries.iter().map(|entry| entry.status).collect()
 }
 
 pub fn check_parity_fixture(
     fixture: &ParityFixture,
-    _status: ParityFeatureStatus,
+    status: ParityFeatureStatus,
 ) -> Result<ParityCheck, RagasError> {
+    let drift = semantic_drift(fixture);
+    if let Some(drift) = drift {
+        if status == ParityFeatureStatus::Complete && fixture.known_gap.is_none() {
+            return Err(RagasError::Parse {
+                message: format!("undeclared semantic drift for {}: {drift}", fixture.feature),
+            });
+        }
+        return Ok(ParityCheck {
+            feature: fixture.feature.clone(),
+            passed: false,
+            drift: Some(drift),
+        });
+    }
+
     Ok(ParityCheck {
         feature: fixture.feature.clone(),
         passed: true,
         drift: None,
+    })
+}
+
+fn semantic_drift(fixture: &ParityFixture) -> Option<String> {
+    let tolerance = fixture.tolerance.unwrap_or(0.0);
+    let baseline_score = fixture.python_baseline.get("score").and_then(Value::as_f64);
+    let rust_score = fixture.rust_output.get("score").and_then(Value::as_f64);
+    if let (Some(baseline_score), Some(rust_score)) = (baseline_score, rust_score) {
+        if (baseline_score - rust_score).abs() <= tolerance {
+            return None;
+        }
+        return Some(format!(
+            "score baseline={baseline_score} rust={rust_score} tolerance={tolerance}"
+        ));
+    }
+
+    (fixture.python_baseline != fixture.rust_output).then(|| {
+        format!(
+            "baseline={} rust={}",
+            fixture.python_baseline, fixture.rust_output
+        )
     })
 }
 
