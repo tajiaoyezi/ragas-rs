@@ -1,6 +1,6 @@
 # Task 11.3 - quoted-spans
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 11
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
