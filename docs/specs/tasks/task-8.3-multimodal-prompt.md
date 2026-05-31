@@ -1,6 +1,6 @@
 # Task 8.3 - multimodal-prompt
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 8
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
