@@ -3,6 +3,7 @@ pub mod error;
 pub mod eval;
 pub mod llm;
 pub mod metric;
+pub mod providers;
 pub mod runtime;
 pub mod schema;
 pub mod validation;
@@ -19,6 +20,9 @@ pub use llm::{
 pub use metric::{
     ContextPrecisionMetric, FaithfulnessMetric, FnMetric, Metric, MetricResult, MetricValue,
     RankingItem, ResponseRelevancyMetric, cosine_similarity,
+};
+pub use providers::{
+    MockEmbeddingProvider, MockLlmProvider, ProviderRegistry, record_provider_usage,
 };
 pub use runtime::{
     AsyncExecutor, CacheKey, CallbackManager, CancellationConfig, ExecutorJobResult,
