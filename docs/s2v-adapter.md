@@ -119,7 +119,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 6.2 | runtime | docs/specs/tasks/task-6.2-executor.md | Done | after task 6.1 | - |
 | 6.3 | runtime | docs/specs/tasks/task-6.3-callbacks-cost-cache.md | Done | after task 6.2 | - |
 | 7.1 | providers | docs/specs/tasks/task-7.1-provider-core.md | Done | after task 6.3 | - |
-| 7.2 | providers | docs/specs/tasks/task-7.2-llm-adapters.md | Draft | after task 7.1 | - |
+| 7.2 | providers | docs/specs/tasks/task-7.2-llm-adapters.md | Done | after task 7.1 | - |
 | 7.3 | providers | docs/specs/tasks/task-7.3-embedding-adapters.md | Draft | after task 7.2 | - |
 | 8.1 | prompts | docs/specs/tasks/task-8.1-prompt-core.md | Draft | after task 6.3 | - |
 | 8.2 | prompts | docs/specs/tasks/task-8.2-output-parser.md | Draft | after task 8.1 | - |
