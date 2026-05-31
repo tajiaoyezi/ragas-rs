@@ -1,6 +1,6 @@
 # Task 7.1 - provider-core
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 7
 **PRD**: docs/prds/ragas-rs-complete-refactor.prd.md
 
