@@ -5,6 +5,48 @@ use serde::{Deserialize, Serialize};
 use crate::RagasError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RepairStrategy {
+    None,
+    ExtractJsonObject,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParsedJudgeOutput {
+    pub score: f64,
+    pub reason: Option<String>,
+    pub raw: serde_json::Value,
+    pub repaired: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputParseDiagnostic {
+    pub message: String,
+    pub raw_excerpt: String,
+    pub repair_strategy: RepairStrategy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JudgeOutputParser {
+    repair_strategy: RepairStrategy,
+}
+
+impl JudgeOutputParser {
+    pub fn new() -> Self {
+        Self {
+            repair_strategy: RepairStrategy::None,
+        }
+    }
+
+    pub fn with_repair_strategy(self, _repair_strategy: RepairStrategy) -> Self {
+        unimplemented!("task 8.2 RED skeleton")
+    }
+
+    pub fn parse(&self, _output: &str) -> Result<ParsedJudgeOutput, OutputParseDiagnostic> {
+        unimplemented!("task 8.2 RED skeleton")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PromptValueKind {
     Text,
     Number,
@@ -251,5 +293,47 @@ mod tests {
 
         assert_eq!(first, second);
         assert_eq!(first.text, "请用中文回答\n\nAnswer: Paris");
+    }
+
+    #[test]
+    fn test_8_2_1_parser_extracts_typed_json_scores_and_reasons() {
+        // SCEN-8.2.1 / AC1 / TEST-8.2.1
+        let parsed = JudgeOutputParser::new()
+            .parse(r#"{"score":0.75,"reason":"grounded in context"}"#)
+            .expect("parsed judge output");
+
+        assert_eq!(parsed.score, 0.75);
+        assert_eq!(parsed.reason.as_deref(), Some("grounded in context"));
+        assert!(!parsed.repaired);
+        assert_eq!(parsed.raw["score"], 0.75);
+    }
+
+    #[test]
+    fn test_8_2_2_malformed_judge_output_returns_diagnostics_with_raw_excerpt() {
+        // SCEN-8.2.2 / AC2 / TEST-8.2.2
+        let diagnostic = JudgeOutputParser::new()
+            .parse("not json; the model answered with prose instead of a score")
+            .expect_err("malformed output");
+
+        assert!(diagnostic.message.contains("judge output JSON"));
+        assert!(diagnostic.raw_excerpt.contains("not json"));
+        assert!(diagnostic.raw_excerpt.len() <= 80);
+        assert_eq!(diagnostic.repair_strategy, RepairStrategy::None);
+    }
+
+    #[test]
+    fn test_8_2_3_repair_strategy_is_explicit_and_testable() {
+        // SCEN-8.2.3 / AC3 / TEST-8.2.3
+        let strict = JudgeOutputParser::new();
+        assert!(strict.parse("Answer: {\"score\":0.5,\"reason\":\"partial\"}").is_err());
+
+        let repaired = JudgeOutputParser::new()
+            .with_repair_strategy(RepairStrategy::ExtractJsonObject)
+            .parse("Answer: ```json\n{\"score\":0.5,\"reason\":\"partial\"}\n```")
+            .expect("repaired output");
+
+        assert_eq!(repaired.score, 0.5);
+        assert_eq!(repaired.reason.as_deref(), Some("partial"));
+        assert!(repaired.repaired);
     }
 }

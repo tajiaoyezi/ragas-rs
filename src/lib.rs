@@ -28,8 +28,9 @@ pub use providers::{
     MockEmbeddingProvider, MockLlmProvider, ProviderRegistry, record_provider_usage,
 };
 pub use prompts::{
-    FewShotExample, LanguageAdapterRule, PromptTemplate, PromptValue, PromptValueKind,
-    PromptVariables, RenderedPrompt,
+    FewShotExample, JudgeOutputParser, LanguageAdapterRule, OutputParseDiagnostic,
+    ParsedJudgeOutput, PromptTemplate, PromptValue, PromptValueKind, PromptVariables,
+    RenderedPrompt, RepairStrategy,
 };
 pub use runtime::{
     AsyncExecutor, CacheKey, CallbackManager, CancellationConfig, ExecutorJobResult,
