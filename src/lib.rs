@@ -97,9 +97,10 @@ pub use release::{
 };
 pub use runtime::{
     AsyncExecutor, CacheKey, CallbackManager, CancellationConfig, ExecutorJobResult,
-    ExecutorOutcome, ExecutorReport, ProgressEvent, ProgressEventKind, RetryConfig, RunConfig,
-    RunConfigBuilder, RunConfigError, RuntimeEvent, RuntimeEventKind, TimeoutConfig, UsageSummary,
-    UsageTotals, UsageTracker,
+    ExecutorOutcome, ExecutorReport, LazyTokenizer, ModelTokenUsage, ProgressEvent,
+    ProgressEventKind, RetryConfig, RunConfig, RunConfigBuilder, RunConfigError, RuntimeCacheKey,
+    RuntimeEvent, RuntimeEventKind, TimeoutConfig, UsageSummary, UsageTotals, UsageTracker,
+    generate_runtime_cache_key, total_model_cost,
 };
 pub use schema::{Message, MessageRole, MultiTurnSample, Rubric, ToolCall};
 pub use testset::{

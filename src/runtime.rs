@@ -6,6 +6,86 @@ use tokio::sync::{Mutex, Semaphore};
 
 use crate::{RagasError, TokenUsage};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeCacheKey {
+    pub function: String,
+    pub key: String,
+}
+
+pub fn generate_runtime_cache_key(
+    _function: impl Into<String>,
+    _args: &[Value],
+    _kwargs: &HashMap<String, Value>,
+) -> RuntimeCacheKey {
+    RuntimeCacheKey {
+        function: String::new(),
+        key: String::new(),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LazyTokenizer {
+    encoding_name: String,
+    initialized: bool,
+}
+
+impl LazyTokenizer {
+    pub fn new(_encoding_name: impl Into<String>) -> Self {
+        Self {
+            encoding_name: String::new(),
+            initialized: true,
+        }
+    }
+
+    pub fn encoding_name(&self) -> &str {
+        &self.encoding_name
+    }
+
+    pub fn is_initialized(&self) -> bool {
+        self.initialized
+    }
+
+    pub fn encode(&mut self, _text: &str) -> Vec<u32> {
+        Vec::new()
+    }
+
+    pub fn count_tokens(&mut self, text: &str) -> usize {
+        self.encode(text).len()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelTokenUsage {
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub model: String,
+}
+
+impl ModelTokenUsage {
+    pub fn new(input_tokens: u32, output_tokens: u32, model: impl Into<String>) -> Self {
+        Self {
+            input_tokens,
+            output_tokens,
+            model: model.into(),
+        }
+    }
+
+    pub fn add(&self, _other: &Self) -> Result<Self, RagasError> {
+        Ok(self.clone())
+    }
+
+    pub fn cost(&self, _input_rate: f64, _output_rate: Option<f64>) -> f64 {
+        0.0
+    }
+}
+
+pub fn total_model_cost(
+    _usage: &[ModelTokenUsage],
+    _per_model_rates: &HashMap<String, (f64, f64)>,
+) -> Result<f64, RagasError> {
+    Ok(0.0)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunConfig {
     pub timeout: TimeoutConfig,
@@ -900,5 +980,63 @@ mod tests {
         let redacted = first.redacted_payload.to_string();
         assert!(!redacted.contains("sk-secret"));
         assert!(redacted.contains("[redacted]"));
+    }
+
+    #[test]
+    fn test_18_1_1_cache_key_is_deterministic_and_excludes_callbacks() {
+        // SCEN-18.1.1 / AC1 / TEST-18.1.1
+        let args = vec![serde_json::json!(["alpha", {"z": 1, "a": [true, false]}])];
+        let mut kwargs_a = HashMap::new();
+        kwargs_a.insert("threshold".to_string(), serde_json::json!(0.8));
+        kwargs_a.insert("callbacks".to_string(), serde_json::json!(["trace-a"]));
+
+        let mut kwargs_b = HashMap::new();
+        kwargs_b.insert("callbacks".to_string(), serde_json::json!(["trace-b"]));
+        kwargs_b.insert("threshold".to_string(), serde_json::json!(0.8));
+
+        let key_a = generate_runtime_cache_key("Metric.score", &args, &kwargs_a);
+        let key_b = generate_runtime_cache_key("Metric.score", &args, &kwargs_b);
+
+        assert_eq!(key_a.function, "Metric.score");
+        assert_eq!(key_a.key, key_b.key);
+        assert!(!key_a.key.contains("trace-a"));
+        assert!(!key_a.key.contains("callbacks"));
+    }
+
+    #[test]
+    fn test_18_1_2_lazy_tokenizer_initializes_on_first_use() {
+        // SCEN-18.1.2 / AC2 / TEST-18.1.2
+        let mut tokenizer = LazyTokenizer::new("o200k_base");
+
+        assert_eq!(tokenizer.encoding_name(), "o200k_base");
+        assert!(!tokenizer.is_initialized());
+
+        let tokens = tokenizer.encode("hello world");
+
+        assert!(tokenizer.is_initialized());
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokenizer.count_tokens("hello   world"), 2);
+    }
+
+    #[test]
+    fn test_18_1_3_model_token_usage_addition_and_cost_rules() {
+        // SCEN-18.1.3 / AC3 / TEST-18.1.3
+        let first = ModelTokenUsage::new(10, 5, "gpt-4o-mini");
+        let second = ModelTokenUsage::new(7, 3, "gpt-4o-mini");
+        let combined = first.add(&second).expect("same model can be added");
+
+        assert_eq!(combined.input_tokens, 17);
+        assert_eq!(combined.output_tokens, 8);
+        assert_eq!(combined.cost(0.01, Some(0.02)), 0.33);
+
+        let different = ModelTokenUsage::new(1, 1, "other-model");
+        assert!(combined.add(&different).is_err());
+
+        let mut rates = HashMap::new();
+        rates.insert("gpt-4o-mini".to_string(), (0.01, 0.02));
+        rates.insert("other-model".to_string(), (0.10, 0.20));
+        let total = total_model_cost(&[combined, different], &rates).expect("rates present");
+
+        assert_eq!(total, 0.63);
     }
 }
