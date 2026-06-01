@@ -53,17 +53,318 @@ pub struct MetricCatalogDescriptor {
 }
 
 impl MetricCatalogDescriptor {
+    pub fn new(
+        family: MetricCatalogFamily,
+        upstream_name: &'static str,
+        rust_owner: &'static str,
+        sample_kind: MetricSampleKind,
+        provider_requirements: Vec<MetricProviderRequirement>,
+        output_type: MetricValueType,
+        fixture_coverage: MetricFixtureCoverage,
+        parity_status: ParityFeatureStatus,
+    ) -> Self {
+        Self {
+            family,
+            upstream_name,
+            rust_owner,
+            sample_kind,
+            provider_requirements,
+            output_type,
+            fixture_coverage,
+            parity_status,
+        }
+    }
+
     pub fn parity_feature(&self) -> String {
         format!("metric::{}", self.upstream_name)
     }
 }
 
 pub fn metric_catalog() -> Vec<MetricCatalogDescriptor> {
-    Vec::new()
+    use MetricCatalogFamily::*;
+    use MetricFixtureCoverage::*;
+    use MetricProviderRequirement::*;
+    use MetricSampleKind::*;
+    use MetricValueType::*;
+    use ParityFeatureStatus::*;
+
+    vec![
+        MetricCatalogDescriptor::new(
+            ContextPrecision,
+            "context_precision",
+            "context_precision_from_relevance",
+            SingleTurn,
+            vec![Llm],
+            Numeric,
+            FixtureBacked,
+            Complete,
+        ),
+        MetricCatalogDescriptor::new(
+            ContextRecall,
+            "context_recall",
+            "context_recall",
+            SingleTurn,
+            vec![Llm],
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            ContextEntityRecall,
+            "context_entity_recall",
+            "context_entity_recall",
+            SingleTurn,
+            Vec::new(),
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            ContextRelevance,
+            "context_relevance",
+            "context_relevance",
+            SingleTurn,
+            vec![Llm],
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            Faithfulness,
+            "faithfulness",
+            "FaithfulnessMetric",
+            SingleTurn,
+            vec![Llm],
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            ResponseRelevancy,
+            "response_relevancy",
+            "ResponseRelevancyMetric",
+            SingleTurn,
+            vec![Embedding],
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            ResponseGroundedness,
+            "response_groundedness",
+            "response_groundedness",
+            SingleTurn,
+            vec![Llm],
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            FactualCorrectness,
+            "factual_correctness",
+            "factual_correctness",
+            SingleTurn,
+            vec![Llm],
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            AnswerRelevancy,
+            "answer_relevancy",
+            "answer_relevancy_from_embedding_similarity",
+            SingleTurn,
+            vec![Embedding],
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            AnswerCorrectness,
+            "answer_correctness",
+            "answer_correctness",
+            SingleTurn,
+            vec![Llm, Embedding],
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            NoiseSensitivity,
+            "noise_sensitivity",
+            "noise_sensitivity",
+            SingleTurn,
+            vec![Llm],
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            ExactMatch,
+            "exact_match",
+            "exact_match",
+            SingleTurn,
+            Vec::new(),
+            Discrete,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            Bleu,
+            "bleu",
+            "bleu_unigram",
+            SingleTurn,
+            Vec::new(),
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            RougeL,
+            "rouge_l",
+            "rouge_l_recall",
+            SingleTurn,
+            Vec::new(),
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            Chrf,
+            "chrf",
+            "chrf_score",
+            SingleTurn,
+            Vec::new(),
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            SemanticSimilarity,
+            "semantic_similarity",
+            "semantic_similarity_from_vectors",
+            SingleTurn,
+            vec![Embedding],
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            StringSimilarity,
+            "string_similarity",
+            "string_distance_similarity",
+            SingleTurn,
+            Vec::new(),
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            Rubrics,
+            "rubrics",
+            "RubricMetric",
+            SingleTurn,
+            vec![Llm],
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            AspectCritic,
+            "aspect_critic",
+            "score_aspect_critic",
+            SingleTurn,
+            vec![Llm],
+            Discrete,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            ToolCallAccuracy,
+            "tool_call_accuracy",
+            "tool_call_accuracy",
+            MultiTurn,
+            Vec::new(),
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            ToolCallF1,
+            "tool_call_f1",
+            "tool_call_f1",
+            MultiTurn,
+            Vec::new(),
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            AgentGoalAccuracy,
+            "agent_goal_accuracy",
+            "agent_goal_accuracy",
+            MultiTurn,
+            vec![Llm],
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            TopicAdherence,
+            "topic_adherence",
+            "topic_adherence",
+            MultiTurn,
+            vec![Llm],
+            Numeric,
+            Missing,
+            Partial,
+        ),
+        MetricCatalogDescriptor::new(
+            SqlSemanticEquivalence,
+            "sql_semantic_equivalence",
+            "sql_semantic_equivalence",
+            SingleTurn,
+            vec![Llm],
+            Discrete,
+            Missing,
+            KnownGap,
+        ),
+        MetricCatalogDescriptor::new(
+            Multimodal,
+            "multimodal",
+            "multimodal_metric_from_prompt",
+            SingleTurn,
+            vec![Llm],
+            Numeric,
+            Missing,
+            KnownGap,
+        ),
+        MetricCatalogDescriptor::new(
+            Summarization,
+            "summarization",
+            "summarization_score_from_judge_output",
+            SingleTurn,
+            vec![Llm],
+            Numeric,
+            Missing,
+            KnownGap,
+        ),
+    ]
 }
 
 pub fn metric_catalog_parity_claims() -> Vec<ParityClaim> {
-    Vec::new()
+    metric_catalog()
+        .into_iter()
+        .filter(|descriptor| {
+            !(descriptor.parity_status == ParityFeatureStatus::Complete
+                && descriptor.fixture_coverage == MetricFixtureCoverage::FixtureBacked)
+        })
+        .map(|descriptor| ParityClaim {
+            feature: descriptor.parity_feature(),
+            status: descriptor.parity_status,
+            fixtures: Vec::new(),
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
