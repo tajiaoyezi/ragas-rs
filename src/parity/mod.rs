@@ -98,6 +98,48 @@ pub struct ParityCheck {
     pub drift: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MetricGoldenFixture {
+    pub metadata: ParityFixtureMetadata,
+    pub fixture: ParityFixture,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MetricGoldenOutcome {
+    ExactMatch,
+    ToleratedNumericDrift,
+    KnownGap,
+    UndeclaredDrift,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MetricGoldenComparison {
+    pub feature: String,
+    pub outcome: MetricGoldenOutcome,
+    pub drift: Option<String>,
+}
+
+pub fn parse_metric_golden_fixture(
+    _input: &str,
+    _metadata: ParityFixtureMetadata,
+) -> Result<MetricGoldenFixture, RagasError> {
+    Err(RagasError::Parse {
+        message: "metric golden fixture parser is not implemented".to_string(),
+    })
+}
+
+pub fn compare_metric_golden_fixture(fixture: &MetricGoldenFixture) -> MetricGoldenComparison {
+    MetricGoldenComparison {
+        feature: fixture.fixture.feature.clone(),
+        outcome: MetricGoldenOutcome::UndeclaredDrift,
+        drift: Some("metric golden comparison is not implemented".to_string()),
+    }
+}
+
+pub fn validate_metric_golden_claim(_claim: &ParityClaim) -> Result<(), RagasError> {
+    Ok(())
+}
+
 pub fn latest_upstream_baseline() -> UpstreamBaseline {
     UpstreamBaseline {
         main_commit: "298b68274234c060deacab3cf5fb52aa3a20e885".to_string(),
@@ -475,5 +517,127 @@ mod tests {
         assert_eq!(blockers.len(), 2);
         assert_eq!(blockers[0].feature, "summarization");
         assert_eq!(blockers[1].feature, "knowledge_graph_generation");
+    }
+
+    #[test]
+    fn test_19_2_1_metric_golden_fixture_loads_metadata_and_outputs() {
+        // SCEN-19.2.1 / AC1 / TEST-19.2.1
+        let metadata = ParityFixtureMetadata::new(
+            "context_precision",
+            "src/ragas/metrics/collections/context_precision/metric.py",
+            Some("tests/e2e/metrics_migration/test_context_precision_migration.py".to_string()),
+            "tests/parity/fixtures/context_precision.json",
+            ParityFixtureMode::DeterministicMock,
+            Some(1e-9),
+        );
+
+        let golden = parse_metric_golden_fixture(
+            include_str!("../../tests/parity/fixtures/context_precision.json"),
+            metadata,
+        )
+        .expect("metric golden fixture parses");
+
+        assert_eq!(golden.metadata.feature, "context_precision");
+        assert_eq!(golden.fixture.python_baseline["score"], 0.75);
+        assert_eq!(golden.fixture.rust_output["score"], 0.75);
+        assert_eq!(golden.fixture.tolerance, Some(1e-9));
+        assert!(golden.metadata.upstream_module_path.contains("metric.py"));
+    }
+
+    #[test]
+    fn test_19_2_2_metric_golden_comparison_classifies_drift_modes() {
+        // SCEN-19.2.2 / AC2 / TEST-19.2.2
+        let metadata = ParityFixtureMetadata::new(
+            "metric",
+            "src/ragas/metrics/example.py",
+            None,
+            "tests/parity/fixtures/example.json",
+            ParityFixtureMode::DeterministicMock,
+            Some(0.02),
+        );
+        let fixture = |feature: &str,
+                       baseline: serde_json::Value,
+                       rust: serde_json::Value,
+                       tolerance: Option<f64>,
+                       known_gap: Option<&str>| {
+            MetricGoldenFixture {
+                metadata: metadata.clone(),
+                fixture: ParityFixture {
+                    feature: feature.to_string(),
+                    upstream_commit: "298b682".to_string(),
+                    python_baseline: baseline,
+                    rust_output: rust,
+                    tolerance,
+                    known_gap: known_gap.map(str::to_string),
+                },
+            }
+        };
+
+        let exact = compare_metric_golden_fixture(&fixture(
+            "exact_match",
+            serde_json::json!({"score": 1.0}),
+            serde_json::json!({"score": 1.0}),
+            Some(0.0),
+            None,
+        ));
+        assert_eq!(exact.outcome, MetricGoldenOutcome::ExactMatch);
+
+        let tolerated = compare_metric_golden_fixture(&fixture(
+            "semantic_similarity",
+            serde_json::json!({"score": 0.80}),
+            serde_json::json!({"score": 0.79}),
+            Some(0.02),
+            None,
+        ));
+        assert_eq!(
+            tolerated.outcome,
+            MetricGoldenOutcome::ToleratedNumericDrift
+        );
+
+        let known_gap = compare_metric_golden_fixture(&fixture(
+            "summarization",
+            serde_json::json!({"score": 0.9}),
+            serde_json::json!({"score": 0.4}),
+            Some(0.0),
+            Some("judge prompt differs"),
+        ));
+        assert_eq!(known_gap.outcome, MetricGoldenOutcome::KnownGap);
+        assert!(known_gap.drift.expect("drift").contains("0.9"));
+
+        let undeclared = compare_metric_golden_fixture(&fixture(
+            "faithfulness",
+            serde_json::json!({"verdict": "yes"}),
+            serde_json::json!({"verdict": "no"}),
+            None,
+            None,
+        ));
+        assert_eq!(undeclared.outcome, MetricGoldenOutcome::UndeclaredDrift);
+    }
+
+    #[test]
+    fn test_19_2_3_metric_complete_claim_requires_golden_fixture_metadata() {
+        // SCEN-19.2.3 / AC3 / TEST-19.2.3
+        let missing = ParityClaim {
+            feature: "metric::faithfulness".to_string(),
+            status: ParityFeatureStatus::Complete,
+            fixtures: Vec::new(),
+        };
+
+        let error = validate_metric_golden_claim(&missing).expect_err("missing fixtures fail");
+        assert!(error.to_string().contains("fixture evidence"));
+
+        let complete = ParityClaim {
+            feature: "metric::context_precision".to_string(),
+            status: ParityFeatureStatus::Complete,
+            fixtures: vec![ParityFixtureMetadata::new(
+                "context_precision",
+                "src/ragas/metrics/collections/context_precision/metric.py",
+                None,
+                "tests/parity/fixtures/context_precision.json",
+                ParityFixtureMode::DeterministicMock,
+                Some(1e-9),
+            )],
+        };
+        validate_metric_golden_claim(&complete).expect("fixture-backed claim validates");
     }
 }

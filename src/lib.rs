@@ -80,11 +80,12 @@ pub use optimizers::{
     OptimizationCandidate, OptimizationResult, OptimizationStep, Optimizer,
 };
 pub use parity::{
-    GapMatrixEntry, ParityCheck, ParityClaim, ParityFeatureStatus, ParityFixture,
-    ParityFixtureMetadata, ParityFixtureMode, UpstreamBaseline, UpstreamInventoryEntry,
-    check_parity_fixture, latest_upstream_baseline, latest_upstream_inventory,
+    GapMatrixEntry, MetricGoldenComparison, MetricGoldenFixture, MetricGoldenOutcome, ParityCheck,
+    ParityClaim, ParityFeatureStatus, ParityFixture, ParityFixtureMetadata, ParityFixtureMode,
+    UpstreamBaseline, UpstreamInventoryEntry, check_parity_fixture, compare_metric_golden_fixture,
+    latest_upstream_baseline, latest_upstream_inventory, parse_metric_golden_fixture,
     parse_parity_fixture, release_blocking_claims, release_blocking_inventory, validate_gap_matrix,
-    validate_parity_claim,
+    validate_metric_golden_claim, validate_parity_claim,
 };
 pub use prompts::{
     FewShotExample, JudgeOutputParser, LanguageAdapterRule, MultimodalPromptMessage,
