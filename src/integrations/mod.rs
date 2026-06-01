@@ -111,11 +111,111 @@ impl Default for IntegrationRegistry {
 }
 
 pub fn integration_descriptors() -> Vec<IntegrationDescriptor> {
-    Vec::new()
+    vec![
+        IntegrationDescriptor::new(
+            IntegrationFamily::GenericTracing,
+            Some(IntegrationDestination::Tracing),
+            IntegrationTestMode::DeterministicContract,
+            false,
+            ParityFeatureStatus::Complete,
+        ),
+        IntegrationDescriptor::new(
+            IntegrationFamily::LangChain,
+            None,
+            IntegrationTestMode::FeatureGatedLive,
+            true,
+            ParityFeatureStatus::KnownGap,
+        ),
+        IntegrationDescriptor::new(
+            IntegrationFamily::LangGraph,
+            None,
+            IntegrationTestMode::FeatureGatedLive,
+            true,
+            ParityFeatureStatus::KnownGap,
+        ),
+        IntegrationDescriptor::new(
+            IntegrationFamily::LangSmith,
+            Some(IntegrationDestination::LangSmith),
+            IntegrationTestMode::FeatureGatedLive,
+            true,
+            ParityFeatureStatus::Partial,
+        ),
+        IntegrationDescriptor::new(
+            IntegrationFamily::LlamaIndex,
+            None,
+            IntegrationTestMode::FeatureGatedLive,
+            true,
+            ParityFeatureStatus::KnownGap,
+        ),
+        IntegrationDescriptor::new(
+            IntegrationFamily::AgUi,
+            None,
+            IntegrationTestMode::FeatureGatedLive,
+            true,
+            ParityFeatureStatus::KnownGap,
+        ),
+        IntegrationDescriptor::new(
+            IntegrationFamily::Bedrock,
+            None,
+            IntegrationTestMode::FeatureGatedLive,
+            true,
+            ParityFeatureStatus::KnownGap,
+        ),
+        IntegrationDescriptor::new(
+            IntegrationFamily::Griptape,
+            None,
+            IntegrationTestMode::FeatureGatedLive,
+            true,
+            ParityFeatureStatus::KnownGap,
+        ),
+        IntegrationDescriptor::new(
+            IntegrationFamily::Helicone,
+            None,
+            IntegrationTestMode::FeatureGatedLive,
+            true,
+            ParityFeatureStatus::KnownGap,
+        ),
+        IntegrationDescriptor::new(
+            IntegrationFamily::Langfuse,
+            Some(IntegrationDestination::Langfuse),
+            IntegrationTestMode::FeatureGatedLive,
+            true,
+            ParityFeatureStatus::Partial,
+        ),
+        IntegrationDescriptor::new(
+            IntegrationFamily::Opik,
+            Some(IntegrationDestination::Opik),
+            IntegrationTestMode::FeatureGatedLive,
+            true,
+            ParityFeatureStatus::Partial,
+        ),
+        IntegrationDescriptor::new(
+            IntegrationFamily::R2R,
+            None,
+            IntegrationTestMode::FeatureGatedLive,
+            true,
+            ParityFeatureStatus::KnownGap,
+        ),
+        IntegrationDescriptor::new(
+            IntegrationFamily::Swarm,
+            None,
+            IntegrationTestMode::FeatureGatedLive,
+            true,
+            ParityFeatureStatus::KnownGap,
+        ),
+    ]
 }
 
 pub fn integration_parity_claims() -> Vec<ParityClaim> {
-    Vec::new()
+    integration_descriptors()
+        .into_iter()
+        .filter(|descriptor| descriptor.parity_status != ParityFeatureStatus::Complete)
+        .map(|descriptor| ParityClaim {
+            feature: descriptor.parity_feature(),
+            status: descriptor.parity_status,
+            fixtures: Vec::new(),
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,7 +245,7 @@ pub fn normalize_callback_payload(
         run_id: event.run_id.clone(),
         metric_name: event.metric_name.clone(),
         sample_index: event.sample_index,
-        payload,
+        payload: redact_payload(&payload),
     }
 }
 
@@ -180,14 +280,11 @@ impl TracingIntegration {
             events
                 .lock()
                 .expect("integration event lock")
-                .push(IntegrationEvent {
+                .push(normalize_callback_payload(
                     destination,
-                    kind: event.kind.clone(),
-                    run_id: event.run_id.clone(),
-                    metric_name: event.metric_name.clone(),
-                    sample_index: event.sample_index,
-                    payload: IntegrationPayload::new(),
-                });
+                    event,
+                    IntegrationPayload::new(),
+                ));
         }
     }
 
