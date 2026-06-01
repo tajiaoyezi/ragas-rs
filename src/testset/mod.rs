@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::SingleTurnSample;
+use crate::{ParityClaim, ParityFeatureStatus, RagasError, SingleTurnSample};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GraphProperty {
@@ -66,6 +66,50 @@ impl GraphEdge {
 pub struct KnowledgeGraph {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GraphParityFixture {
+    pub feature: String,
+    pub upstream_commit: String,
+    pub graph: KnowledgeGraph,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum GraphQueryCapability {
+    NodeTypeFilter,
+    PropertyFilter,
+    RelationshipFilter,
+    NeighborTraversal,
+    Clusters,
+    AdvancedQuery,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphQueryDescriptor {
+    pub capability: GraphQueryCapability,
+    pub parity_status: ParityFeatureStatus,
+    pub deterministic: bool,
+}
+
+pub fn parse_graph_parity_fixture(_input: &str) -> Result<GraphParityFixture, RagasError> {
+    Err(RagasError::Parse {
+        message: "graph parity fixture parser is not implemented".to_string(),
+    })
+}
+
+pub fn serialize_graph_parity_fixture(_fixture: &GraphParityFixture) -> Result<String, RagasError> {
+    Err(RagasError::Parse {
+        message: "graph parity fixture serializer is not implemented".to_string(),
+    })
+}
+
+pub fn graph_query_descriptors() -> Vec<GraphQueryDescriptor> {
+    Vec::new()
+}
+
+pub fn graph_parity_claims() -> Vec<ParityClaim> {
+    Vec::new()
 }
 
 impl KnowledgeGraph {
@@ -392,6 +436,9 @@ fn text_property<'a>(node: &'a GraphNode, key: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
+
+    use crate::release_blocking_claims;
 
     fn fixture_graph() -> KnowledgeGraph {
         KnowledgeGraph::new()
@@ -693,5 +740,86 @@ mod tests {
                 .map(String::as_str),
             Some("next")
         );
+    }
+
+    #[test]
+    fn test_20_1_1_graph_parity_fixture_roundtrips_nodes_edges_and_properties() {
+        // SCEN-20.1.1 / AC1 / TEST-20.1.1
+        let input = serde_json::json!({
+            "feature": "testset_graph",
+            "upstream_commit": "298b682",
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "doc-1",
+                        "node_type": "document",
+                        "properties": {
+                            "title": {"Text": "RAG Guide"},
+                            "trusted": {"Boolean": true},
+                            "page_count": {"Number": 3.0}
+                        }
+                    }
+                ],
+                "edges": [
+                    {
+                        "source_id": "doc-1",
+                        "target_id": "chunk-1",
+                        "relationship": "contains",
+                        "properties": {"order": {"Number": 0.0}}
+                    }
+                ]
+            }
+        })
+        .to_string();
+
+        let fixture = parse_graph_parity_fixture(&input).expect("graph fixture parses");
+        assert_eq!(fixture.feature, "testset_graph");
+        assert_eq!(
+            fixture
+                .graph
+                .node("doc-1")
+                .and_then(|node| node.properties.get("trusted")),
+            Some(&GraphProperty::Boolean(true))
+        );
+
+        let encoded = serialize_graph_parity_fixture(&fixture).expect("serialize fixture");
+        let roundtrip = parse_graph_parity_fixture(&encoded).expect("roundtrip parses");
+        assert_eq!(roundtrip, fixture);
+    }
+
+    #[test]
+    fn test_20_1_2_graph_query_descriptors_cover_required_filters() {
+        // SCEN-20.1.2 / AC2 / TEST-20.1.2
+        let capabilities: BTreeSet<_> = graph_query_descriptors()
+            .iter()
+            .map(|descriptor| descriptor.capability)
+            .collect();
+
+        for expected in [
+            GraphQueryCapability::NodeTypeFilter,
+            GraphQueryCapability::PropertyFilter,
+            GraphQueryCapability::RelationshipFilter,
+            GraphQueryCapability::NeighborTraversal,
+        ] {
+            assert!(capabilities.contains(&expected), "missing {expected:?}");
+        }
+    }
+
+    #[test]
+    fn test_20_1_3_missing_graph_features_create_release_blocking_claims() {
+        // SCEN-20.1.3 / AC3 / TEST-20.1.3
+        let claims = graph_parity_claims();
+        let blockers = release_blocking_claims(&claims);
+        let blocking_features: BTreeSet<_> = blockers
+            .iter()
+            .map(|claim| claim.feature.as_str())
+            .collect();
+
+        for expected in ["testset::graph::clusters", "testset::graph::advanced_query"] {
+            assert!(
+                blocking_features.contains(expected),
+                "missing graph release blocker {expected}"
+            );
+        }
     }
 }
