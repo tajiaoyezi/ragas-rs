@@ -76,8 +76,10 @@ pub use metrics::{
     threshold_semantic_similarity, tool_call_accuracy, tool_call_f1, topic_adherence,
 };
 pub use optimizers::{
-    CandidateGenerator, GeneticOptimizer, GeneticOptimizerConfig, ObjectiveMetric,
-    OptimizationCandidate, OptimizationResult, OptimizationStep, Optimizer,
+    CandidateGenerator, DspyCacheContract, GeneticOptimizer, GeneticOptimizerConfig,
+    ObjectiveMetric, OptimizationCandidate, OptimizationResult, OptimizationStep, Optimizer,
+    OptimizerFamily, OptimizerFamilyDescriptor, OptimizerRuntime, dspy_cache_contract,
+    optimizer_family_descriptors, optimizer_parity_claims,
 };
 pub use parity::{
     GapMatrixEntry, MetricGoldenComparison, MetricGoldenFixture, MetricGoldenOutcome, ParityCheck,

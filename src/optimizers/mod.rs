@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::{CacheKey, ParityClaim, ParityFeatureStatus};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OptimizationCandidate {
@@ -69,6 +72,36 @@ pub struct OptimizationResult {
     pub best_candidate: OptimizationCandidate,
     pub best_score: f64,
     pub history: Vec<OptimizationStep>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum OptimizerFamily {
+    Genetic,
+    Dspy,
+    MiproV2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum OptimizerRuntime {
+    RustNative,
+    PythonRuntime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OptimizerFamilyDescriptor {
+    pub family: OptimizerFamily,
+    pub runtime: OptimizerRuntime,
+    pub parity_status: ParityFeatureStatus,
+    pub cache_contract: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DspyCacheContract {
+    pub cache_key: CacheKey,
+    pub deterministic_keys: bool,
+    pub value_format: String,
+    pub python_runtime_supported: bool,
+    pub unsupported_runtime_behavior: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -155,6 +188,24 @@ impl Optimizer for GeneticOptimizer {
     }
 }
 
+pub fn optimizer_family_descriptors() -> Vec<OptimizerFamilyDescriptor> {
+    Vec::new()
+}
+
+pub fn dspy_cache_contract(_payload: &Value) -> DspyCacheContract {
+    DspyCacheContract {
+        cache_key: CacheKey::derive("optimizer.dspy", &Value::Null),
+        deterministic_keys: false,
+        value_format: String::new(),
+        python_runtime_supported: true,
+        unsupported_runtime_behavior: None,
+    }
+}
+
+pub fn optimizer_parity_claims() -> Vec<ParityClaim> {
+    Vec::new()
+}
+
 fn normalize_population(
     mut candidates: Vec<OptimizationCandidate>,
     population_size: usize,
@@ -182,6 +233,9 @@ fn next_seed(state: &mut u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
+
+    use crate::release_blocking_claims;
 
     struct KeywordObjective {
         keyword: String,
@@ -301,7 +355,99 @@ mod tests {
             result
                 .history
                 .iter()
-                .all(|step| !step.candidate_id.is_empty())
+            .all(|step| !step.candidate_id.is_empty())
+        );
+    }
+
+    #[test]
+    fn test_21_1_1_optimizer_registry_lists_families_with_status() {
+        // SCEN-21.1.1 / AC1 / TEST-21.1.1
+        let descriptors = optimizer_family_descriptors();
+        let by_family: BTreeMap<_, _> = descriptors
+            .iter()
+            .map(|descriptor| (descriptor.family, descriptor))
+            .collect();
+
+        for expected in [
+            OptimizerFamily::Genetic,
+            OptimizerFamily::Dspy,
+            OptimizerFamily::MiproV2,
+        ] {
+            assert!(by_family.contains_key(&expected), "missing {expected:?}");
+        }
+
+        let genetic = by_family
+            .get(&OptimizerFamily::Genetic)
+            .expect("genetic descriptor");
+        assert_eq!(genetic.runtime, OptimizerRuntime::RustNative);
+        assert_eq!(genetic.parity_status, ParityFeatureStatus::Complete);
+
+        let dspy = by_family
+            .get(&OptimizerFamily::Dspy)
+            .expect("dspy descriptor");
+        assert_eq!(dspy.runtime, OptimizerRuntime::PythonRuntime);
+        assert_eq!(dspy.parity_status, ParityFeatureStatus::KnownGap);
+        assert_eq!(dspy.cache_contract.as_deref(), Some("optimizer.dspy"));
+    }
+
+    #[test]
+    fn test_21_1_2_dspy_cache_contract_records_deterministic_and_unsupported_behavior() {
+        // SCEN-21.1.2 / AC2 / TEST-21.1.2
+        let left = serde_json::json!({
+            "api_key": "sk-secret",
+            "optimizer": "MIPROv2",
+            "prompt": "answer with evidence",
+            "params": {"num_trials": 4, "seed": 7}
+        });
+        let right = serde_json::json!({
+            "params": {"seed": 7, "num_trials": 4},
+            "prompt": "answer with evidence",
+            "optimizer": "MIPROv2",
+            "api_key": "sk-secret"
+        });
+
+        let left_contract = dspy_cache_contract(&left);
+        let right_contract = dspy_cache_contract(&right);
+
+        assert_eq!(left_contract.cache_key.namespace, "optimizer.dspy");
+        assert_eq!(left_contract.cache_key.digest, right_contract.cache_key.digest);
+        assert!(left_contract.deterministic_keys);
+        assert_eq!(left_contract.value_format, "json");
+        assert!(!left_contract.python_runtime_supported);
+        assert!(
+            left_contract
+                .unsupported_runtime_behavior
+                .as_deref()
+                .is_some_and(|message| message.contains("Python DSPy runtime"))
+        );
+
+        let redacted = left_contract.cache_key.redacted_payload.to_string();
+        assert!(!redacted.contains("sk-secret"));
+        assert!(redacted.contains("[redacted]"));
+    }
+
+    #[test]
+    fn test_21_1_3_unsupported_dspy_and_mipro_create_release_blocking_claims() {
+        // SCEN-21.1.3 / AC3 / TEST-21.1.3
+        let claims = optimizer_parity_claims();
+        let blockers = release_blocking_claims(&claims);
+        let blocking_features: BTreeSet<_> = blockers
+            .iter()
+            .map(|claim| claim.feature.as_str())
+            .collect();
+
+        for expected in ["optimizers::dspy", "optimizers::mipro_v2"] {
+            assert!(
+                blocking_features.contains(expected),
+                "missing optimizer release blocker {expected}"
+            );
+        }
+
+        assert!(
+            blockers
+                .iter()
+                .all(|claim| claim.status != ParityFeatureStatus::Complete),
+            "unsupported optimizer blockers must not be marked complete"
         );
     }
 }
