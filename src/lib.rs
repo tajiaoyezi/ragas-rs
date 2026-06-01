@@ -40,8 +40,10 @@ pub use experiments::{
     ExperimentRecord, ExperimentSummary, RunComparison, compare_runs, summarize_experiment,
 };
 pub use integrations::{
-    IntegrationDestination, IntegrationEvent, IntegrationFeatureRegistry, IntegrationPayload,
-    TracingIntegration, redact_payload,
+    IntegrationDescriptor, IntegrationDestination, IntegrationEvent, IntegrationFamily,
+    IntegrationFeatureRegistry, IntegrationPayload, IntegrationRegistry, IntegrationTestMode,
+    TracingIntegration, integration_descriptors, integration_parity_claims,
+    normalize_callback_payload, redact_payload,
 };
 pub use llm::{
     AzureOpenAiConfig, ChatMessage, EmbeddingAdapter, EmbeddingProvider, EmbeddingRequest,
