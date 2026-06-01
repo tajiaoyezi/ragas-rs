@@ -13,14 +13,29 @@ pub struct RuntimeCacheKey {
 }
 
 pub fn generate_runtime_cache_key(
-    _function: impl Into<String>,
-    _args: &[Value],
-    _kwargs: &HashMap<String, Value>,
+    function: impl Into<String>,
+    args: &[Value],
+    kwargs: &HashMap<String, Value>,
 ) -> RuntimeCacheKey {
-    RuntimeCacheKey {
-        function: String::new(),
-        key: String::new(),
+    let function = function.into();
+    let mut filtered_kwargs = serde_json::Map::new();
+    for (key, value) in kwargs {
+        if key != "callbacks" {
+            filtered_kwargs.insert(key.clone(), value.clone());
+        }
     }
+    let payload = serde_json::json!({
+        "function": function,
+        "args": args,
+        "kwargs": Value::Object(filtered_kwargs),
+    });
+    let canonical = canonical_json(&payload);
+    let key = stable_hash_hex(&canonical);
+    let function = payload["function"]
+        .as_str()
+        .expect("function is string")
+        .to_string();
+    RuntimeCacheKey { function, key }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,10 +45,10 @@ pub struct LazyTokenizer {
 }
 
 impl LazyTokenizer {
-    pub fn new(_encoding_name: impl Into<String>) -> Self {
+    pub fn new(encoding_name: impl Into<String>) -> Self {
         Self {
-            encoding_name: String::new(),
-            initialized: true,
+            encoding_name: encoding_name.into(),
+            initialized: false,
         }
     }
 
@@ -45,8 +60,12 @@ impl LazyTokenizer {
         self.initialized
     }
 
-    pub fn encode(&mut self, _text: &str) -> Vec<u32> {
-        Vec::new()
+    pub fn encode(&mut self, text: &str) -> Vec<u32> {
+        self.initialized = true;
+        text.split_whitespace()
+            .enumerate()
+            .map(|(index, _)| index as u32)
+            .collect()
     }
 
     pub fn count_tokens(&mut self, text: &str) -> usize {
@@ -70,20 +89,46 @@ impl ModelTokenUsage {
         }
     }
 
-    pub fn add(&self, _other: &Self) -> Result<Self, RagasError> {
-        Ok(self.clone())
+    pub fn add(&self, other: &Self) -> Result<Self, RagasError> {
+        if self.model != other.model {
+            return Err(RagasError::Provider {
+                message: format!(
+                    "cannot add token usage for different models: {} vs {}",
+                    self.model, other.model
+                ),
+            });
+        }
+        Ok(Self {
+            input_tokens: self.input_tokens + other.input_tokens,
+            output_tokens: self.output_tokens + other.output_tokens,
+            model: self.model.clone(),
+        })
     }
 
-    pub fn cost(&self, _input_rate: f64, _output_rate: Option<f64>) -> f64 {
-        0.0
+    pub fn cost(&self, input_rate: f64, output_rate: Option<f64>) -> f64 {
+        let output_rate = output_rate.unwrap_or(input_rate);
+        round_cost(self.input_tokens as f64 * input_rate + self.output_tokens as f64 * output_rate)
     }
 }
 
 pub fn total_model_cost(
-    _usage: &[ModelTokenUsage],
-    _per_model_rates: &HashMap<String, (f64, f64)>,
+    usage: &[ModelTokenUsage],
+    per_model_rates: &HashMap<String, (f64, f64)>,
 ) -> Result<f64, RagasError> {
-    Ok(0.0)
+    let mut total = 0.0;
+    for usage in usage {
+        let Some((input_rate, output_rate)) = per_model_rates.get(&usage.model) else {
+            return Err(RagasError::Provider {
+                message: format!("missing token cost rates for model {}", usage.model),
+            });
+        };
+        total += usage.cost(*input_rate, Some(*output_rate));
+    }
+    Ok(round_cost(total))
+}
+
+fn round_cost(value: f64) -> f64 {
+    (value * 1_000_000_000_000.0).round() / 1_000_000_000_000.0
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
