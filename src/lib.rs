@@ -90,9 +90,10 @@ pub use providers::{
     MockEmbeddingProvider, MockLlmProvider, ProviderRegistry, record_provider_usage,
 };
 pub use release::{
-    GateEvidenceStatus, QualityGateEvidence, QualityGateKind, QualityGateSummary,
-    ReleaseGateReport, quality_gate_blockers, release_gate_files, required_quality_gates,
-    summarize_quality_gates,
+    BugClass, BugLedgerEntry, BugSeverity, BugStatus, BugZeroAudit, GateEvidenceStatus,
+    QualityGateEvidence, QualityGateKind, QualityGateSummary, ReleaseGateReport,
+    quality_gate_blockers, release_blocking_bugs, release_gate_files, required_quality_gates,
+    summarize_bug_zero_audit, summarize_quality_gates,
 };
 pub use runtime::{
     AsyncExecutor, CacheKey, CallbackManager, CancellationConfig, ExecutorJobResult,

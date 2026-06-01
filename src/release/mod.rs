@@ -53,6 +53,73 @@ pub struct ReleaseGateReport {
     pub evidence: Vec<QualityGateEvidence>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BugSeverity {
+    Critical,
+    High,
+    Medium,
+    Low,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BugStatus {
+    Open,
+    InProgress,
+    Resolved,
+    Waived,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BugClass {
+    Correctness,
+    Safety,
+    DataLoss,
+    Panic,
+    Security,
+    Parity,
+    Documentation,
+    Performance,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BugLedgerEntry {
+    pub id: String,
+    pub severity: BugSeverity,
+    pub status: BugStatus,
+    pub class: BugClass,
+    pub affected_feature: String,
+    pub evidence: String,
+    pub regression_test: String,
+}
+
+impl BugLedgerEntry {
+    pub fn new(
+        _id: impl Into<String>,
+        _severity: BugSeverity,
+        _status: BugStatus,
+        _class: BugClass,
+        _affected_feature: impl Into<String>,
+        _evidence: impl Into<String>,
+        _regression_test: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: String::new(),
+            severity: BugSeverity::Low,
+            status: BugStatus::Resolved,
+            class: BugClass::Documentation,
+            affected_feature: String::new(),
+            evidence: String::new(),
+            regression_test: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BugZeroAudit {
+    pub unresolved_release_blocking: usize,
+    pub release_ready: bool,
+}
+
 pub fn release_gate_files() -> Vec<&'static str> {
     vec![
         "Cargo.toml",
@@ -109,6 +176,17 @@ pub fn quality_gate_blockers(report: &ReleaseGateReport) -> Vec<QualityGateEvide
         })
         .cloned()
         .collect()
+}
+
+pub fn release_blocking_bugs(_entries: &[BugLedgerEntry]) -> Vec<BugLedgerEntry> {
+    Vec::new()
+}
+
+pub fn summarize_bug_zero_audit(_entries: &[BugLedgerEntry]) -> BugZeroAudit {
+    BugZeroAudit {
+        unresolved_release_blocking: 0,
+        release_ready: true,
+    }
 }
 
 #[cfg(test)]
@@ -226,5 +304,100 @@ mod tests {
 
         assert_eq!(blockers.len(), 1);
         assert_eq!(blockers[0].kind, QualityGateKind::Parity);
+    }
+
+    #[test]
+    fn test_17_4_1_bug_ledger_entries_record_release_evidence() {
+        // SCEN-17.4.1 / AC1 / TEST-17.4.1
+        let entry = BugLedgerEntry::new(
+            "BUG-001",
+            BugSeverity::High,
+            BugStatus::Open,
+            BugClass::Parity,
+            "context_precision",
+            "fixture drift score baseline=0.75 rust=0.50",
+            "TEST-17.4.1",
+        );
+
+        assert_eq!(entry.id, "BUG-001");
+        assert_eq!(entry.severity, BugSeverity::High);
+        assert_eq!(entry.status, BugStatus::Open);
+        assert_eq!(entry.class, BugClass::Parity);
+        assert_eq!(entry.affected_feature, "context_precision");
+        assert!(entry.evidence.contains("fixture drift"));
+        assert_eq!(entry.regression_test, "TEST-17.4.1");
+    }
+
+    #[test]
+    fn test_17_4_2_unresolved_high_or_critical_correctness_classes_block_release() {
+        // SCEN-17.4.2 / AC2 / TEST-17.4.2
+        let bugs = vec![
+            BugLedgerEntry::new(
+                "BUG-SEC",
+                BugSeverity::Critical,
+                BugStatus::Open,
+                BugClass::Security,
+                "provider_errors",
+                "auth header leaked",
+                "TEST-security-redaction",
+            ),
+            BugLedgerEntry::new(
+                "BUG-PARITY",
+                BugSeverity::High,
+                BugStatus::InProgress,
+                BugClass::Parity,
+                "faithfulness",
+                "golden fixture mismatch",
+                "TEST-faithfulness-parity",
+            ),
+            BugLedgerEntry::new(
+                "BUG-DOC",
+                BugSeverity::High,
+                BugStatus::Open,
+                BugClass::Documentation,
+                "quickstart",
+                "wording issue",
+                "TEST-docs",
+            ),
+            BugLedgerEntry::new(
+                "BUG-OLD",
+                BugSeverity::Critical,
+                BugStatus::Resolved,
+                BugClass::Correctness,
+                "dataset",
+                "fixed",
+                "TEST-dataset-regression",
+            ),
+        ];
+
+        let blockers = release_blocking_bugs(&bugs);
+
+        assert_eq!(blockers.len(), 2);
+        assert_eq!(blockers[0].id, "BUG-SEC");
+        assert_eq!(blockers[1].id, "BUG-PARITY");
+    }
+
+    #[test]
+    fn test_17_4_3_bug_zero_audit_reports_no_unresolved_blockers_before_ready() {
+        // SCEN-17.4.3 / AC3 / TEST-17.4.3
+        let bugs = vec![BugLedgerEntry::new(
+            "BUG-RESOLVED",
+            BugSeverity::High,
+            BugStatus::Resolved,
+            BugClass::Correctness,
+            "dataset",
+            "regression test passes",
+            "TEST-dataset-regression",
+        )];
+
+        let audit = summarize_bug_zero_audit(&bugs);
+
+        assert_eq!(audit.unresolved_release_blocking, 0);
+        assert!(audit.release_ready);
+
+        let checklist =
+            std::fs::read_to_string("docs/release-checklist.md").expect("release checklist");
+        assert!(checklist.contains("No-known-bug audit"));
+        assert!(checklist.contains("zero unresolved release-blocking bugs"));
     }
 }
