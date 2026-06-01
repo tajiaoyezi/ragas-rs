@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 use async_trait::async_trait;
 
@@ -93,15 +96,178 @@ pub struct StructuredLlmDescriptor {
 }
 
 pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
-    Vec::new()
+    vec![
+        ProviderDescriptor::new(
+            ProviderFamily::OpenAiCompatible,
+            ProviderKind::Llm,
+            ProviderMode::Live,
+            true,
+            false,
+            ParityFeatureStatus::Partial,
+        ),
+        ProviderDescriptor::new(
+            ProviderFamily::OpenAiCompatible,
+            ProviderKind::Embedding,
+            ProviderMode::Live,
+            false,
+            false,
+            ParityFeatureStatus::Partial,
+        ),
+        ProviderDescriptor::new(
+            ProviderFamily::AzureOpenAi,
+            ProviderKind::Llm,
+            ProviderMode::Live,
+            true,
+            false,
+            ParityFeatureStatus::Partial,
+        ),
+        ProviderDescriptor::new(
+            ProviderFamily::AzureOpenAi,
+            ProviderKind::Embedding,
+            ProviderMode::Live,
+            false,
+            false,
+            ParityFeatureStatus::Partial,
+        ),
+        ProviderDescriptor::new(
+            ProviderFamily::LiteLlm,
+            ProviderKind::Llm,
+            ProviderMode::Live,
+            true,
+            false,
+            ParityFeatureStatus::Partial,
+        ),
+        ProviderDescriptor::new(
+            ProviderFamily::LiteLlm,
+            ProviderKind::StructuredLlm,
+            ProviderMode::Live,
+            true,
+            true,
+            ParityFeatureStatus::Partial,
+        ),
+        ProviderDescriptor::new(
+            ProviderFamily::Instructor,
+            ProviderKind::StructuredLlm,
+            ProviderMode::Live,
+            true,
+            true,
+            ParityFeatureStatus::Partial,
+        ),
+        ProviderDescriptor::new(
+            ProviderFamily::Haystack,
+            ProviderKind::Llm,
+            ProviderMode::Live,
+            true,
+            false,
+            ParityFeatureStatus::KnownGap,
+        ),
+        ProviderDescriptor::new(
+            ProviderFamily::Haystack,
+            ProviderKind::Embedding,
+            ProviderMode::Live,
+            false,
+            false,
+            ParityFeatureStatus::KnownGap,
+        ),
+        ProviderDescriptor::new(
+            ProviderFamily::HuggingFace,
+            ProviderKind::Llm,
+            ProviderMode::Live,
+            false,
+            false,
+            ParityFeatureStatus::KnownGap,
+        ),
+        ProviderDescriptor::new(
+            ProviderFamily::HuggingFace,
+            ProviderKind::Embedding,
+            ProviderMode::Live,
+            false,
+            false,
+            ParityFeatureStatus::KnownGap,
+        ),
+        ProviderDescriptor::new(
+            ProviderFamily::Google,
+            ProviderKind::Llm,
+            ProviderMode::Live,
+            true,
+            false,
+            ParityFeatureStatus::KnownGap,
+        ),
+        ProviderDescriptor::new(
+            ProviderFamily::Google,
+            ProviderKind::Embedding,
+            ProviderMode::Live,
+            false,
+            false,
+            ParityFeatureStatus::KnownGap,
+        ),
+        ProviderDescriptor::new(
+            ProviderFamily::OciGenAi,
+            ProviderKind::Llm,
+            ProviderMode::Live,
+            true,
+            false,
+            ParityFeatureStatus::KnownGap,
+        ),
+        ProviderDescriptor::new(
+            ProviderFamily::Mock,
+            ProviderKind::Llm,
+            ProviderMode::Deterministic,
+            true,
+            false,
+            ParityFeatureStatus::Complete,
+        ),
+        ProviderDescriptor::new(
+            ProviderFamily::Mock,
+            ProviderKind::Embedding,
+            ProviderMode::Deterministic,
+            false,
+            false,
+            ParityFeatureStatus::Complete,
+        ),
+    ]
 }
 
 pub fn structured_llm_descriptors() -> Vec<StructuredLlmDescriptor> {
-    Vec::new()
+    upstream_provider_descriptors()
+        .into_iter()
+        .filter(|descriptor| descriptor.kind == ProviderKind::StructuredLlm)
+        .map(|descriptor| StructuredLlmDescriptor {
+            family: descriptor.family,
+            mode: descriptor.mode,
+            supports_system_prompt: descriptor.supports_system_prompt,
+            supports_structured_output: descriptor.supports_structured_output,
+            parity_status: descriptor.parity_status,
+        })
+        .collect()
 }
 
 pub fn provider_parity_claims() -> Vec<ParityClaim> {
-    Vec::new()
+    let mut status_by_feature = BTreeMap::new();
+    for descriptor in upstream_provider_descriptors()
+        .into_iter()
+        .filter(|descriptor| descriptor.mode == ProviderMode::Live)
+    {
+        let status = descriptor.parity_status;
+        status_by_feature
+            .entry(descriptor.parity_feature())
+            .and_modify(|existing| {
+                if status > *existing {
+                    *existing = status;
+                }
+            })
+            .or_insert(status);
+    }
+
+    status_by_feature
+        .into_iter()
+        .filter(|(_, status)| *status != ParityFeatureStatus::Complete)
+        .map(|(feature, status)| ParityClaim {
+            feature,
+            status,
+            fixtures: Vec::new(),
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -159,6 +325,12 @@ impl ProviderRegistry {
             .ok_or_else(|| RagasError::Provider {
                 message: format!("missing provider: embedding '{name}'"),
             })
+    }
+}
+
+impl Default for ProviderRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
