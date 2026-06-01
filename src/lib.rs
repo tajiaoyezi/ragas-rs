@@ -21,7 +21,9 @@ pub mod testset;
 pub mod validation;
 
 pub use backends::{
-    CsvDatasetBackend, DatasetBackend, InMemoryDatasetBackend, JsonlDatasetBackend,
+    BackendCapability, BackendDescriptor, BackendFamily, BackendMode, BackendRegistry,
+    CsvDatasetBackend, DatasetBackend, DiskCacheCompatibility, InMemoryDatasetBackend,
+    JsonlDatasetBackend, backend_descriptors, backend_parity_claims,
 };
 pub use benchmarks::{
     BenchmarkMeasurement, BenchmarkPrompt, BenchmarkProvider, BenchmarkReport, CostRates,

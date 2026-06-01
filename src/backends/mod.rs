@@ -1,6 +1,132 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{EvaluationDataset, EvaluationSample, RagasError, SingleTurnSample};
+use crate::{
+    EvaluationDataset, EvaluationSample, ParityClaim, ParityFeatureStatus, RagasError,
+    SingleTurnSample,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum BackendFamily {
+    InMemory,
+    LocalJsonl,
+    LocalCsv,
+    DiskCache,
+    GoogleDrive,
+}
+
+impl BackendFamily {
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::InMemory => "in-memory",
+            Self::LocalJsonl => "local-jsonl",
+            Self::LocalCsv => "local-csv",
+            Self::DiskCache => "disk-cache",
+            Self::GoogleDrive => "gdrive",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BackendMode {
+    Deterministic,
+    External,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BackendCapability {
+    DatasetStorage,
+    KeyValueCache,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackendDescriptor {
+    pub family: BackendFamily,
+    pub mode: BackendMode,
+    pub capability: BackendCapability,
+    pub supports_key_value: bool,
+    pub requires_external_service: bool,
+    pub parity_status: ParityFeatureStatus,
+}
+
+impl BackendDescriptor {
+    pub fn new(
+        family: BackendFamily,
+        mode: BackendMode,
+        capability: BackendCapability,
+        supports_key_value: bool,
+        requires_external_service: bool,
+        parity_status: ParityFeatureStatus,
+    ) -> Self {
+        Self {
+            family,
+            mode,
+            capability,
+            supports_key_value,
+            requires_external_service,
+            parity_status,
+        }
+    }
+
+    pub fn parity_feature(&self) -> String {
+        format!("backend::{}", self.family.slug())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BackendRegistry {
+    descriptors: Vec<BackendDescriptor>,
+}
+
+impl BackendRegistry {
+    pub fn new() -> Self {
+        Self {
+            descriptors: backend_descriptors(),
+        }
+    }
+
+    pub fn descriptors(&self) -> &[BackendDescriptor] {
+        &self.descriptors
+    }
+}
+
+impl Default for BackendRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn backend_descriptors() -> Vec<BackendDescriptor> {
+    Vec::new()
+}
+
+pub fn backend_parity_claims() -> Vec<ParityClaim> {
+    Vec::new()
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DiskCacheCompatibility {
+    entries: BTreeMap<String, Vec<u8>>,
+}
+
+impl DiskCacheCompatibility {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn put(&mut self, _key: impl Into<String>, _value: Vec<u8>) {}
+
+    pub fn get(&self, key: &str) -> Option<Vec<u8>> {
+        self.entries.get(key).cloned()
+    }
+
+    pub fn delete(&mut self, key: &str) -> bool {
+        self.entries.remove(key).is_some()
+    }
+
+    pub fn keys(&self) -> Vec<String> {
+        self.entries.keys().cloned().collect()
+    }
+}
 
 pub trait DatasetBackend {
     fn save(
@@ -197,6 +323,7 @@ fn dataset_io_error(message: impl Into<String>) -> RagasError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::release_blocking_claims;
 
     fn sample(question: &str, response: &str, context: &str) -> EvaluationSample {
         EvaluationSample::SingleTurn(
@@ -270,5 +397,73 @@ mod tests {
         csv.save("fixture", &dataset).expect("save csv");
         let csv_roundtrip = csv.load("fixture").expect("load csv");
         assert_eq!(csv_roundtrip.samples(), dataset.samples());
+    }
+
+    #[test]
+    fn test_18_3_1_backend_registry_lists_upstream_families_with_status() {
+        // SCEN-18.3.1 / AC1 / TEST-18.3.1
+        let registry = BackendRegistry::new();
+        let descriptors = registry.descriptors();
+        let families: BTreeSet<_> = descriptors
+            .iter()
+            .map(|descriptor| descriptor.family)
+            .collect();
+
+        for expected in [
+            BackendFamily::InMemory,
+            BackendFamily::LocalJsonl,
+            BackendFamily::LocalCsv,
+            BackendFamily::DiskCache,
+            BackendFamily::GoogleDrive,
+        ] {
+            assert!(families.contains(&expected), "missing {expected:?}");
+        }
+
+        let memory = descriptors
+            .iter()
+            .find(|descriptor| descriptor.family == BackendFamily::InMemory)
+            .expect("in-memory descriptor");
+        assert_eq!(memory.mode, BackendMode::Deterministic);
+        assert_eq!(memory.parity_status, ParityFeatureStatus::Complete);
+
+        let gdrive = descriptors
+            .iter()
+            .find(|descriptor| descriptor.family == BackendFamily::GoogleDrive)
+            .expect("gdrive descriptor");
+        assert_eq!(gdrive.mode, BackendMode::External);
+        assert!(gdrive.requires_external_service);
+        assert_ne!(gdrive.parity_status, ParityFeatureStatus::Complete);
+    }
+
+    #[test]
+    fn test_18_3_2_disk_cache_compatibility_preserves_key_value_semantics() {
+        // SCEN-18.3.2 / AC2 / TEST-18.3.2
+        let mut cache = DiskCacheCompatibility::new();
+
+        cache.put("alpha", br#"{"score":0.8}"#.to_vec());
+        cache.put("beta", b"second".to_vec());
+        assert_eq!(cache.get("alpha"), Some(br#"{"score":0.8}"#.to_vec()));
+        assert_eq!(cache.keys(), vec!["alpha".to_string(), "beta".to_string()]);
+
+        cache.put("alpha", br#"{"score":0.9}"#.to_vec());
+        assert_eq!(cache.get("alpha"), Some(br#"{"score":0.9}"#.to_vec()));
+        assert!(cache.delete("beta"));
+        assert_eq!(cache.get("beta"), None);
+    }
+
+    #[test]
+    fn test_18_3_3_unsupported_external_backend_blocks_release() {
+        // SCEN-18.3.3 / AC3 / TEST-18.3.3
+        let claims = backend_parity_claims();
+        let blockers = release_blocking_claims(&claims);
+        let blocking_features: BTreeSet<_> = blockers
+            .iter()
+            .map(|claim| claim.feature.as_str())
+            .collect();
+
+        assert!(blocking_features.contains("backend::gdrive"));
+        assert!(claims.iter().all(|claim| {
+            !(claim.feature == "backend::gdrive" && claim.status == ParityFeatureStatus::Complete)
+        }));
     }
 }
