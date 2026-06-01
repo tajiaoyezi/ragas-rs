@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ParityClaim, ParityFeatureStatus, RagasError, SingleTurnSample};
+use crate::{
+    ParityClaim, ParityFeatureStatus, ParityFixtureMetadata, ParityFixtureMode, RagasError,
+    SingleTurnSample,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GraphProperty {
@@ -317,31 +320,121 @@ pub fn transform_parity_claims() -> Vec<ParityClaim> {
 }
 
 pub fn synthesizer_descriptors() -> Vec<SynthesizerDescriptor> {
-    Vec::new()
+    vec![
+        synthesizer_descriptor(
+            SynthesizerStrategy::SingleHop,
+            ParityFeatureStatus::Complete,
+            true,
+            "single_hop_question",
+        ),
+        synthesizer_descriptor(
+            SynthesizerStrategy::MultiHop,
+            ParityFeatureStatus::Complete,
+            true,
+            "multi_hop_question",
+        ),
+        synthesizer_descriptor(
+            SynthesizerStrategy::PreChunked,
+            ParityFeatureStatus::KnownGap,
+            false,
+            "pre_chunked_generation",
+        ),
+    ]
 }
 
 pub fn render_synthesizer_prompt_snapshot(
-    _snapshot: &SynthesizerPromptSnapshot,
+    snapshot: &SynthesizerPromptSnapshot,
 ) -> Result<RenderedSynthesizerPromptSnapshot, RagasError> {
+    let mut rendered_messages = Vec::with_capacity(snapshot.messages.len());
+    for message in &snapshot.messages {
+        let mut content = message
+            .template
+            .replace("{{strategy}}", synthesizer_strategy_label(snapshot.strategy));
+        for (name, value) in &snapshot.variables {
+            content = content.replace(&format!("{{{{{name}}}}}"), value);
+        }
+        if content.contains("{{") || content.contains("}}") {
+            return Err(RagasError::Prompt {
+                message: format!(
+                    "unresolved synthesizer prompt variable in role '{}'",
+                    message.role
+                ),
+            });
+        }
+        rendered_messages.push(RenderedSynthesizerPromptMessage {
+            role: message.role.clone(),
+            content,
+        });
+    }
+
     Ok(RenderedSynthesizerPromptSnapshot {
-        strategy: SynthesizerStrategy::SingleHop,
-        variables: BTreeMap::new(),
-        rendered_messages: Vec::new(),
+        strategy: snapshot.strategy,
+        variables: snapshot.variables.clone(),
+        rendered_messages,
     })
 }
 
 pub fn compare_synthesized_sample_fixture(
-    _expected: &SynthesizedSample,
-    _actual: &SynthesizedSample,
+    expected: &SynthesizedSample,
+    actual: &SynthesizedSample,
 ) -> SynthesizerSampleComparison {
+    if expected == actual {
+        return SynthesizerSampleComparison {
+            matches: true,
+            drift: None,
+        };
+    }
+
+    let mut drift = Vec::new();
+    if expected.hop_count != actual.hop_count {
+        drift.push("hop_count");
+    }
+    if expected.source_node_ids != actual.source_node_ids {
+        drift.push("source_node_ids");
+    }
+    if expected.persona != actual.persona {
+        drift.push("persona");
+    }
+    if expected.sample != actual.sample {
+        drift.push("sample");
+    }
+
     SynthesizerSampleComparison {
         matches: false,
-        drift: Some("not implemented".to_string()),
+        drift: Some(if drift.is_empty() {
+            "unknown synthesized sample drift".to_string()
+        } else {
+            format!("synthesized sample drift in {}", drift.join(", "))
+        }),
     }
 }
 
 pub fn synthesizer_parity_claims() -> Vec<ParityClaim> {
-    Vec::new()
+    synthesizer_descriptors()
+        .into_iter()
+        .map(|descriptor| {
+            let feature = format!(
+                "testset::synthesizer::{}",
+                synthesizer_strategy_slug(descriptor.strategy)
+            );
+            let fixtures = if descriptor.parity_status == ParityFeatureStatus::Complete
+                && descriptor.fixture_backed
+            {
+                vec![synthesizer_fixture_metadata(
+                    &feature,
+                    descriptor.strategy,
+                    &descriptor.prompt_snapshot,
+                )]
+            } else {
+                Vec::new()
+            };
+            ParityClaim {
+                feature,
+                status: descriptor.parity_status,
+                fixtures,
+            }
+        })
+        .collect()
 }
 
 fn graph_query_descriptor(
@@ -402,6 +495,61 @@ fn normalize_text_list(mut values: Vec<String>) -> Vec<String> {
     values.sort();
     values.dedup();
     values
+}
+
+fn synthesizer_descriptor(
+    strategy: SynthesizerStrategy,
+    parity_status: ParityFeatureStatus,
+    fixture_backed: bool,
+    prompt_snapshot: impl Into<String>,
+) -> SynthesizerDescriptor {
+    SynthesizerDescriptor {
+        strategy,
+        parity_status,
+        fixture_backed,
+        prompt_snapshot: prompt_snapshot.into(),
+    }
+}
+
+fn synthesizer_strategy_slug(strategy: SynthesizerStrategy) -> &'static str {
+    match strategy {
+        SynthesizerStrategy::SingleHop => "single_hop",
+        SynthesizerStrategy::MultiHop => "multi_hop",
+        SynthesizerStrategy::PreChunked => "pre_chunked",
+    }
+}
+
+fn synthesizer_strategy_label(strategy: SynthesizerStrategy) -> &'static str {
+    match strategy {
+        SynthesizerStrategy::SingleHop => "single-hop",
+        SynthesizerStrategy::MultiHop => "multi-hop",
+        SynthesizerStrategy::PreChunked => "pre-chunked",
+    }
+}
+
+fn synthesizer_fixture_metadata(
+    feature: &str,
+    strategy: SynthesizerStrategy,
+    prompt_snapshot: &str,
+) -> ParityFixtureMetadata {
+    ParityFixtureMetadata::new(
+        feature,
+        format!(
+            "src/ragas/testset/synthesizers/{}/base.py",
+            synthesizer_strategy_slug(strategy)
+        ),
+        Some(format!(
+            "tests/unit/testset/synthesizers/test_{}.py",
+            synthesizer_strategy_slug(strategy)
+        )),
+        format!(
+            "tests/parity/fixtures/testset_{}_{}.json",
+            synthesizer_strategy_slug(strategy),
+            prompt_snapshot
+        ),
+        ParityFixtureMode::DeterministicMock,
+        None,
+    )
 }
 
 impl KnowledgeGraph {
