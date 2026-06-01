@@ -1,6 +1,6 @@
 # Task 18.1 - runtime-cache-tokenizer-cost
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 18
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -57,9 +57,9 @@ RED tests own final signatures; public exports must be added through `src/lib.rs
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-18.1.1 | TEST-18.1.1 | Not Started |
-| AC2 | SCEN-18.1.2 | TEST-18.1.2 | Not Started |
-| AC3 | SCEN-18.1.3 | TEST-18.1.3 | Not Started |
+| AC1 | SCEN-18.1.1 | TEST-18.1.1 | Done |
+| AC2 | SCEN-18.1.2 | TEST-18.1.2 | Done |
+| AC3 | SCEN-18.1.3 | TEST-18.1.3 | Done |
 
 ## 8. Risks
 
@@ -76,9 +76,20 @@ RED tests own final signatures; public exports must be added through `src/lib.rs
 
 ## 10. Completion Notes
 
-- **完成日期**：<TBD-after-impl>
-- **改动文件**：<TBD-after-impl>
-- **commit 列表**：<TBD-after-impl>
-- **§9 Verification 结果**：<TBD-after-impl>
-- **剩余风险 / 未做项**：<TBD-after-impl>
-- **下游 task 影响**：<TBD-after-impl>
+- **完成日期**：2026-06-01
+- **改动文件**：
+  - `src/runtime.rs`（新增 runtime cache key、lazy tokenizer、model token usage/cost contracts 和 TEST-18.1.1~18.1.3）
+  - `src/lib.rs`（导出 runtime parity public API）
+- **commit 列表**：
+  - `0b847f4` docs(spec): add phase 18 provider runtime parity
+  - `792fb8b` docs(spec): task-18.1 进入实施
+  - `c636758` test(runtime): 加 task-18.1 RED 测试
+  - `d223407` feat(runtime): 实现 task-18.1 runtime parity contracts
+- **§9 Verification 结果**：
+  - install: ✅ `cargo build`
+  - typecheck: ✅ `cargo check`
+  - unit-test: ✅ `cargo test` (136 passed / 0 failed)
+  - build: ✅ `cargo build`
+  - extra: ✅ `cargo test runtime::tests::test_18_1` (3 passed / 0 failed)
+- **剩余风险 / 未做项**：lazy tokenizer 使用 deterministic whitespace token approximation，不声明 tiktoken/HuggingFace byte-level parity；task 18.2/18.3 仍需 provider/backend parity descriptors and blockers。
+- **下游 task 影响**：task 18.2 可复用 `ModelTokenUsage` 成本模型；task 18.3 可复用 cache key contract；phase 22 可把 tokenizer approximation 纳入 coverage/fuzz gates。
