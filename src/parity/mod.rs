@@ -46,6 +46,51 @@ pub struct UpstreamInventoryEntry {
     pub rationale: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ParityFixtureMode {
+    DeterministicMock,
+    CapturedHttp,
+    LiveProvider,
+    ManualBaseline,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParityFixtureMetadata {
+    pub feature: String,
+    pub upstream_module_path: String,
+    pub upstream_test_path: Option<String>,
+    pub fixture_path: String,
+    pub mode: ParityFixtureMode,
+    pub tolerance: Option<f64>,
+}
+
+impl ParityFixtureMetadata {
+    pub fn new(
+        _feature: impl Into<String>,
+        _upstream_module_path: impl Into<String>,
+        _upstream_test_path: Option<String>,
+        _fixture_path: impl Into<String>,
+        _mode: ParityFixtureMode,
+        _tolerance: Option<f64>,
+    ) -> Self {
+        Self {
+            feature: String::new(),
+            upstream_module_path: String::new(),
+            upstream_test_path: None,
+            fixture_path: String::new(),
+            mode: ParityFixtureMode::ManualBaseline,
+            tolerance: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParityClaim {
+    pub feature: String,
+    pub status: ParityFeatureStatus,
+    pub fixtures: Vec<ParityFixtureMetadata>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParityCheck {
     pub feature: String,
@@ -127,6 +172,14 @@ pub fn release_blocking_inventory(
         .iter()
         .filter(|entry| entry.status != ParityFeatureStatus::Complete)
         .collect()
+}
+
+pub fn validate_parity_claim(_claim: &ParityClaim) -> Result<(), RagasError> {
+    Ok(())
+}
+
+pub fn release_blocking_claims(_claims: &[ParityClaim]) -> Vec<&ParityClaim> {
+    Vec::new()
 }
 
 fn inventory_entry(
@@ -333,5 +386,81 @@ mod tests {
 
         assert_eq!(blockers.len(), 1);
         assert_eq!(blockers[0].category, "testset");
+    }
+
+    #[test]
+    fn test_17_2_1_parity_complete_requires_fixture_evidence() {
+        // SCEN-17.2.1 / AC1 / TEST-17.2.1
+        let claim = ParityClaim {
+            feature: "faithfulness".to_string(),
+            status: ParityFeatureStatus::Complete,
+            fixtures: Vec::new(),
+        };
+
+        let error = validate_parity_claim(&claim).expect_err("missing fixtures should fail");
+        assert!(error.to_string().contains("fixture evidence"));
+    }
+
+    #[test]
+    fn test_17_2_2_fixture_metadata_records_source_mode_and_tolerance() {
+        // SCEN-17.2.2 / AC2 / TEST-17.2.2
+        let metadata = ParityFixtureMetadata::new(
+            "context_precision",
+            "src/ragas/metrics/collections/context_precision/metric.py",
+            Some("tests/e2e/metrics_migration/test_context_precision_migration.py".to_string()),
+            "tests/parity/fixtures/context_precision.json",
+            ParityFixtureMode::DeterministicMock,
+            Some(1e-9),
+        );
+
+        assert_eq!(metadata.feature, "context_precision");
+        assert_eq!(
+            metadata.upstream_module_path,
+            "src/ragas/metrics/collections/context_precision/metric.py"
+        );
+        assert_eq!(
+            metadata.upstream_test_path.as_deref(),
+            Some("tests/e2e/metrics_migration/test_context_precision_migration.py")
+        );
+        assert_eq!(
+            metadata.fixture_path,
+            "tests/parity/fixtures/context_precision.json"
+        );
+        assert_eq!(metadata.mode, ParityFixtureMode::DeterministicMock);
+        assert_eq!(metadata.tolerance, Some(1e-9));
+    }
+
+    #[test]
+    fn test_17_2_3_partial_and_known_gap_claims_block_release_by_default() {
+        // SCEN-17.2.3 / AC3 / TEST-17.2.3
+        let complete = ParityClaim {
+            feature: "context_precision".to_string(),
+            status: ParityFeatureStatus::Complete,
+            fixtures: vec![ParityFixtureMetadata::new(
+                "context_precision",
+                "src/ragas/metrics/collections/context_precision/metric.py",
+                None,
+                "tests/parity/fixtures/context_precision.json",
+                ParityFixtureMode::DeterministicMock,
+                Some(1e-9),
+            )],
+        };
+        let partial = ParityClaim {
+            feature: "summarization".to_string(),
+            status: ParityFeatureStatus::Partial,
+            fixtures: Vec::new(),
+        };
+        let known_gap = ParityClaim {
+            feature: "knowledge_graph_generation".to_string(),
+            status: ParityFeatureStatus::KnownGap,
+            fixtures: Vec::new(),
+        };
+
+        let claims = vec![complete, partial, known_gap];
+        let blockers = release_blocking_claims(&claims);
+
+        assert_eq!(blockers.len(), 2);
+        assert_eq!(blockers[0].feature, "summarization");
+        assert_eq!(blockers[1].feature, "knowledge_graph_generation");
     }
 }
