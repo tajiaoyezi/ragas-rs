@@ -46,9 +46,9 @@ RED tests own final signatures.
 
 ## 6. Acceptance Criteria
 
-- **AC1**: Synthesizer registry lists single-hop, multi-hop, and pre-chunked strategies.
-- **AC2**: Prompt snapshot fixtures preserve variables and rendered message order.
-- **AC3**: Unsupported or unfixture-backed synthesizer strategies block release.
+- [ ] **AC1**: Synthesizer registry lists single-hop, multi-hop, and pre-chunked strategies.
+- [ ] **AC2**: Prompt snapshot fixtures preserve variables and rendered message order.
+- [ ] **AC3**: Unsupported or unfixture-backed synthesizer strategies block release.
 
 ## 7. Traceability
 
@@ -65,11 +65,11 @@ RED tests own final signatures.
 
 ## 9. Verification Plan
 
-- install
-- typecheck
-- unit-test
-- parity-test
-- build
+- Install
+- Typecheck
+- Unit Test
+- Parity Test
+- Build
 
 ## 10. Completion Notes
 
