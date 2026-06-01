@@ -1,6 +1,6 @@
 # Task 19.3 - metric-release-blockers
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 19
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
