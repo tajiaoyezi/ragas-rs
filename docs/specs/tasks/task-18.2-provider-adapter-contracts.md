@@ -1,6 +1,6 @@
 # Task 18.2 - provider-adapter-contracts
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 18
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -54,9 +54,9 @@ RED tests own final signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-18.2.1 | TEST-18.2.1 | Not Started |
-| AC2 | SCEN-18.2.2 | TEST-18.2.2 | Not Started |
-| AC3 | SCEN-18.2.3 | TEST-18.2.3 | Not Started |
+| AC1 | SCEN-18.2.1 | TEST-18.2.1 | Done |
+| AC2 | SCEN-18.2.2 | TEST-18.2.2 | Done |
+| AC3 | SCEN-18.2.3 | TEST-18.2.3 | Done |
 
 ## 8. Risks
 
@@ -72,9 +72,17 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：<TBD-after-impl>
-- **改动文件**：<TBD-after-impl>
-- **commit 列表**：<TBD-after-impl>
-- **§9 Verification 结果**：<TBD-after-impl>
-- **剩余风险 / 未做项**：<TBD-after-impl>
-- **下游 task 影响**：<TBD-after-impl>
+- **完成日期**：2026-06-01
+- **改动文件**：src/providers.rs; src/lib.rs
+- **commit 列表**：
+  - 0c0f36e docs(spec): task-18.2 进入实施
+  - 8e91e03 test(providers): 加 task-18.2 RED 测试
+  - f46e76c feat(providers): 实现 task-18.2 provider adapter contracts
+- **RED 结果**：`cargo test test_18_2` failed as expected with 3 failing 18.2 tests because provider descriptors, structured descriptors, and release blockers were empty.
+- **§9 Verification 结果**：
+  - install: `cargo build` passed
+  - typecheck: `cargo check` passed
+  - unit-test: `cargo test` passed, 139 passed / 0 failed
+  - build: `cargo build` passed
+- **剩余风险 / 未做项**：Live SDK/protocol parity for Google, Haystack, HuggingFace, OCI, LiteLLM, Instructor, OpenAI-compatible, and Azure families is intentionally not claimed complete without fixtures; non-complete live providers are exposed as release-blocking parity claims.
+- **下游 task 影响**：Release gates can now consume `provider_parity_claims()` to block unsupported or unproven provider parity; task 18.3 can proceed without depending on provider implementation details.
