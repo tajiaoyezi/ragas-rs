@@ -28,14 +28,14 @@ pub struct QualityGateEvidence {
 
 impl QualityGateEvidence {
     pub fn new(
-        _kind: QualityGateKind,
-        _status: GateEvidenceStatus,
-        _detail: impl Into<String>,
+        kind: QualityGateKind,
+        status: GateEvidenceStatus,
+        detail: impl Into<String>,
     ) -> Self {
         Self {
-            kind: QualityGateKind::Build,
-            status: GateEvidenceStatus::Missing,
-            detail: String::new(),
+            kind,
+            status,
+            detail: detail.into(),
         }
     }
 }
@@ -66,20 +66,49 @@ pub fn required_quality_gates() -> Vec<QualityGateKind> {
         QualityGateKind::Build,
         QualityGateKind::Typecheck,
         QualityGateKind::Unit,
+        QualityGateKind::Integration,
+        QualityGateKind::Parity,
+        QualityGateKind::Examples,
+        QualityGateKind::Coverage,
+        QualityGateKind::FuzzProperty,
+        QualityGateKind::BugLedgerAudit,
     ]
 }
 
-pub fn summarize_quality_gates(_report: &ReleaseGateReport) -> QualityGateSummary {
-    QualityGateSummary {
-        passed: 0,
-        failed: 0,
-        skipped_with_justification: 0,
-        missing: 0,
-    }
+pub fn summarize_quality_gates(report: &ReleaseGateReport) -> QualityGateSummary {
+    report.evidence.iter().fold(
+        QualityGateSummary {
+            passed: 0,
+            failed: 0,
+            skipped_with_justification: 0,
+            missing: 0,
+        },
+        |mut summary, evidence| {
+            match evidence.status {
+                GateEvidenceStatus::Passed => summary.passed += 1,
+                GateEvidenceStatus::Failed => summary.failed += 1,
+                GateEvidenceStatus::SkippedWithJustification => {
+                    summary.skipped_with_justification += 1
+                }
+                GateEvidenceStatus::Missing => summary.missing += 1,
+            }
+            summary
+        },
+    )
 }
 
-pub fn quality_gate_blockers(_report: &ReleaseGateReport) -> Vec<QualityGateEvidence> {
-    Vec::new()
+pub fn quality_gate_blockers(report: &ReleaseGateReport) -> Vec<QualityGateEvidence> {
+    report
+        .evidence
+        .iter()
+        .filter(|evidence| {
+            matches!(
+                evidence.status,
+                GateEvidenceStatus::Failed | GateEvidenceStatus::Missing
+            )
+        })
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
