@@ -27,7 +27,7 @@ Phase 19 metric fixture and release-blocker rules.
 | Task | Spec | Status |
 |---|---|---|
 | 20.1 | docs/specs/tasks/task-20.1-graph-persistence-query-parity.md | Done |
-| 20.2 | docs/specs/tasks/task-20.2-transform-engine-extractor-parity.md | Ready |
+| 20.2 | docs/specs/tasks/task-20.2-transform-engine-extractor-parity.md | Done |
 | 20.3 | docs/specs/tasks/task-20.3-synthesizer-prompt-fixture-parity.md | Ready |
 
 ## 6. Phase Acceptance And Smoke
