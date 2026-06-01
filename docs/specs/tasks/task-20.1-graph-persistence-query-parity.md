@@ -1,6 +1,6 @@
 # Task 20.1 - graph-persistence-query-parity
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 20
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
