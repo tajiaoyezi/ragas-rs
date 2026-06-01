@@ -189,21 +189,72 @@ impl Optimizer for GeneticOptimizer {
 }
 
 pub fn optimizer_family_descriptors() -> Vec<OptimizerFamilyDescriptor> {
-    Vec::new()
+    vec![
+        optimizer_family_descriptor(
+            OptimizerFamily::Genetic,
+            OptimizerRuntime::RustNative,
+            ParityFeatureStatus::Complete,
+            None,
+        ),
+        optimizer_family_descriptor(
+            OptimizerFamily::Dspy,
+            OptimizerRuntime::PythonRuntime,
+            ParityFeatureStatus::KnownGap,
+            Some("optimizer.dspy"),
+        ),
+        optimizer_family_descriptor(
+            OptimizerFamily::MiproV2,
+            OptimizerRuntime::PythonRuntime,
+            ParityFeatureStatus::KnownGap,
+            Some("optimizer.dspy"),
+        ),
+    ]
 }
 
-pub fn dspy_cache_contract(_payload: &Value) -> DspyCacheContract {
+pub fn dspy_cache_contract(payload: &Value) -> DspyCacheContract {
     DspyCacheContract {
-        cache_key: CacheKey::derive("optimizer.dspy", &Value::Null),
-        deterministic_keys: false,
-        value_format: String::new(),
-        python_runtime_supported: true,
-        unsupported_runtime_behavior: None,
+        cache_key: CacheKey::derive("optimizer.dspy", payload),
+        deterministic_keys: true,
+        value_format: "json".to_string(),
+        python_runtime_supported: false,
+        unsupported_runtime_behavior: Some(
+            "Python DSPy runtime is not embedded in the Rust crate".to_string(),
+        ),
     }
 }
 
 pub fn optimizer_parity_claims() -> Vec<ParityClaim> {
-    Vec::new()
+    optimizer_family_descriptors()
+        .into_iter()
+        .filter(|descriptor| descriptor.parity_status != ParityFeatureStatus::Complete)
+        .map(|descriptor| ParityClaim {
+            feature: format!("optimizers::{}", optimizer_family_slug(descriptor.family)),
+            status: descriptor.parity_status,
+            fixtures: Vec::new(),
+        })
+        .collect()
+}
+
+fn optimizer_family_descriptor(
+    family: OptimizerFamily,
+    runtime: OptimizerRuntime,
+    parity_status: ParityFeatureStatus,
+    cache_contract: Option<&str>,
+) -> OptimizerFamilyDescriptor {
+    OptimizerFamilyDescriptor {
+        family,
+        runtime,
+        parity_status,
+        cache_contract: cache_contract.map(str::to_string),
+    }
+}
+
+fn optimizer_family_slug(family: OptimizerFamily) -> &'static str {
+    match family {
+        OptimizerFamily::Genetic => "genetic",
+        OptimizerFamily::Dspy => "dspy",
+        OptimizerFamily::MiproV2 => "mipro_v2",
+    }
 }
 
 fn normalize_population(
