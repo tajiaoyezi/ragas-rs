@@ -45,9 +45,9 @@ RED tests own final signatures.
 
 ## 6. Acceptance Criteria
 
-- **AC1**: Optimizer registry lists genetic, DSPy, and MIPROv2 families with implementation status.
-- **AC2**: DSPy cache contracts record deterministic key/value behavior and unsupported Python-runtime behavior.
-- **AC3**: Unsupported DSPy/MIPROv2 parity creates release-blocking claims.
+- [ ] **AC1**: Optimizer registry lists genetic, DSPy, and MIPROv2 families with implementation status.
+- [ ] **AC2**: DSPy cache contracts record deterministic key/value behavior and unsupported Python-runtime behavior.
+- [ ] **AC3**: Unsupported DSPy/MIPROv2 parity creates release-blocking claims.
 
 ## 7. Traceability
 
@@ -64,10 +64,10 @@ RED tests own final signatures.
 
 ## 9. Verification Plan
 
-- install
-- typecheck
-- unit-test
-- build
+- Install
+- Typecheck
+- Unit Test
+- Build
 
 ## 10. Completion Notes
 
