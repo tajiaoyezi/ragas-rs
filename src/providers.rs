@@ -4,18 +4,120 @@ use async_trait::async_trait;
 
 use crate::{
     EmbeddingProvider, EmbeddingRequest, EmbeddingResponse, LlmProvider, LlmRequest, LlmResponse,
-    RagasError, TokenUsage, UsageTracker,
+    ParityClaim, ParityFeatureStatus, RagasError, TokenUsage, UsageTracker,
 };
 
-#[derive(Default, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ProviderFamily {
+    OpenAiCompatible,
+    AzureOpenAi,
+    LiteLlm,
+    Instructor,
+    Haystack,
+    HuggingFace,
+    Google,
+    OciGenAi,
+    Mock,
+}
+
+impl ProviderFamily {
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::OpenAiCompatible => "openai-compatible",
+            Self::AzureOpenAi => "azure-openai",
+            Self::LiteLlm => "litellm",
+            Self::Instructor => "instructor",
+            Self::Haystack => "haystack",
+            Self::HuggingFace => "huggingface",
+            Self::Google => "google",
+            Self::OciGenAi => "oci-genai",
+            Self::Mock => "mock",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProviderMode {
+    Deterministic,
+    Live,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProviderKind {
+    Llm,
+    Embedding,
+    StructuredLlm,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderDescriptor {
+    pub family: ProviderFamily,
+    pub kind: ProviderKind,
+    pub mode: ProviderMode,
+    pub supports_system_prompt: bool,
+    pub supports_structured_output: bool,
+    pub parity_status: ParityFeatureStatus,
+}
+
+impl ProviderDescriptor {
+    pub fn new(
+        family: ProviderFamily,
+        kind: ProviderKind,
+        mode: ProviderMode,
+        supports_system_prompt: bool,
+        supports_structured_output: bool,
+        parity_status: ParityFeatureStatus,
+    ) -> Self {
+        Self {
+            family,
+            kind,
+            mode,
+            supports_system_prompt,
+            supports_structured_output,
+            parity_status,
+        }
+    }
+
+    pub fn parity_feature(&self) -> String {
+        format!("provider::{}", self.family.slug())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructuredLlmDescriptor {
+    pub family: ProviderFamily,
+    pub mode: ProviderMode,
+    pub supports_system_prompt: bool,
+    pub supports_structured_output: bool,
+    pub parity_status: ParityFeatureStatus,
+}
+
+pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
+    Vec::new()
+}
+
+pub fn structured_llm_descriptors() -> Vec<StructuredLlmDescriptor> {
+    Vec::new()
+}
+
+pub fn provider_parity_claims() -> Vec<ParityClaim> {
+    Vec::new()
+}
+
+#[derive(Clone)]
 pub struct ProviderRegistry {
     llms: HashMap<String, Arc<dyn LlmProvider>>,
     embeddings: HashMap<String, Arc<dyn EmbeddingProvider>>,
+    descriptors: Vec<ProviderDescriptor>,
 }
 
 impl ProviderRegistry {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            llms: HashMap::new(),
+            embeddings: HashMap::new(),
+            descriptors: upstream_provider_descriptors(),
+        }
     }
 
     pub fn register_llm(mut self, name: impl Into<String>, provider: Arc<dyn LlmProvider>) -> Self {
@@ -30,6 +132,15 @@ impl ProviderRegistry {
     ) -> Self {
         self.embeddings.insert(name.into(), provider);
         self
+    }
+
+    pub fn with_provider_descriptor(mut self, descriptor: ProviderDescriptor) -> Self {
+        self.descriptors.push(descriptor);
+        self
+    }
+
+    pub fn provider_descriptors(&self) -> &[ProviderDescriptor] {
+        &self.descriptors
     }
 
     pub fn llm(&self, name: &str) -> Result<Arc<dyn LlmProvider>, RagasError> {
@@ -123,7 +234,9 @@ pub fn record_provider_usage(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ChatMessage;
+    use std::collections::BTreeSet;
+
+    use crate::{ChatMessage, release_blocking_claims};
 
     #[test]
     fn test_7_1_1_provider_registry_resolves_llm_and_embedding_by_name() {
@@ -208,5 +321,85 @@ mod tests {
 
         assert_eq!(summary.by_provider["mock-llm"].total_tokens, 16);
         assert_eq!(summary.by_metric["faithfulness"].prompt_tokens, 12);
+    }
+
+    #[test]
+    fn test_18_2_1_provider_descriptors_classify_upstream_families_and_modes() {
+        // SCEN-18.2.1 / AC1 / TEST-18.2.1
+        let registry = ProviderRegistry::new();
+        let descriptors = registry.provider_descriptors();
+        let families: BTreeSet<_> = descriptors
+            .iter()
+            .map(|descriptor| descriptor.family)
+            .collect();
+
+        for expected in [
+            ProviderFamily::OpenAiCompatible,
+            ProviderFamily::AzureOpenAi,
+            ProviderFamily::LiteLlm,
+            ProviderFamily::Instructor,
+            ProviderFamily::Haystack,
+            ProviderFamily::HuggingFace,
+            ProviderFamily::Google,
+            ProviderFamily::OciGenAi,
+            ProviderFamily::Mock,
+        ] {
+            assert!(families.contains(&expected), "missing {expected:?}");
+        }
+
+        assert!(descriptors.iter().any(|descriptor| {
+            descriptor.kind == ProviderKind::Llm && descriptor.mode == ProviderMode::Live
+        }));
+        assert!(descriptors.iter().any(|descriptor| {
+            descriptor.kind == ProviderKind::Embedding && descriptor.mode == ProviderMode::Live
+        }));
+        assert!(descriptors.iter().any(|descriptor| {
+            descriptor.family == ProviderFamily::Mock
+                && descriptor.mode == ProviderMode::Deterministic
+        }));
+    }
+
+    #[test]
+    fn test_18_2_2_structured_llm_descriptors_record_system_prompt_support() {
+        // SCEN-18.2.2 / AC2 / TEST-18.2.2
+        let structured = structured_llm_descriptors();
+
+        for family in [ProviderFamily::Instructor, ProviderFamily::LiteLlm] {
+            let descriptor = structured
+                .iter()
+                .find(|descriptor| descriptor.family == family)
+                .unwrap_or_else(|| panic!("missing structured descriptor for {family:?}"));
+            assert_eq!(descriptor.mode, ProviderMode::Live);
+            assert!(descriptor.supports_system_prompt);
+            assert!(descriptor.supports_structured_output);
+        }
+    }
+
+    #[test]
+    fn test_18_2_3_unsupported_live_provider_families_create_release_blocking_claims() {
+        // SCEN-18.2.3 / AC3 / TEST-18.2.3
+        let claims = provider_parity_claims();
+        let blockers = release_blocking_claims(&claims);
+        let blocking_features: BTreeSet<_> = blockers
+            .iter()
+            .map(|claim| claim.feature.as_str())
+            .collect();
+
+        for expected in [
+            "provider::google",
+            "provider::haystack",
+            "provider::huggingface",
+            "provider::oci-genai",
+        ] {
+            assert!(
+                blocking_features.contains(expected),
+                "missing release blocker {expected}"
+            );
+        }
+
+        assert!(claims.iter().all(|claim| {
+            !(blocking_features.contains(claim.feature.as_str())
+                && claim.status == ParityFeatureStatus::Complete)
+        }));
     }
 }

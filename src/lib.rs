@@ -87,7 +87,9 @@ pub use prompts::{
     PromptValueKind, PromptVariables, RenderedPrompt, RepairStrategy,
 };
 pub use providers::{
-    MockEmbeddingProvider, MockLlmProvider, ProviderRegistry, record_provider_usage,
+    MockEmbeddingProvider, MockLlmProvider, ProviderDescriptor, ProviderFamily, ProviderKind,
+    ProviderMode, ProviderRegistry, StructuredLlmDescriptor, provider_parity_claims,
+    record_provider_usage, structured_llm_descriptors, upstream_provider_descriptors,
 };
 pub use release::{
     BugClass, BugLedgerEntry, BugSeverity, BugStatus, BugZeroAudit, GateEvidenceStatus,
