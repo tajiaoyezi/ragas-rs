@@ -16,7 +16,7 @@
 ## Specification Locations
 
 - **SDD home**: docs/specs/
-- **Master spec**: docs/prds/ragas-rs-complete-refactor.prd.md
+- **Master spec**: docs/prds/ragas-rs-perfect-refactor.prd.md
 - **Phase spec pattern**: docs/specs/phases/phase-{N}-{name}.md
 - **Task spec pattern**: docs/specs/tasks/task-{phase}.{seq}-{name}.md
 - **BDD acceptance home**: test/features/*.feature
@@ -36,11 +36,11 @@
 
 ### Integration test areas
 
-- N/A: v1.0 keeps tests embedded in Rust modules under src/
+- tests/parity/
 
 ### E2E test areas
 
-- N/A: v1.0 is a library without a service or UI runtime
+- examples/ and CLI command harnesses where available
 
 ### Test File Naming
 
@@ -58,6 +58,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 - **E2E tests**: N/A: no e2e target in v1.0
 - **Build**: cargo build
 - **Coverage**: N/A: no coverage gate configured for v1.0
+- **Parity Test**: cargo test parity::
 - **Runtime smoke**: N/A: library crate has no standalone runtime
 
 ---
@@ -103,6 +104,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 14 | backends-integrations-cli | docs/specs/phases/phase-14-backends-integrations-cli.md | Done | 3 | - |
 | 15 | optimizers-experiments | docs/specs/phases/phase-15-optimizers-experiments.md | Done | 3 | - |
 | 16 | parity-docs-release | docs/specs/phases/phase-16-parity-docs-release.md | Done | 3 | - |
+| 17 | latest-baseline-and-quality-gates | docs/specs/phases/phase-17-latest-baseline-and-quality-gates.md | Ready | 4 | - |
 
 ## Task 总索引
 
@@ -148,6 +150,10 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 16.1 | parity | docs/specs/tasks/task-16.1-parity-suite.md | Done | after tasks 10-15 | - |
 | 16.2 | docs | docs/specs/tasks/task-16.2-docs-examples.md | Done | after task 16.1 | - |
 | 16.3 | release | docs/specs/tasks/task-16.3-release.md | Done | after task 16.2 | - |
+| 17.1 | parity | docs/specs/tasks/task-17.1-upstream-latest-inventory.md | Ready | after task 16.3 | - |
+| 17.2 | parity-tests | docs/specs/tasks/task-17.2-parity-fixture-policy.md | Ready | after task 17.1 | - |
+| 17.3 | quality | docs/specs/tasks/task-17.3-quality-gates.md | Ready | after task 17.2 | - |
+| 17.4 | release | docs/specs/tasks/task-17.4-bug-zero-release-audit.md | Ready | after task 17.3 | - |
 
 ## ADR 索引
 
@@ -203,3 +209,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 16.1 | test/features/parity-suite.feature |
 | 16.2 | test/features/docs-examples.feature |
 | 16.3 | test/features/release.feature |
+| 17.1 | test/features/upstream-latest-inventory.feature |
+| 17.2 | test/features/parity-fixture-policy.feature |
+| 17.3 | test/features/quality-gates.feature |
+| 17.4 | test/features/bug-zero-release-audit.feature |
