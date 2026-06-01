@@ -1,3 +1,5 @@
+use crate::parity::{MetricGoldenComparison, ParityClaim, ParityFeatureStatus};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum QualityGateKind {
     Build,
@@ -120,6 +122,49 @@ pub struct BugZeroAudit {
     pub release_ready: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum MetricReleaseBlockerSource {
+    Catalog,
+    FixtureDrift,
+    Unclassified,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetricReleaseBlocker {
+    pub feature: String,
+    pub source: MetricReleaseBlockerSource,
+    pub status: ParityFeatureStatus,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetricReleaseBlockerSummary {
+    pub blocker_count: usize,
+    pub features: Vec<String>,
+    pub release_ready: bool,
+}
+
+pub fn metric_release_blockers(
+    _catalog_claims: &[ParityClaim],
+    _fixture_comparisons: &[MetricGoldenComparison],
+    _unclassified_metric_names: &[&str],
+) -> Vec<MetricReleaseBlocker> {
+    Vec::new()
+}
+
+pub fn summarize_metric_release_blockers(
+    blockers: &[MetricReleaseBlocker],
+) -> MetricReleaseBlockerSummary {
+    MetricReleaseBlockerSummary {
+        blocker_count: blockers.len(),
+        features: blockers
+            .iter()
+            .map(|blocker| blocker.feature.clone())
+            .collect(),
+        release_ready: blockers.is_empty(),
+    }
+}
+
 pub fn release_gate_files() -> Vec<&'static str> {
     vec![
         "Cargo.toml",
@@ -220,6 +265,11 @@ fn is_release_blocking_class(class: BugClass) -> bool {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    use crate::{
+        MetricGoldenComparison, MetricGoldenOutcome, metric_catalog_parity_claims,
+        release_blocking_claims,
+    };
 
     #[test]
     fn test_16_3_1_cargo_features_match_optional_capability_groups() {
@@ -426,5 +476,75 @@ mod tests {
             std::fs::read_to_string("docs/release-checklist.md").expect("release checklist");
         assert!(checklist.contains("No-known-bug audit"));
         assert!(checklist.contains("zero unresolved release-blocking bugs"));
+    }
+
+    #[test]
+    fn test_19_3_1_metric_release_blockers_aggregate_catalog_fixture_and_drift_failures() {
+        // SCEN-19.3.1 / AC1 / TEST-19.3.1
+        let catalog_claims = metric_catalog_parity_claims();
+        let drift = MetricGoldenComparison {
+            feature: "metric::faithfulness".to_string(),
+            outcome: MetricGoldenOutcome::UndeclaredDrift,
+            drift: Some("score baseline=0.8 rust=0.6".to_string()),
+        };
+
+        let blockers = metric_release_blockers(&catalog_claims, &[drift], &[]);
+        let catalog_blockers = release_blocking_claims(&catalog_claims);
+
+        assert!(
+            catalog_blockers
+                .iter()
+                .any(|claim| claim.feature == "metric::summarization")
+        );
+        assert!(blockers.iter().any(|blocker| {
+            blocker.source == MetricReleaseBlockerSource::Catalog
+                && blocker.feature == "metric::summarization"
+        }));
+        assert!(blockers.iter().any(|blocker| {
+            blocker.source == MetricReleaseBlockerSource::FixtureDrift
+                && blocker.feature == "metric::faithfulness"
+        }));
+    }
+
+    #[test]
+    fn test_19_3_2_unclassified_metric_names_block_release_by_default() {
+        // SCEN-19.3.2 / AC2 / TEST-19.3.2
+        let blockers = metric_release_blockers(&[], &[], &["new_upstream_metric"]);
+
+        assert_eq!(blockers.len(), 1);
+        assert_eq!(blockers[0].source, MetricReleaseBlockerSource::Unclassified);
+        assert_eq!(blockers[0].feature, "metric::new_upstream_metric");
+        assert_eq!(blockers[0].status, ParityFeatureStatus::NotStarted);
+    }
+
+    #[test]
+    fn test_19_3_3_metric_release_summary_exposes_count_and_features() {
+        // SCEN-19.3.3 / AC3 / TEST-19.3.3
+        let blockers = vec![
+            MetricReleaseBlocker {
+                feature: "metric::summarization".to_string(),
+                source: MetricReleaseBlockerSource::Catalog,
+                status: ParityFeatureStatus::KnownGap,
+                detail: "missing fixture".to_string(),
+            },
+            MetricReleaseBlocker {
+                feature: "metric::faithfulness".to_string(),
+                source: MetricReleaseBlockerSource::FixtureDrift,
+                status: ParityFeatureStatus::Blocked,
+                detail: "undeclared drift".to_string(),
+            },
+        ];
+
+        let summary = summarize_metric_release_blockers(&blockers);
+
+        assert_eq!(summary.blocker_count, 2);
+        assert!(!summary.release_ready);
+        assert_eq!(
+            summary.features,
+            vec![
+                "metric::summarization".to_string(),
+                "metric::faithfulness".to_string()
+            ]
+        );
     }
 }
