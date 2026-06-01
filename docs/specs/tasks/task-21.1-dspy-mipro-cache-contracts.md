@@ -1,6 +1,6 @@
 # Task 21.1 - dspy-mipro-cache-contracts
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 21
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -45,17 +45,17 @@ RED tests own final signatures.
 
 ## 6. Acceptance Criteria
 
-- [ ] **AC1**: Optimizer registry lists genetic, DSPy, and MIPROv2 families with implementation status.
-- [ ] **AC2**: DSPy cache contracts record deterministic key/value behavior and unsupported Python-runtime behavior.
-- [ ] **AC3**: Unsupported DSPy/MIPROv2 parity creates release-blocking claims.
+- [x] **AC1**: Optimizer registry lists genetic, DSPy, and MIPROv2 families with implementation status.
+- [x] **AC2**: DSPy cache contracts record deterministic key/value behavior and unsupported Python-runtime behavior.
+- [x] **AC3**: Unsupported DSPy/MIPROv2 parity creates release-blocking claims.
 
 ## 7. Traceability
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-21.1.1 | TEST-21.1.1 | Not Started |
-| AC2 | SCEN-21.1.2 | TEST-21.1.2 | Not Started |
-| AC3 | SCEN-21.1.3 | TEST-21.1.3 | Not Started |
+| AC1 | SCEN-21.1.1 | TEST-21.1.1 | Done |
+| AC2 | SCEN-21.1.2 | TEST-21.1.2 | Done |
+| AC3 | SCEN-21.1.3 | TEST-21.1.3 | Done |
 
 ## 8. Risks
 
@@ -71,9 +71,18 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：<TBD-after-impl>
-- **改动文件**：<TBD-after-impl>
-- **commit 列表**：<TBD-after-impl>
-- **§9 Verification 结果**：<TBD-after-impl>
-- **剩余风险 / 未做项**：<TBD-after-impl>
-- **下游 task 影响**：<TBD-after-impl>
+- **完成日期**：2026-06-02
+- **改动文件**：src/optimizers/mod.rs; src/lib.rs; docs/specs/tasks/task-21.1-dspy-mipro-cache-contracts.md
+- **commit 列表**：
+  - 3ccc984 docs(spec): task-21.1 Ready gate format
+  - 47af7ca docs(spec): task-21.1 进入实施
+  - ebce5df test(optimizers): 加 task-21.1 RED 测试
+  - a0861a8 feat(optimizers): 实现 task-21.1 DSPy MIPRO cache contracts
+- **RED 结果**：`cargo test test_21_1` failed as expected with 3 failing 21.1 tests because optimizer descriptors, DSPy cache contract metadata, and optimizer release blockers were empty or defaulted.
+- **§9 Verification 结果**：
+  - Install: `cargo build` passed
+  - Typecheck: `cargo check` passed
+  - Unit Test: `cargo test` passed, 166 passed / 0 failed
+  - Build: `cargo build` passed
+- **剩余风险 / 未做项**：无 ADR 触发；DSPy and MIPROv2 remain KnownGap release blockers because the Rust crate does not embed the Python DSPy runtime.
+- **下游 task 影响**：task 21.2 can rely on explicit optimizer family descriptors and DSPy cache contract metadata when wiring experiment and CLI contracts.
