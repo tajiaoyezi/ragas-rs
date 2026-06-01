@@ -1,6 +1,6 @@
 # Task 20.1 - graph-persistence-query-parity
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 20
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -53,9 +53,9 @@ RED tests own final signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-20.1.1 | TEST-20.1.1 | Not Started |
-| AC2 | SCEN-20.1.2 | TEST-20.1.2 | Not Started |
-| AC3 | SCEN-20.1.3 | TEST-20.1.3 | Not Started |
+| AC1 | SCEN-20.1.1 | TEST-20.1.1 | Done |
+| AC2 | SCEN-20.1.2 | TEST-20.1.2 | Done |
+| AC3 | SCEN-20.1.3 | TEST-20.1.3 | Done |
 
 ## 8. Risks
 
@@ -72,9 +72,18 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：<TBD-after-impl>
-- **改动文件**：<TBD-after-impl>
-- **commit 列表**：<TBD-after-impl>
-- **§9 Verification 结果**：<TBD-after-impl>
-- **剩余风险 / 未做项**：<TBD-after-impl>
-- **下游 task 影响**：<TBD-after-impl>
+- **完成日期**：2026-06-01
+- **改动文件**：src/testset/mod.rs; src/lib.rs
+- **commit 列表**：
+  - e5ba884 docs(spec): task-20.1 进入实施
+  - 773572c test(testset): 加 task-20.1 RED 测试
+  - 6f4b0fd feat(testset): 实现 task-20.1 graph parity contracts
+- **RED 结果**：`cargo test test_20_1` failed as expected with 3 failing 20.1 tests because graph fixture parsing, query descriptors, and graph release blockers were empty.
+- **§9 Verification 结果**：
+  - install: `cargo build` passed
+  - typecheck: `cargo check` passed
+  - unit-test: `cargo test` passed, 157 passed / 0 failed
+  - parity-test: `cargo test parity::` passed, 12 passed / 0 failed
+  - build: `cargo build` passed
+- **剩余风险 / 未做项**：Node type, property, relationship, and neighbor traversal contracts are deterministic; upstream graph clusters and advanced query behavior remain KnownGap release blockers.
+- **下游 task 影响**：task 20.2 can build transform and extractor parity on top of deterministic graph fixture parsing and `graph_parity_claims()`.
