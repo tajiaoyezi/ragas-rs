@@ -1,6 +1,6 @@
 # Task 17.2 - parity-fixture-policy
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 17
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -54,9 +54,9 @@ RED tests own concrete signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-17.2.1 | TEST-17.2.1 | Not Started |
-| AC2 | SCEN-17.2.2 | TEST-17.2.2 | Not Started |
-| AC3 | SCEN-17.2.3 | TEST-17.2.3 | Not Started |
+| AC1 | SCEN-17.2.1 | TEST-17.2.1 | Done |
+| AC2 | SCEN-17.2.2 | TEST-17.2.2 | Done |
+| AC3 | SCEN-17.2.3 | TEST-17.2.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,19 @@ RED tests own concrete signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：<TBD-after-impl>
-- **改动文件**：<TBD-after-impl>
-- **commit 列表**：<TBD-after-impl>
-- **§9 Verification 结果**：<TBD-after-impl>
-- **剩余风险 / 未做项**：<TBD-after-impl>
-- **下游 task 影响**：<TBD-after-impl>
+- **完成日期**：2026-06-01
+- **改动文件**：
+  - `src/parity/mod.rs`（新增 `ParityFixtureMetadata`、`ParityFixtureMode`、`ParityClaim`、claim validation 和 release blockers）
+  - `src/lib.rs`（导出 fixture policy public API）
+- **commit 列表**：
+  - `079a67a` docs(spec): task-17.2 进入实施
+  - `5981f76` test(parity): 加 task-17.2 RED 测试
+  - `935cd81` feat(parity): 实现 task-17.2 fixture policy
+- **§9 Verification 结果**：
+  - install: ✅ `cargo build`
+  - typecheck: ✅ `cargo check`
+  - unit-test: ✅ `cargo test` (127 passed / 0 failed)
+  - build: ✅ `cargo build`
+  - extra: ✅ `cargo test parity::` (9 passed / 0 failed)
+- **剩余风险 / 未做项**：本 task 建立 fixture evidence 规则，但尚未为所有 upstream metrics/providers/testset features 生成 fixture；这些由后续 phase/task 执行。
+- **下游 task 影响**：task 17.3 可把 `release_blocking_claims` 接入 quality gate；phase 19 的 metric parity tasks 必须为每个 `ParityComplete` claim 提供 fixture metadata。
