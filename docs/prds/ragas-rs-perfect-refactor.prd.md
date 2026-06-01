@@ -69,7 +69,7 @@ Out of scope:
 | Phase | Name | Goal | Initial status |
 |---|---|---|---|
 | 17 | latest-baseline-and-quality-gates | Freeze current upstream baseline, replace informal gaps with a machine-readable parity inventory, and define release-blocking quality gates. | Done |
-| 18 | provider-backend-runtime-parity | Complete provider, backend, cache, tokenizer, cost, callback, and integration-facing parity. | Ready |
+| 18 | provider-backend-runtime-parity | Complete provider, backend, cache, tokenizer, cost, callback, and integration-facing parity. | Done |
 | 19 | metric-catalog-golden-parity | Drive every upstream metric to fixture-backed parity or block release. | Draft |
 | 20 | testset-generation-full-parity | Complete graph, transforms, synthesizers, personas, and pre-chunked generation parity. | Draft |
 | 21 | optimizer-experiment-cli-docs-parity | Complete DSPy/MIPROv2, experiment, SDK, CLI, quickstart, and docs parity. | Draft |

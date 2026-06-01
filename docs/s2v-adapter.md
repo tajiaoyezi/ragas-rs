@@ -105,7 +105,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 15 | optimizers-experiments | docs/specs/phases/phase-15-optimizers-experiments.md | Done | 3 | - |
 | 16 | parity-docs-release | docs/specs/phases/phase-16-parity-docs-release.md | Done | 3 | - |
 | 17 | latest-baseline-and-quality-gates | docs/specs/phases/phase-17-latest-baseline-and-quality-gates.md | Done | 4 | - |
-| 18 | provider-backend-runtime-parity | docs/specs/phases/phase-18-provider-backend-runtime-parity.md | Ready | 4 | - |
+| 18 | provider-backend-runtime-parity | docs/specs/phases/phase-18-provider-backend-runtime-parity.md | Done | 4 | - |
 
 ## Task 总索引
 
@@ -158,7 +158,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 18.1 | runtime | docs/specs/tasks/task-18.1-runtime-cache-tokenizer-cost.md | Done | after task 17.4 | - |
 | 18.2 | providers | docs/specs/tasks/task-18.2-provider-adapter-contracts.md | Done | after task 18.1 | - |
 | 18.3 | backends | docs/specs/tasks/task-18.3-backend-registry-diskcache.md | Done | after task 18.2 | - |
-| 18.4 | integrations | docs/specs/tasks/task-18.4-integration-callback-contracts.md | Ready | after task 18.3 | - |
+| 18.4 | integrations | docs/specs/tasks/task-18.4-integration-callback-contracts.md | Done | after task 18.3 | - |
 
 ## ADR 索引
 

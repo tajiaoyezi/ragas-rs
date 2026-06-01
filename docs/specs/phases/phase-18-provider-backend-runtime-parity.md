@@ -1,6 +1,6 @@
 # Phase 18 - provider-backend-runtime-parity
 
-**Status**: Ready
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 **Depends On**: 17
 
@@ -26,14 +26,13 @@ Phase 17 latest baseline, fixture policy, quality gates, and bug-zero audit.
 
 | Task | Spec | Status |
 |---|---|---|
-| 18.1 | docs/specs/tasks/task-18.1-runtime-cache-tokenizer-cost.md | Ready |
-| 18.2 | docs/specs/tasks/task-18.2-provider-adapter-contracts.md | Ready |
-| 18.3 | docs/specs/tasks/task-18.3-backend-registry-diskcache.md | Ready |
-| 18.4 | docs/specs/tasks/task-18.4-integration-callback-contracts.md | Ready |
+| 18.1 | docs/specs/tasks/task-18.1-runtime-cache-tokenizer-cost.md | Done |
+| 18.2 | docs/specs/tasks/task-18.2-provider-adapter-contracts.md | Done |
+| 18.3 | docs/specs/tasks/task-18.3-backend-registry-diskcache.md | Done |
+| 18.4 | docs/specs/tasks/task-18.4-integration-callback-contracts.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 
 - Upstream runtime/cache/tokenizer/cost/provider/backend/integration categories have task-level parity evidence or release-blocking entries.
 - Default deterministic CI does not require external provider credentials or Python runtime.
 - `cargo build`, `cargo check`, `cargo test`, and `cargo test parity::` pass from the repository root.
-
