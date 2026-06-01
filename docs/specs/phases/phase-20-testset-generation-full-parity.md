@@ -1,6 +1,6 @@
 # Phase 20 - testset-generation-full-parity
 
-**Status**: Ready
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 **Depends On**: 19
 
@@ -28,7 +28,7 @@ Phase 19 metric fixture and release-blocker rules.
 |---|---|---|
 | 20.1 | docs/specs/tasks/task-20.1-graph-persistence-query-parity.md | Done |
 | 20.2 | docs/specs/tasks/task-20.2-transform-engine-extractor-parity.md | Done |
-| 20.3 | docs/specs/tasks/task-20.3-synthesizer-prompt-fixture-parity.md | Ready |
+| 20.3 | docs/specs/tasks/task-20.3-synthesizer-prompt-fixture-parity.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 

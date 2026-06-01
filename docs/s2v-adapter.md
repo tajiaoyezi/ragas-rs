@@ -107,7 +107,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 17 | latest-baseline-and-quality-gates | docs/specs/phases/phase-17-latest-baseline-and-quality-gates.md | Done | 4 | - |
 | 18 | provider-backend-runtime-parity | docs/specs/phases/phase-18-provider-backend-runtime-parity.md | Done | 4 | - |
 | 19 | metric-catalog-golden-parity | docs/specs/phases/phase-19-metric-catalog-golden-parity.md | Done | 3 | - |
-| 20 | testset-generation-full-parity | docs/specs/phases/phase-20-testset-generation-full-parity.md | Ready | 3 | - |
+| 20 | testset-generation-full-parity | docs/specs/phases/phase-20-testset-generation-full-parity.md | Done | 3 | - |
 | 21 | optimizer-experiment-cli-docs-parity | docs/specs/phases/phase-21-optimizer-experiment-cli-docs-parity.md | Ready | 3 | - |
 | 22 | exhaustive-test-engineering | docs/specs/phases/phase-22-exhaustive-test-engineering.md | Ready | 3 | - |
 | 23 | release-candidate-bug-zero-audit | docs/specs/phases/phase-23-release-candidate-bug-zero-audit.md | Ready | 3 | - |
@@ -169,7 +169,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 19.3 | release | docs/specs/tasks/task-19.3-metric-release-blockers.md | Done | after task 19.2 | - |
 | 20.1 | testset | docs/specs/tasks/task-20.1-graph-persistence-query-parity.md | Done | after task 19.3 | - |
 | 20.2 | testset | docs/specs/tasks/task-20.2-transform-engine-extractor-parity.md | Done | after task 20.1 | - |
-| 20.3 | testset | docs/specs/tasks/task-20.3-synthesizer-prompt-fixture-parity.md | Ready | after task 20.2 | - |
+| 20.3 | testset | docs/specs/tasks/task-20.3-synthesizer-prompt-fixture-parity.md | Done | after task 20.2 | - |
 | 21.1 | optimizers | docs/specs/tasks/task-21.1-dspy-mipro-cache-contracts.md | Ready | after task 20.3 | - |
 | 21.2 | cli | docs/specs/tasks/task-21.2-experiment-sdk-cli-contracts.md | Ready | after task 21.1 | - |
 | 21.3 | docs | docs/specs/tasks/task-21.3-quickstart-docs-parity.md | Ready | after task 21.2 | - |
