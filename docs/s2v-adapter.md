@@ -106,7 +106,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 16 | parity-docs-release | docs/specs/phases/phase-16-parity-docs-release.md | Done | 3 | - |
 | 17 | latest-baseline-and-quality-gates | docs/specs/phases/phase-17-latest-baseline-and-quality-gates.md | Done | 4 | - |
 | 18 | provider-backend-runtime-parity | docs/specs/phases/phase-18-provider-backend-runtime-parity.md | Done | 4 | - |
-| 19 | metric-catalog-golden-parity | docs/specs/phases/phase-19-metric-catalog-golden-parity.md | Ready | 3 | - |
+| 19 | metric-catalog-golden-parity | docs/specs/phases/phase-19-metric-catalog-golden-parity.md | Done | 3 | - |
 | 20 | testset-generation-full-parity | docs/specs/phases/phase-20-testset-generation-full-parity.md | Ready | 3 | - |
 | 21 | optimizer-experiment-cli-docs-parity | docs/specs/phases/phase-21-optimizer-experiment-cli-docs-parity.md | Ready | 3 | - |
 | 22 | exhaustive-test-engineering | docs/specs/phases/phase-22-exhaustive-test-engineering.md | Ready | 3 | - |
@@ -166,7 +166,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 18.4 | integrations | docs/specs/tasks/task-18.4-integration-callback-contracts.md | Done | after task 18.3 | - |
 | 19.1 | metrics | docs/specs/tasks/task-19.1-metric-catalog-inventory.md | Done | after task 18.4 | - |
 | 19.2 | parity-tests | docs/specs/tasks/task-19.2-metric-golden-fixture-runner.md | Done | after task 19.1 | - |
-| 19.3 | release | docs/specs/tasks/task-19.3-metric-release-blockers.md | Ready | after task 19.2 | - |
+| 19.3 | release | docs/specs/tasks/task-19.3-metric-release-blockers.md | Done | after task 19.2 | - |
 | 20.1 | testset | docs/specs/tasks/task-20.1-graph-persistence-query-parity.md | Ready | after task 19.3 | - |
 | 20.2 | testset | docs/specs/tasks/task-20.2-transform-engine-extractor-parity.md | Ready | after task 20.1 | - |
 | 20.3 | testset | docs/specs/tasks/task-20.3-synthesizer-prompt-fixture-parity.md | Ready | after task 20.2 | - |

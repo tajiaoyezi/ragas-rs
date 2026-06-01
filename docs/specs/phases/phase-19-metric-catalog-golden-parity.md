@@ -1,6 +1,6 @@
 # Phase 19 - metric-catalog-golden-parity
 
-**Status**: Ready
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 **Depends On**: 18
 
@@ -28,7 +28,7 @@ Phase 17 fixture policy and Phase 18 provider/backend/runtime parity contracts.
 |---|---|---|
 | 19.1 | docs/specs/tasks/task-19.1-metric-catalog-inventory.md | Done |
 | 19.2 | docs/specs/tasks/task-19.2-metric-golden-fixture-runner.md | Done |
-| 19.3 | docs/specs/tasks/task-19.3-metric-release-blockers.md | Ready |
+| 19.3 | docs/specs/tasks/task-19.3-metric-release-blockers.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 
