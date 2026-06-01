@@ -104,7 +104,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 14 | backends-integrations-cli | docs/specs/phases/phase-14-backends-integrations-cli.md | Done | 3 | - |
 | 15 | optimizers-experiments | docs/specs/phases/phase-15-optimizers-experiments.md | Done | 3 | - |
 | 16 | parity-docs-release | docs/specs/phases/phase-16-parity-docs-release.md | Done | 3 | - |
-| 17 | latest-baseline-and-quality-gates | docs/specs/phases/phase-17-latest-baseline-and-quality-gates.md | Ready | 4 | - |
+| 17 | latest-baseline-and-quality-gates | docs/specs/phases/phase-17-latest-baseline-and-quality-gates.md | Done | 4 | - |
 
 ## Task 总索引
 
@@ -153,7 +153,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 17.1 | parity | docs/specs/tasks/task-17.1-upstream-latest-inventory.md | Done | after task 16.3 | - |
 | 17.2 | parity-tests | docs/specs/tasks/task-17.2-parity-fixture-policy.md | Done | after task 17.1 | - |
 | 17.3 | quality | docs/specs/tasks/task-17.3-quality-gates.md | Done | after task 17.2 | - |
-| 17.4 | release | docs/specs/tasks/task-17.4-bug-zero-release-audit.md | Ready | after task 17.3 | - |
+| 17.4 | release | docs/specs/tasks/task-17.4-bug-zero-release-audit.md | Done | after task 17.3 | - |
 
 ## ADR 索引
 

@@ -1,6 +1,6 @@
 # Phase 17 - latest-baseline-and-quality-gates
 
-**Status**: Ready
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 **Depends On**: 16
 
@@ -26,10 +26,10 @@ Phase 16 parity/docs/release groundwork.
 
 | Task | Spec | Status |
 |---|---|---|
-| 17.1 | docs/specs/tasks/task-17.1-upstream-latest-inventory.md | Ready |
-| 17.2 | docs/specs/tasks/task-17.2-parity-fixture-policy.md | Ready |
-| 17.3 | docs/specs/tasks/task-17.3-quality-gates.md | Ready |
-| 17.4 | docs/specs/tasks/task-17.4-bug-zero-release-audit.md | Ready |
+| 17.1 | docs/specs/tasks/task-17.1-upstream-latest-inventory.md | Done |
+| 17.2 | docs/specs/tasks/task-17.2-parity-fixture-policy.md | Done |
+| 17.3 | docs/specs/tasks/task-17.3-quality-gates.md | Done |
+| 17.4 | docs/specs/tasks/task-17.4-bug-zero-release-audit.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 
@@ -37,4 +37,4 @@ Phase 16 parity/docs/release groundwork.
 - Every upstream source category is represented in a parity inventory.
 - Release gates fail when an inventory item remains unclassified or release-blocking.
 - `cargo build`, `cargo check`, `cargo test`, and `cargo test parity::` pass from the repository root.
-
+- Release gate APIs expose latest upstream inventory, fixture evidence policy, quality gate evidence, and no-known-bug audit.
