@@ -1,6 +1,6 @@
 # Task 19.2 - metric-golden-fixture-runner
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 19
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
