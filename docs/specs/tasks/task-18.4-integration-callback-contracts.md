@@ -1,6 +1,6 @@
 # Task 18.4 - integration-callback-contracts
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 18
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -54,9 +54,9 @@ RED tests own final signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-18.4.1 | TEST-18.4.1 | Not Started |
-| AC2 | SCEN-18.4.2 | TEST-18.4.2 | Not Started |
-| AC3 | SCEN-18.4.3 | TEST-18.4.3 | Not Started |
+| AC1 | SCEN-18.4.1 | TEST-18.4.1 | Done |
+| AC2 | SCEN-18.4.2 | TEST-18.4.2 | Done |
+| AC3 | SCEN-18.4.3 | TEST-18.4.3 | Done |
 
 ## 8. Risks
 
@@ -72,9 +72,17 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：<TBD-after-impl>
-- **改动文件**：<TBD-after-impl>
-- **commit 列表**：<TBD-after-impl>
-- **§9 Verification 结果**：<TBD-after-impl>
-- **剩余风险 / 未做项**：<TBD-after-impl>
-- **下游 task 影响**：<TBD-after-impl>
+- **完成日期**：2026-06-01
+- **改动文件**：src/integrations/mod.rs; src/lib.rs
+- **commit 列表**：
+  - c366bad docs(spec): task-18.4 进入实施
+  - b7ec654 test(integrations): 加 task-18.4 RED 测试
+  - fdaa9e5 feat(integrations): 实现 task-18.4 callback contracts
+- **RED 结果**：`cargo test test_18_4` failed as expected with 3 failing 18.4 tests because integration descriptors, callback redaction normalization, and unsupported integration blockers were missing.
+- **§9 Verification 结果**：
+  - install: `cargo build` passed
+  - typecheck: `cargo check` passed
+  - unit-test: `cargo test` passed, 145 passed / 0 failed
+  - build: `cargo build` passed
+- **剩余风险 / 未做项**：Generic tracing is deterministic and tested; LangSmith, Langfuse, and Opik remain partial contract descriptors without vendor SDK certification; LangChain, LangGraph, LlamaIndex, AG-UI, Bedrock, Griptape, Helicone, R2R, and Swarm remain release-blocking KnownGap claims.
+- **下游 task 影响**：Release gates can consume `integration_parity_claims()`; later full-parity phases must either implement vendor-specific fixtures or keep these claims blocking release.
