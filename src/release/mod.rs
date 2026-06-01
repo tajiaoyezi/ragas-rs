@@ -94,22 +94,22 @@ pub struct BugLedgerEntry {
 
 impl BugLedgerEntry {
     pub fn new(
-        _id: impl Into<String>,
-        _severity: BugSeverity,
-        _status: BugStatus,
-        _class: BugClass,
-        _affected_feature: impl Into<String>,
-        _evidence: impl Into<String>,
-        _regression_test: impl Into<String>,
+        id: impl Into<String>,
+        severity: BugSeverity,
+        status: BugStatus,
+        class: BugClass,
+        affected_feature: impl Into<String>,
+        evidence: impl Into<String>,
+        regression_test: impl Into<String>,
     ) -> Self {
         Self {
-            id: String::new(),
-            severity: BugSeverity::Low,
-            status: BugStatus::Resolved,
-            class: BugClass::Documentation,
-            affected_feature: String::new(),
-            evidence: String::new(),
-            regression_test: String::new(),
+            id: id.into(),
+            severity,
+            status,
+            class,
+            affected_feature: affected_feature.into(),
+            evidence: evidence.into(),
+            regression_test: regression_test.into(),
         }
     }
 }
@@ -178,15 +178,42 @@ pub fn quality_gate_blockers(report: &ReleaseGateReport) -> Vec<QualityGateEvide
         .collect()
 }
 
-pub fn release_blocking_bugs(_entries: &[BugLedgerEntry]) -> Vec<BugLedgerEntry> {
-    Vec::new()
+pub fn release_blocking_bugs(entries: &[BugLedgerEntry]) -> Vec<BugLedgerEntry> {
+    entries
+        .iter()
+        .filter(|entry| is_unresolved(entry.status))
+        .filter(|entry| is_release_blocking_severity(entry.severity))
+        .filter(|entry| is_release_blocking_class(entry.class))
+        .cloned()
+        .collect()
 }
 
-pub fn summarize_bug_zero_audit(_entries: &[BugLedgerEntry]) -> BugZeroAudit {
+pub fn summarize_bug_zero_audit(entries: &[BugLedgerEntry]) -> BugZeroAudit {
+    let unresolved_release_blocking = release_blocking_bugs(entries).len();
     BugZeroAudit {
-        unresolved_release_blocking: 0,
-        release_ready: true,
+        unresolved_release_blocking,
+        release_ready: unresolved_release_blocking == 0,
     }
+}
+
+fn is_unresolved(status: BugStatus) -> bool {
+    matches!(status, BugStatus::Open | BugStatus::InProgress)
+}
+
+fn is_release_blocking_severity(severity: BugSeverity) -> bool {
+    matches!(severity, BugSeverity::Critical | BugSeverity::High)
+}
+
+fn is_release_blocking_class(class: BugClass) -> bool {
+    matches!(
+        class,
+        BugClass::Correctness
+            | BugClass::Safety
+            | BugClass::DataLoss
+            | BugClass::Panic
+            | BugClass::Security
+            | BugClass::Parity
+    )
 }
 
 #[cfg(test)]

@@ -13,6 +13,12 @@
 - Confirm `docs/ragas-rs-user-guide.md` lists known parity gaps.
 - Confirm no Python runtime bridge or API key storage is introduced.
 
+## No-known-bug audit
+
+- Confirm the bug ledger reports zero unresolved release-blocking bugs.
+- Treat unresolved critical/high correctness, safety, data-loss, panic, security, and parity defects as release blockers.
+- Confirm every fixed release-blocking bug has a regression test reference before release readiness is reported.
+
 ## Rollback
 
 - If a crate release is bad, run `cargo yank --vers <version>`.
