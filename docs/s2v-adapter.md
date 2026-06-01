@@ -164,7 +164,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 18.2 | providers | docs/specs/tasks/task-18.2-provider-adapter-contracts.md | Done | after task 18.1 | - |
 | 18.3 | backends | docs/specs/tasks/task-18.3-backend-registry-diskcache.md | Done | after task 18.2 | - |
 | 18.4 | integrations | docs/specs/tasks/task-18.4-integration-callback-contracts.md | Done | after task 18.3 | - |
-| 19.1 | metrics | docs/specs/tasks/task-19.1-metric-catalog-inventory.md | Ready | after task 18.4 | - |
+| 19.1 | metrics | docs/specs/tasks/task-19.1-metric-catalog-inventory.md | Done | after task 18.4 | - |
 | 19.2 | parity-tests | docs/specs/tasks/task-19.2-metric-golden-fixture-runner.md | Ready | after task 19.1 | - |
 | 19.3 | release | docs/specs/tasks/task-19.3-metric-release-blockers.md | Ready | after task 19.2 | - |
 | 20.1 | testset | docs/specs/tasks/task-20.1-graph-persistence-query-parity.md | Ready | after task 19.3 | - |

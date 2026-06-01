@@ -26,7 +26,7 @@ Phase 17 fixture policy and Phase 18 provider/backend/runtime parity contracts.
 
 | Task | Spec | Status |
 |---|---|---|
-| 19.1 | docs/specs/tasks/task-19.1-metric-catalog-inventory.md | Ready |
+| 19.1 | docs/specs/tasks/task-19.1-metric-catalog-inventory.md | Done |
 | 19.2 | docs/specs/tasks/task-19.2-metric-golden-fixture-runner.md | Ready |
 | 19.3 | docs/specs/tasks/task-19.3-metric-release-blockers.md | Ready |
 
