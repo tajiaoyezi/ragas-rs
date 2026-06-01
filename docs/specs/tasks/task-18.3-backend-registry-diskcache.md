@@ -1,6 +1,6 @@
 # Task 18.3 - backend-registry-diskcache
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 18
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -54,9 +54,9 @@ RED tests own final signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-18.3.1 | TEST-18.3.1 | Not Started |
-| AC2 | SCEN-18.3.2 | TEST-18.3.2 | Not Started |
-| AC3 | SCEN-18.3.3 | TEST-18.3.3 | Not Started |
+| AC1 | SCEN-18.3.1 | TEST-18.3.1 | Done |
+| AC2 | SCEN-18.3.2 | TEST-18.3.2 | Done |
+| AC3 | SCEN-18.3.3 | TEST-18.3.3 | Done |
 
 ## 8. Risks
 
@@ -72,9 +72,17 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：<TBD-after-impl>
-- **改动文件**：<TBD-after-impl>
-- **commit 列表**：<TBD-after-impl>
-- **§9 Verification 结果**：<TBD-after-impl>
-- **剩余风险 / 未做项**：<TBD-after-impl>
-- **下游 task 影响**：<TBD-after-impl>
+- **完成日期**：2026-06-01
+- **改动文件**：src/backends/mod.rs; src/lib.rs
+- **commit 列表**：
+  - 122df09 docs(spec): task-18.3 进入实施
+  - a93153c test(backends): 加 task-18.3 RED 测试
+  - dc92f27 feat(backends): 实现 task-18.3 backend registry contracts
+- **RED 结果**：`cargo test test_18_3` failed as expected with 3 failing 18.3 tests because the backend registry, disk-cache key/value behavior, and gdrive blocker were missing.
+- **§9 Verification 结果**：
+  - install: `cargo build` passed
+  - typecheck: `cargo check` passed
+  - unit-test: `cargo test` passed, 142 passed / 0 failed
+  - build: `cargo build` passed
+- **剩余风险 / 未做项**：Disk-cache is a deterministic Rust compatibility model, not Python diskcache binary compatibility; gdrive remains unsupported and release-blocking until implemented with fixtures or explicitly excluded.
+- **下游 task 影响**：Release readiness can consume `backend_parity_claims()`; task 18.4 can proceed to integration/callback contracts without changing backend storage traits.
