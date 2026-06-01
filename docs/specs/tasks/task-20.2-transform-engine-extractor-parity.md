@@ -65,10 +65,10 @@ RED tests own final signatures.
 
 ## 9. Verification Plan
 
-- install
-- typecheck
-- unit-test
-- build
+- Install
+- Typecheck
+- Unit Test
+- Build
 
 ## 10. Completion Notes
 
