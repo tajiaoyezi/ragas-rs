@@ -1,6 +1,6 @@
 # Task 17.2 - parity-fixture-policy
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 17
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -79,4 +79,3 @@ RED tests own concrete signatures.
 - **§9 Verification 结果**：<TBD-after-impl>
 - **剩余风险 / 未做项**：<TBD-after-impl>
 - **下游 task 影响**：<TBD-after-impl>
-
