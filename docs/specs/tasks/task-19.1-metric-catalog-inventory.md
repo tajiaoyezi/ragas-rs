@@ -1,6 +1,6 @@
 # Task 19.1 - metric-catalog-inventory
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 19
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -54,9 +54,9 @@ RED tests own final signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-19.1.1 | TEST-19.1.1 | Not Started |
-| AC2 | SCEN-19.1.2 | TEST-19.1.2 | Not Started |
-| AC3 | SCEN-19.1.3 | TEST-19.1.3 | Not Started |
+| AC1 | SCEN-19.1.1 | TEST-19.1.1 | Done |
+| AC2 | SCEN-19.1.2 | TEST-19.1.2 | Done |
+| AC3 | SCEN-19.1.3 | TEST-19.1.3 | Done |
 
 ## 8. Risks
 
@@ -72,9 +72,17 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：<TBD-after-impl>
-- **改动文件**：<TBD-after-impl>
-- **commit 列表**：<TBD-after-impl>
-- **§9 Verification 结果**：<TBD-after-impl>
-- **剩余风险 / 未做项**：<TBD-after-impl>
-- **下游 task 影响**：<TBD-after-impl>
+- **完成日期**：2026-06-01
+- **改动文件**：src/metrics/registry.rs; src/metrics/mod.rs; src/lib.rs
+- **commit 列表**：
+  - d556364 docs(spec): task-19.1 进入实施
+  - ff4fa92 test(metrics): 加 task-19.1 RED 测试
+  - fa20a9e feat(metrics): 实现 task-19.1 metric catalog inventory
+- **RED 结果**：`cargo test test_19_1` failed as expected with 3 failing 19.1 tests because metric catalog descriptors and release-blocking claims were empty.
+- **§9 Verification 结果**：
+  - install: `cargo build` passed
+  - typecheck: `cargo check` passed
+  - unit-test: `cargo test` passed, 148 passed / 0 failed
+  - build: `cargo build` passed
+- **剩余风险 / 未做项**：Only `context_precision` is fixture-backed complete in this catalog; all other metric families remain Partial or KnownGap release blockers until task 19.2/19.3 add and aggregate fixture evidence.
+- **下游 task 影响**：task 19.2 can consume `metric_catalog()` and `metric_catalog_parity_claims()` to enforce fixture-backed parity before any metric is release-ready.
