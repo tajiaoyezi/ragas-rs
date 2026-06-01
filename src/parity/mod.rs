@@ -30,10 +30,43 @@ pub struct GapMatrixEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpstreamBaseline {
+    pub main_commit: String,
+    pub release_tag: String,
+    pub release_commit: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpstreamInventoryEntry {
+    pub category: String,
+    pub upstream_file_count: usize,
+    pub status: ParityFeatureStatus,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParityCheck {
     pub feature: String,
     pub passed: bool,
     pub drift: Option<String>,
+}
+
+pub fn latest_upstream_baseline() -> UpstreamBaseline {
+    UpstreamBaseline {
+        main_commit: String::new(),
+        release_tag: String::new(),
+        release_commit: String::new(),
+    }
+}
+
+pub fn latest_upstream_inventory() -> Vec<UpstreamInventoryEntry> {
+    Vec::new()
+}
+
+pub fn release_blocking_inventory(
+    _entries: &[UpstreamInventoryEntry],
+) -> Vec<&UpstreamInventoryEntry> {
+    Vec::new()
 }
 
 pub fn parse_parity_fixture(input: &str) -> Result<ParityFixture, RagasError> {
@@ -160,5 +193,71 @@ mod tests {
             .expect("known gap records drift without failing");
         assert!(!known_gap.passed);
         assert!(known_gap.drift.expect("drift detail").contains("0.8"));
+    }
+
+    #[test]
+    fn test_17_1_1_latest_upstream_baseline_records_main_and_release() {
+        // SCEN-17.1.1 / AC1 / TEST-17.1.1
+        let baseline = latest_upstream_baseline();
+
+        assert_eq!(
+            baseline.main_commit,
+            "298b68274234c060deacab3cf5fb52aa3a20e885"
+        );
+        assert_eq!(baseline.release_tag, "v0.4.3");
+        assert_eq!(
+            baseline.release_commit,
+            "4ecab384fda829ca50bec3f07cc49589d756e172"
+        );
+    }
+
+    #[test]
+    fn test_17_1_2_inventory_covers_upstream_source_categories() {
+        // SCEN-17.1.2 / AC2 / TEST-17.1.2
+        let inventory = latest_upstream_inventory();
+        let categories: BTreeSet<_> = inventory
+            .iter()
+            .map(|entry| entry.category.as_str())
+            .collect();
+
+        for expected in [
+            "top-level",
+            "backends",
+            "embeddings",
+            "integrations",
+            "llms",
+            "metrics",
+            "optimizers",
+            "prompt",
+            "testset",
+        ] {
+            assert!(categories.contains(expected), "missing category {expected}");
+        }
+        assert_eq!(inventory.len(), 9);
+        assert!(inventory.iter().all(|entry| entry.upstream_file_count > 0));
+    }
+
+    #[test]
+    fn test_17_1_3_incomplete_inventory_blocks_release_readiness() {
+        // SCEN-17.1.3 / AC3 / TEST-17.1.3
+        let entries = vec![
+            UpstreamInventoryEntry {
+                category: "metrics".to_string(),
+                upstream_file_count: 114,
+                status: ParityFeatureStatus::Complete,
+                rationale: "all fixtures present".to_string(),
+            },
+            UpstreamInventoryEntry {
+                category: "testset".to_string(),
+                upstream_file_count: 33,
+                status: ParityFeatureStatus::Partial,
+                rationale: "synthesizer prompt parity missing".to_string(),
+            },
+        ];
+
+        let blockers = release_blocking_inventory(&entries);
+
+        assert_eq!(blockers.len(), 1);
+        assert_eq!(blockers[0].category, "testset");
     }
 }
