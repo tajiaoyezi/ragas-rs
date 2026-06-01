@@ -1,4 +1,7 @@
-use crate::parity::{MetricGoldenComparison, ParityClaim, ParityFeatureStatus};
+use crate::parity::{
+    MetricGoldenComparison, MetricGoldenOutcome, ParityClaim, ParityFeatureStatus,
+    validate_parity_claim,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum QualityGateKind {
@@ -145,11 +148,56 @@ pub struct MetricReleaseBlockerSummary {
 }
 
 pub fn metric_release_blockers(
-    _catalog_claims: &[ParityClaim],
-    _fixture_comparisons: &[MetricGoldenComparison],
-    _unclassified_metric_names: &[&str],
+    catalog_claims: &[ParityClaim],
+    fixture_comparisons: &[MetricGoldenComparison],
+    unclassified_metric_names: &[&str],
 ) -> Vec<MetricReleaseBlocker> {
-    Vec::new()
+    let mut blockers = Vec::new();
+
+    for claim in catalog_claims {
+        if claim.status != ParityFeatureStatus::Complete || validate_parity_claim(claim).is_err() {
+            blockers.push(MetricReleaseBlocker {
+                feature: claim.feature.clone(),
+                source: MetricReleaseBlockerSource::Catalog,
+                status: claim.status,
+                detail: format!("metric catalog parity status is {:?}", claim.status),
+            });
+        }
+    }
+
+    for comparison in fixture_comparisons {
+        let status = match comparison.outcome {
+            MetricGoldenOutcome::ExactMatch | MetricGoldenOutcome::ToleratedNumericDrift => None,
+            MetricGoldenOutcome::KnownGap => Some(ParityFeatureStatus::KnownGap),
+            MetricGoldenOutcome::UndeclaredDrift => Some(ParityFeatureStatus::Blocked),
+        };
+        if let Some(status) = status {
+            blockers.push(MetricReleaseBlocker {
+                feature: comparison.feature.clone(),
+                source: MetricReleaseBlockerSource::FixtureDrift,
+                status,
+                detail: comparison.drift.clone().unwrap_or_else(|| {
+                    format!("metric fixture outcome is {:?}", comparison.outcome)
+                }),
+            });
+        }
+    }
+
+    for metric_name in unclassified_metric_names {
+        let feature = if metric_name.starts_with("metric::") {
+            (*metric_name).to_string()
+        } else {
+            format!("metric::{metric_name}")
+        };
+        blockers.push(MetricReleaseBlocker {
+            feature,
+            source: MetricReleaseBlockerSource::Unclassified,
+            status: ParityFeatureStatus::NotStarted,
+            detail: "metric is absent from the upstream catalog inventory".to_string(),
+        });
+    }
+
+    blockers
 }
 
 pub fn summarize_metric_release_blockers(
