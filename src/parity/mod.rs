@@ -20,6 +20,8 @@ pub enum ParityFeatureStatus {
     Complete,
     Partial,
     KnownGap,
+    NotStarted,
+    Blocked,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,20 +55,92 @@ pub struct ParityCheck {
 
 pub fn latest_upstream_baseline() -> UpstreamBaseline {
     UpstreamBaseline {
-        main_commit: String::new(),
-        release_tag: String::new(),
-        release_commit: String::new(),
+        main_commit: "298b68274234c060deacab3cf5fb52aa3a20e885".to_string(),
+        release_tag: "v0.4.3".to_string(),
+        release_commit: "4ecab384fda829ca50bec3f07cc49589d756e172".to_string(),
     }
 }
 
 pub fn latest_upstream_inventory() -> Vec<UpstreamInventoryEntry> {
-    Vec::new()
+    vec![
+        inventory_entry(
+            "top-level",
+            22,
+            ParityFeatureStatus::Partial,
+            "runtime modules exist but full analytics/config/sdk/tokenizer parity is not proven",
+        ),
+        inventory_entry(
+            "backends",
+            10,
+            ParityFeatureStatus::Partial,
+            "in-memory and local JSONL/CSV exist; gdrive and registry parity remain",
+        ),
+        inventory_entry(
+            "embeddings",
+            8,
+            ParityFeatureStatus::Partial,
+            "generic embedding traits exist; provider-specific parity remains",
+        ),
+        inventory_entry(
+            "integrations",
+            15,
+            ParityFeatureStatus::KnownGap,
+            "generic tracing/redaction exists; upstream integration adapters remain",
+        ),
+        inventory_entry(
+            "llms",
+            9,
+            ParityFeatureStatus::Partial,
+            "OpenAI-compatible and Azure configuration exist; Instructor/LiteLLM/Haystack/OCI parity remains",
+        ),
+        inventory_entry(
+            "metrics",
+            114,
+            ParityFeatureStatus::Partial,
+            "metric families exist but full golden parity fixtures are not complete",
+        ),
+        inventory_entry(
+            "optimizers",
+            7,
+            ParityFeatureStatus::Partial,
+            "genetic optimizer exists; DSPy/MIPROv2 parity remains",
+        ),
+        inventory_entry(
+            "prompt",
+            23,
+            ParityFeatureStatus::Partial,
+            "prompt scaffolding exists; language adaptation and save/load parity remain",
+        ),
+        inventory_entry(
+            "testset",
+            33,
+            ParityFeatureStatus::KnownGap,
+            "graph and synthesizer scaffolds exist; upstream LLM-driven generation parity remains",
+        ),
+    ]
 }
 
 pub fn release_blocking_inventory(
-    _entries: &[UpstreamInventoryEntry],
+    entries: &[UpstreamInventoryEntry],
 ) -> Vec<&UpstreamInventoryEntry> {
-    Vec::new()
+    entries
+        .iter()
+        .filter(|entry| entry.status != ParityFeatureStatus::Complete)
+        .collect()
+}
+
+fn inventory_entry(
+    category: &str,
+    upstream_file_count: usize,
+    status: ParityFeatureStatus,
+    rationale: &str,
+) -> UpstreamInventoryEntry {
+    UpstreamInventoryEntry {
+        category: category.to_string(),
+        upstream_file_count,
+        status,
+        rationale: rationale.to_string(),
+    }
 }
 
 pub fn parse_parity_fixture(input: &str) -> Result<ParityFixture, RagasError> {
