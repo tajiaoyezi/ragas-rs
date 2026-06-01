@@ -92,24 +92,89 @@ pub struct GraphQueryDescriptor {
     pub deterministic: bool,
 }
 
-pub fn parse_graph_parity_fixture(_input: &str) -> Result<GraphParityFixture, RagasError> {
-    Err(RagasError::Parse {
-        message: "graph parity fixture parser is not implemented".to_string(),
+pub fn parse_graph_parity_fixture(input: &str) -> Result<GraphParityFixture, RagasError> {
+    serde_json::from_str(input).map_err(|error| RagasError::Parse {
+        message: format!("graph parity fixture parse failed: {error}"),
     })
 }
 
-pub fn serialize_graph_parity_fixture(_fixture: &GraphParityFixture) -> Result<String, RagasError> {
-    Err(RagasError::Parse {
-        message: "graph parity fixture serializer is not implemented".to_string(),
+pub fn serialize_graph_parity_fixture(fixture: &GraphParityFixture) -> Result<String, RagasError> {
+    serde_json::to_string(fixture).map_err(|error| RagasError::Parse {
+        message: format!("graph parity fixture serialize failed: {error}"),
     })
 }
 
 pub fn graph_query_descriptors() -> Vec<GraphQueryDescriptor> {
-    Vec::new()
+    vec![
+        graph_query_descriptor(
+            GraphQueryCapability::NodeTypeFilter,
+            ParityFeatureStatus::Complete,
+            true,
+        ),
+        graph_query_descriptor(
+            GraphQueryCapability::PropertyFilter,
+            ParityFeatureStatus::Complete,
+            true,
+        ),
+        graph_query_descriptor(
+            GraphQueryCapability::RelationshipFilter,
+            ParityFeatureStatus::Complete,
+            true,
+        ),
+        graph_query_descriptor(
+            GraphQueryCapability::NeighborTraversal,
+            ParityFeatureStatus::Complete,
+            true,
+        ),
+        graph_query_descriptor(
+            GraphQueryCapability::Clusters,
+            ParityFeatureStatus::KnownGap,
+            false,
+        ),
+        graph_query_descriptor(
+            GraphQueryCapability::AdvancedQuery,
+            ParityFeatureStatus::KnownGap,
+            false,
+        ),
+    ]
 }
 
 pub fn graph_parity_claims() -> Vec<ParityClaim> {
-    Vec::new()
+    graph_query_descriptors()
+        .into_iter()
+        .filter(|descriptor| descriptor.parity_status != ParityFeatureStatus::Complete)
+        .map(|descriptor| ParityClaim {
+            feature: format!(
+                "testset::graph::{}",
+                graph_query_slug(descriptor.capability)
+            ),
+            status: descriptor.parity_status,
+            fixtures: Vec::new(),
+        })
+        .collect()
+}
+
+fn graph_query_descriptor(
+    capability: GraphQueryCapability,
+    parity_status: ParityFeatureStatus,
+    deterministic: bool,
+) -> GraphQueryDescriptor {
+    GraphQueryDescriptor {
+        capability,
+        parity_status,
+        deterministic,
+    }
+}
+
+fn graph_query_slug(capability: GraphQueryCapability) -> &'static str {
+    match capability {
+        GraphQueryCapability::NodeTypeFilter => "node_type_filter",
+        GraphQueryCapability::PropertyFilter => "property_filter",
+        GraphQueryCapability::RelationshipFilter => "relationship_filter",
+        GraphQueryCapability::NeighborTraversal => "neighbor_traversal",
+        GraphQueryCapability::Clusters => "clusters",
+        GraphQueryCapability::AdvancedQuery => "advanced_query",
+    }
 }
 
 impl KnowledgeGraph {
@@ -142,6 +207,21 @@ impl KnowledgeGraph {
         self.edges
             .iter()
             .filter(|edge| edge.relationship == relationship)
+            .collect()
+    }
+
+    pub fn nodes_with_property(
+        &self,
+        key: &str,
+        expected: Option<&GraphProperty>,
+    ) -> Vec<&GraphNode> {
+        self.nodes
+            .iter()
+            .filter(|node| {
+                node.properties
+                    .get(key)
+                    .is_some_and(|value| expected.is_none_or(|expected| value == expected))
+            })
             .collect()
     }
 
