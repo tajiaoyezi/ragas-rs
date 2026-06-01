@@ -120,24 +120,115 @@ pub struct MetricGoldenComparison {
 }
 
 pub fn parse_metric_golden_fixture(
-    _input: &str,
-    _metadata: ParityFixtureMetadata,
+    input: &str,
+    metadata: ParityFixtureMetadata,
 ) -> Result<MetricGoldenFixture, RagasError> {
-    Err(RagasError::Parse {
-        message: "metric golden fixture parser is not implemented".to_string(),
-    })
+    let fixture = parse_parity_fixture(input)?;
+    if fixture.feature != metadata.feature {
+        return Err(RagasError::Parse {
+            message: format!(
+                "metric fixture feature mismatch: metadata={} fixture={}",
+                metadata.feature, fixture.feature
+            ),
+        });
+    }
+    Ok(MetricGoldenFixture { metadata, fixture })
 }
 
 pub fn compare_metric_golden_fixture(fixture: &MetricGoldenFixture) -> MetricGoldenComparison {
+    let drift = semantic_drift(&fixture.fixture);
+    if drift.is_none() && fixture.fixture.python_baseline == fixture.fixture.rust_output {
+        return MetricGoldenComparison {
+            feature: fixture.fixture.feature.clone(),
+            outcome: MetricGoldenOutcome::ExactMatch,
+            drift: None,
+        };
+    }
+
+    let baseline_score = fixture
+        .fixture
+        .python_baseline
+        .get("score")
+        .and_then(Value::as_f64);
+    let rust_score = fixture
+        .fixture
+        .rust_output
+        .get("score")
+        .and_then(Value::as_f64);
+    if let (Some(baseline_score), Some(rust_score)) = (baseline_score, rust_score) {
+        let tolerance = fixture.fixture.tolerance.unwrap_or(0.0);
+        let drift_detail = metric_drift_detail(
+            &fixture.fixture.feature,
+            baseline_score,
+            rust_score,
+            tolerance,
+        );
+        if (baseline_score - rust_score).abs() <= tolerance {
+            return MetricGoldenComparison {
+                feature: fixture.fixture.feature.clone(),
+                outcome: MetricGoldenOutcome::ToleratedNumericDrift,
+                drift: Some(drift_detail),
+            };
+        }
+        if fixture.fixture.known_gap.is_some() {
+            return MetricGoldenComparison {
+                feature: fixture.fixture.feature.clone(),
+                outcome: MetricGoldenOutcome::KnownGap,
+                drift: Some(drift_detail),
+            };
+        }
+        return MetricGoldenComparison {
+            feature: fixture.fixture.feature.clone(),
+            outcome: MetricGoldenOutcome::UndeclaredDrift,
+            drift: Some(drift_detail),
+        };
+    }
+
+    let drift = drift.unwrap_or_else(|| {
+        format!(
+            "baseline={} rust={}",
+            fixture.fixture.python_baseline, fixture.fixture.rust_output
+        )
+    });
+    if fixture.fixture.known_gap.is_some() {
+        return MetricGoldenComparison {
+            feature: fixture.fixture.feature.clone(),
+            outcome: MetricGoldenOutcome::KnownGap,
+            drift: Some(drift),
+        };
+    }
+
     MetricGoldenComparison {
         feature: fixture.fixture.feature.clone(),
         outcome: MetricGoldenOutcome::UndeclaredDrift,
-        drift: Some("metric golden comparison is not implemented".to_string()),
+        drift: Some(drift),
     }
 }
 
-pub fn validate_metric_golden_claim(_claim: &ParityClaim) -> Result<(), RagasError> {
+pub fn validate_metric_golden_claim(claim: &ParityClaim) -> Result<(), RagasError> {
+    validate_parity_claim(claim)?;
+    if claim.status == ParityFeatureStatus::Complete {
+        for fixture in &claim.fixtures {
+            if fixture.feature.is_empty() || fixture.fixture_path.is_empty() {
+                return Err(RagasError::Parse {
+                    message: format!(
+                        "metric parity-complete claim for {} has incomplete fixture metadata",
+                        claim.feature
+                    ),
+                });
+            }
+        }
+    }
     Ok(())
+}
+
+fn metric_drift_detail(
+    feature: &str,
+    baseline_score: f64,
+    rust_score: f64,
+    tolerance: f64,
+) -> String {
+    format!("{feature} score baseline={baseline_score} rust={rust_score} tolerance={tolerance}")
 }
 
 pub fn latest_upstream_baseline() -> UpstreamBaseline {
