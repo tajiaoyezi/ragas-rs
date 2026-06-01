@@ -46,9 +46,9 @@ RED tests own final signatures.
 
 ## 6. Acceptance Criteria
 
-- **AC1**: Transform registry lists splitters, extractors, and relationship builders with deterministic/live mode.
-- **AC2**: Extracted entities, themes, summaries, and relationships normalize into stable graph properties.
-- **AC3**: Unsupported upstream transform stages create release-blocking claims.
+- [ ] **AC1**: Transform registry lists splitters, extractors, and relationship builders with deterministic/live mode.
+- [ ] **AC2**: Extracted entities, themes, summaries, and relationships normalize into stable graph properties.
+- [ ] **AC3**: Unsupported upstream transform stages create release-blocking claims.
 
 ## 7. Traceability
 
