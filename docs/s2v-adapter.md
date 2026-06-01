@@ -150,7 +150,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 16.1 | parity | docs/specs/tasks/task-16.1-parity-suite.md | Done | after tasks 10-15 | - |
 | 16.2 | docs | docs/specs/tasks/task-16.2-docs-examples.md | Done | after task 16.1 | - |
 | 16.3 | release | docs/specs/tasks/task-16.3-release.md | Done | after task 16.2 | - |
-| 17.1 | parity | docs/specs/tasks/task-17.1-upstream-latest-inventory.md | Ready | after task 16.3 | - |
+| 17.1 | parity | docs/specs/tasks/task-17.1-upstream-latest-inventory.md | Done | after task 16.3 | - |
 | 17.2 | parity-tests | docs/specs/tasks/task-17.2-parity-fixture-policy.md | Ready | after task 17.1 | - |
 | 17.3 | quality | docs/specs/tasks/task-17.3-quality-gates.md | Ready | after task 17.2 | - |
 | 17.4 | release | docs/specs/tasks/task-17.4-bug-zero-release-audit.md | Ready | after task 17.3 | - |
