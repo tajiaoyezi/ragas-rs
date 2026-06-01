@@ -1,6 +1,6 @@
 # Task 20.2 - transform-engine-extractor-parity
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 20
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
