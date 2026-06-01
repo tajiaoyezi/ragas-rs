@@ -66,20 +66,20 @@ pub struct ParityFixtureMetadata {
 
 impl ParityFixtureMetadata {
     pub fn new(
-        _feature: impl Into<String>,
-        _upstream_module_path: impl Into<String>,
-        _upstream_test_path: Option<String>,
-        _fixture_path: impl Into<String>,
-        _mode: ParityFixtureMode,
-        _tolerance: Option<f64>,
+        feature: impl Into<String>,
+        upstream_module_path: impl Into<String>,
+        upstream_test_path: Option<String>,
+        fixture_path: impl Into<String>,
+        mode: ParityFixtureMode,
+        tolerance: Option<f64>,
     ) -> Self {
         Self {
-            feature: String::new(),
-            upstream_module_path: String::new(),
-            upstream_test_path: None,
-            fixture_path: String::new(),
-            mode: ParityFixtureMode::ManualBaseline,
-            tolerance: None,
+            feature: feature.into(),
+            upstream_module_path: upstream_module_path.into(),
+            upstream_test_path,
+            fixture_path: fixture_path.into(),
+            mode,
+            tolerance,
         }
     }
 }
@@ -174,12 +174,25 @@ pub fn release_blocking_inventory(
         .collect()
 }
 
-pub fn validate_parity_claim(_claim: &ParityClaim) -> Result<(), RagasError> {
+pub fn validate_parity_claim(claim: &ParityClaim) -> Result<(), RagasError> {
+    if claim.status == ParityFeatureStatus::Complete && claim.fixtures.is_empty() {
+        return Err(RagasError::Parse {
+            message: format!(
+                "parity-complete claim for {} requires fixture evidence",
+                claim.feature
+            ),
+        });
+    }
     Ok(())
 }
 
-pub fn release_blocking_claims(_claims: &[ParityClaim]) -> Vec<&ParityClaim> {
-    Vec::new()
+pub fn release_blocking_claims(claims: &[ParityClaim]) -> Vec<&ParityClaim> {
+    claims
+        .iter()
+        .filter(|claim| {
+            claim.status != ParityFeatureStatus::Complete || validate_parity_claim(claim).is_err()
+        })
+        .collect()
 }
 
 fn inventory_entry(
