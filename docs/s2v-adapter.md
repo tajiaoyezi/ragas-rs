@@ -106,6 +106,11 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 16 | parity-docs-release | docs/specs/phases/phase-16-parity-docs-release.md | Done | 3 | - |
 | 17 | latest-baseline-and-quality-gates | docs/specs/phases/phase-17-latest-baseline-and-quality-gates.md | Done | 4 | - |
 | 18 | provider-backend-runtime-parity | docs/specs/phases/phase-18-provider-backend-runtime-parity.md | Done | 4 | - |
+| 19 | metric-catalog-golden-parity | docs/specs/phases/phase-19-metric-catalog-golden-parity.md | Ready | 3 | - |
+| 20 | testset-generation-full-parity | docs/specs/phases/phase-20-testset-generation-full-parity.md | Ready | 3 | - |
+| 21 | optimizer-experiment-cli-docs-parity | docs/specs/phases/phase-21-optimizer-experiment-cli-docs-parity.md | Ready | 3 | - |
+| 22 | exhaustive-test-engineering | docs/specs/phases/phase-22-exhaustive-test-engineering.md | Ready | 3 | - |
+| 23 | release-candidate-bug-zero-audit | docs/specs/phases/phase-23-release-candidate-bug-zero-audit.md | Ready | 3 | - |
 
 ## Task 总索引
 
@@ -159,6 +164,21 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 18.2 | providers | docs/specs/tasks/task-18.2-provider-adapter-contracts.md | Done | after task 18.1 | - |
 | 18.3 | backends | docs/specs/tasks/task-18.3-backend-registry-diskcache.md | Done | after task 18.2 | - |
 | 18.4 | integrations | docs/specs/tasks/task-18.4-integration-callback-contracts.md | Done | after task 18.3 | - |
+| 19.1 | metrics | docs/specs/tasks/task-19.1-metric-catalog-inventory.md | Ready | after task 18.4 | - |
+| 19.2 | parity-tests | docs/specs/tasks/task-19.2-metric-golden-fixture-runner.md | Ready | after task 19.1 | - |
+| 19.3 | release | docs/specs/tasks/task-19.3-metric-release-blockers.md | Ready | after task 19.2 | - |
+| 20.1 | testset | docs/specs/tasks/task-20.1-graph-persistence-query-parity.md | Ready | after task 19.3 | - |
+| 20.2 | testset | docs/specs/tasks/task-20.2-transform-engine-extractor-parity.md | Ready | after task 20.1 | - |
+| 20.3 | testset | docs/specs/tasks/task-20.3-synthesizer-prompt-fixture-parity.md | Ready | after task 20.2 | - |
+| 21.1 | optimizers | docs/specs/tasks/task-21.1-dspy-mipro-cache-contracts.md | Ready | after task 20.3 | - |
+| 21.2 | cli | docs/specs/tasks/task-21.2-experiment-sdk-cli-contracts.md | Ready | after task 21.1 | - |
+| 21.3 | docs | docs/specs/tasks/task-21.3-quickstart-docs-parity.md | Ready | after task 21.2 | - |
+| 22.1 | quality | docs/specs/tasks/task-22.1-property-fuzz-coverage-gates.md | Ready | after task 21.3 | - |
+| 22.2 | quality | docs/specs/tasks/task-22.2-panic-mutation-safety-gates.md | Ready | after task 22.1 | - |
+| 22.3 | quality | docs/specs/tasks/task-22.3-cross-platform-e2e-matrix.md | Ready | after task 22.2 | - |
+| 23.1 | release | docs/specs/tasks/task-23.1-release-blocker-ledger.md | Ready | after task 22.3 | - |
+| 23.2 | release | docs/specs/tasks/task-23.2-gap-resolution-and-waiver-policy.md | Ready | after task 23.1 | - |
+| 23.3 | release | docs/specs/tasks/task-23.3-final-bug-zero-release-audit.md | Ready | after task 23.2 | - |
 
 ## ADR 索引
 
@@ -222,3 +242,18 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 18.2 | test/features/provider-adapter-contracts.feature |
 | 18.3 | test/features/backend-registry-diskcache.feature |
 | 18.4 | test/features/integration-callback-contracts.feature |
+| 19.1 | test/features/metric-catalog-inventory.feature |
+| 19.2 | test/features/metric-golden-fixture-runner.feature |
+| 19.3 | test/features/metric-release-blockers.feature |
+| 20.1 | test/features/graph-persistence-query-parity.feature |
+| 20.2 | test/features/transform-engine-extractor-parity.feature |
+| 20.3 | test/features/synthesizer-prompt-fixture-parity.feature |
+| 21.1 | test/features/dspy-mipro-cache-contracts.feature |
+| 21.2 | test/features/experiment-sdk-cli-contracts.feature |
+| 21.3 | test/features/quickstart-docs-parity.feature |
+| 22.1 | test/features/property-fuzz-coverage-gates.feature |
+| 22.2 | test/features/panic-mutation-safety-gates.feature |
+| 22.3 | test/features/cross-platform-e2e-matrix.feature |
+| 23.1 | test/features/release-blocker-ledger.feature |
+| 23.2 | test/features/gap-resolution-and-waiver-policy.feature |
+| 23.3 | test/features/final-bug-zero-release-audit.feature |
