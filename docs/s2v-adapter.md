@@ -157,7 +157,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 17.4 | release | docs/specs/tasks/task-17.4-bug-zero-release-audit.md | Done | after task 17.3 | - |
 | 18.1 | runtime | docs/specs/tasks/task-18.1-runtime-cache-tokenizer-cost.md | Done | after task 17.4 | - |
 | 18.2 | providers | docs/specs/tasks/task-18.2-provider-adapter-contracts.md | Done | after task 18.1 | - |
-| 18.3 | backends | docs/specs/tasks/task-18.3-backend-registry-diskcache.md | Ready | after task 18.2 | - |
+| 18.3 | backends | docs/specs/tasks/task-18.3-backend-registry-diskcache.md | Done | after task 18.2 | - |
 | 18.4 | integrations | docs/specs/tasks/task-18.4-integration-callback-contracts.md | Ready | after task 18.3 | - |
 
 ## ADR 索引
