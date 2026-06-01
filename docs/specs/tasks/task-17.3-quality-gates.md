@@ -1,6 +1,6 @@
 # Task 17.3 - quality-gates
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 17
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -54,9 +54,9 @@ RED tests own concrete signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-17.3.1 | TEST-17.3.1 | Not Started |
-| AC2 | SCEN-17.3.2 | TEST-17.3.2 | Not Started |
-| AC3 | SCEN-17.3.3 | TEST-17.3.3 | Not Started |
+| AC1 | SCEN-17.3.1 | TEST-17.3.1 | Done |
+| AC2 | SCEN-17.3.2 | TEST-17.3.2 | Done |
+| AC3 | SCEN-17.3.3 | TEST-17.3.3 | Done |
 
 ## 8. Risks
 
@@ -72,9 +72,18 @@ RED tests own concrete signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：<TBD-after-impl>
-- **改动文件**：<TBD-after-impl>
-- **commit 列表**：<TBD-after-impl>
-- **§9 Verification 结果**：<TBD-after-impl>
-- **剩余风险 / 未做项**：<TBD-after-impl>
-- **下游 task 影响**：<TBD-after-impl>
+- **完成日期**：2026-06-01
+- **改动文件**：
+  - `src/release/mod.rs`（新增 quality gate kind、evidence status、report summary 和 blocker detection）
+  - `src/lib.rs`（导出 release quality gate public API）
+- **commit 列表**：
+  - `81acc3d` docs(spec): task-17.3 进入实施
+  - `8df1e78` test(release): 加 task-17.3 RED 测试
+  - `0397952` feat(release): 实现 task-17.3 quality gates
+- **§9 Verification 结果**：
+  - install: ✅ `cargo build`
+  - typecheck: ✅ `cargo check`
+  - unit-test: ✅ `cargo test` (130 passed / 0 failed)
+  - build: ✅ `cargo build`
+- **剩余风险 / 未做项**：当前 blocker 检测覆盖显式 Failed/Missing evidence；后续 task 17.4 需要把 bug ledger 和 release audit 汇总成最终 no-known-bug gate。
+- **下游 task 影响**：task 17.4 可把 bug ledger audit 接到 `QualityGateKind::BugLedgerAudit`；phase 22 可把 coverage/fuzz/property/mutation 真实命令结果写入 `QualityGateEvidence`。
