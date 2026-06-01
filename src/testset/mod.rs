@@ -92,6 +92,31 @@ pub struct GraphQueryDescriptor {
     pub deterministic: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum TransformStageFamily {
+    Splitter,
+    EntityExtractor,
+    ThemeExtractor,
+    SummaryExtractor,
+    RelationshipBuilder,
+    LlmExtractor,
+    Filter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum TransformStageMode {
+    Deterministic,
+    LiveLlm,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransformStageDescriptor {
+    pub family: TransformStageFamily,
+    pub mode: TransformStageMode,
+    pub parity_status: ParityFeatureStatus,
+    pub output_properties: Vec<&'static str>,
+}
+
 pub fn parse_graph_parity_fixture(input: &str) -> Result<GraphParityFixture, RagasError> {
     serde_json::from_str(input).map_err(|error| RagasError::Parse {
         message: format!("graph parity fixture parse failed: {error}"),
@@ -152,6 +177,20 @@ pub fn graph_parity_claims() -> Vec<ParityClaim> {
             fixtures: Vec::new(),
         })
         .collect()
+}
+
+pub fn transform_stage_descriptors() -> Vec<TransformStageDescriptor> {
+    Vec::new()
+}
+
+pub fn normalize_extraction_properties(
+    _extractions: ExtractionBundle,
+) -> BTreeMap<String, GraphProperty> {
+    BTreeMap::new()
+}
+
+pub fn transform_parity_claims() -> Vec<ParityClaim> {
+    Vec::new()
 }
 
 fn graph_query_descriptor(
@@ -901,5 +940,133 @@ mod tests {
                 "missing graph release blocker {expected}"
             );
         }
+    }
+
+    #[test]
+    fn test_20_2_1_transform_registry_lists_stages_with_modes() {
+        // SCEN-20.2.1 / AC1 / TEST-20.2.1
+        let descriptors = transform_stage_descriptors();
+        let by_family: BTreeMap<_, _> = descriptors
+            .iter()
+            .map(|descriptor| (descriptor.family, descriptor))
+            .collect();
+
+        for expected in [
+            TransformStageFamily::Splitter,
+            TransformStageFamily::EntityExtractor,
+            TransformStageFamily::ThemeExtractor,
+            TransformStageFamily::SummaryExtractor,
+            TransformStageFamily::RelationshipBuilder,
+            TransformStageFamily::LlmExtractor,
+        ] {
+            assert!(by_family.contains_key(&expected), "missing {expected:?}");
+        }
+
+        let splitter = by_family
+            .get(&TransformStageFamily::Splitter)
+            .expect("splitter descriptor");
+        assert_eq!(splitter.mode, TransformStageMode::Deterministic);
+        assert_eq!(splitter.parity_status, ParityFeatureStatus::Complete);
+        assert!(splitter.output_properties.contains(&"chunks"));
+
+        let llm_extractor = by_family
+            .get(&TransformStageFamily::LlmExtractor)
+            .expect("llm extractor descriptor");
+        assert_eq!(llm_extractor.mode, TransformStageMode::LiveLlm);
+        assert_eq!(llm_extractor.parity_status, ParityFeatureStatus::KnownGap);
+    }
+
+    #[test]
+    fn test_20_2_2_extractor_outputs_normalize_into_stable_graph_properties() {
+        // SCEN-20.2.2 / AC2 / TEST-20.2.2
+        let extractions = ExtractionBundle::new(
+            vec![
+                "retrieval".to_string(),
+                "RAG".to_string(),
+                "RAG".to_string(),
+            ],
+            vec!["evaluation".to_string(), "retrieval".to_string()],
+            "Chunk about retrieval evaluation",
+        );
+        let properties = normalize_extraction_properties(extractions.clone());
+
+        assert_eq!(
+            properties.get("entities"),
+            Some(&GraphProperty::TextList(vec![
+                "RAG".to_string(),
+                "retrieval".to_string()
+            ]))
+        );
+        assert_eq!(
+            properties.get("themes"),
+            Some(&GraphProperty::TextList(vec![
+                "evaluation".to_string(),
+                "retrieval".to_string()
+            ]))
+        );
+        assert_eq!(
+            properties.get("summary"),
+            Some(&GraphProperty::Text(
+                "Chunk about retrieval evaluation".to_string()
+            ))
+        );
+
+        let chunks = split_text_into_chunks(
+            "doc-1",
+            "RAG evaluates retrieval. It scores answers with context.",
+            26,
+        );
+        let graph = chunks.iter().fold(
+            KnowledgeGraph::new().add_node(GraphNode::new("doc-1", "document")),
+            |graph, chunk| graph.add_node(chunk.to_graph_node()),
+        );
+        let graph = attach_extractions(graph, "doc-1-chunk-0", extractions);
+        let graph = build_chunk_relationships(graph, "doc-1", &chunks);
+        let node = graph.node("doc-1-chunk-0").expect("chunk node");
+
+        assert_eq!(node.properties.get("entities"), properties.get("entities"));
+        assert_eq!(node.properties.get("themes"), properties.get("themes"));
+        assert_eq!(node.properties.get("summary"), properties.get("summary"));
+
+        let contains = graph.edges_by_relationship("contains");
+        assert_eq!(contains.len(), chunks.len());
+        assert_eq!(
+            contains[0].properties.get("order"),
+            Some(&GraphProperty::Number(0.0))
+        );
+
+        let next = graph.edges_by_relationship("next");
+        assert_eq!(next.len(), chunks.len() - 1);
+        assert_eq!(next[0].source_id, "doc-1-chunk-0");
+        assert_eq!(next[0].target_id, "doc-1-chunk-1");
+    }
+
+    #[test]
+    fn test_20_2_3_unsupported_transform_stages_create_release_blocking_claims() {
+        // SCEN-20.2.3 / AC3 / TEST-20.2.3
+        let claims = transform_parity_claims();
+        let blockers = release_blocking_claims(&claims);
+        let blocking_features: BTreeSet<_> = blockers
+            .iter()
+            .map(|claim| claim.feature.as_str())
+            .collect();
+
+        for expected in [
+            "testset::transform::llm_extractor",
+            "testset::transform::filter",
+        ] {
+            assert!(
+                blocking_features.contains(expected),
+                "missing transform release blocker {expected}"
+            );
+        }
+
+        assert!(
+            claims
+                .iter()
+                .filter(|claim| claim.feature.starts_with("testset::transform::"))
+                .all(|claim| claim.status != ParityFeatureStatus::Complete),
+            "release blockers must not be marked complete"
+        );
     }
 }

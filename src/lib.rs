@@ -116,10 +116,11 @@ pub use schema::{Message, MessageRole, MultiTurnSample, Rubric, ToolCall};
 pub use testset::{
     ExtractionBundle, GraphEdge, GraphNode, GraphParityFixture, GraphProperty,
     GraphQueryCapability, GraphQueryDescriptor, KnowledgeGraph, Persona, PersonaGenerator,
-    SynthesizedSample, TextChunk, attach_extractions, build_chunk_relationships,
-    graph_parity_claims, graph_query_descriptors, parse_graph_parity_fixture,
+    SynthesizedSample, TextChunk, TransformStageDescriptor, TransformStageFamily,
+    TransformStageMode, attach_extractions, build_chunk_relationships, graph_parity_claims,
+    graph_query_descriptors, normalize_extraction_properties, parse_graph_parity_fixture,
     serialize_graph_parity_fixture, split_text_into_chunks, synthesize_multi_hop_sample,
-    synthesize_single_hop_sample,
+    synthesize_single_hop_sample, transform_parity_claims, transform_stage_descriptors,
 };
 pub use validation::{
     MetricRequirements, SampleField, ValidationIssue, ValidationReport, validate_before_evaluate,
