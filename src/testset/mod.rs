@@ -117,6 +117,62 @@ pub struct TransformStageDescriptor {
     pub output_properties: Vec<&'static str>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum SynthesizerStrategy {
+    SingleHop,
+    MultiHop,
+    PreChunked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SynthesizerDescriptor {
+    pub strategy: SynthesizerStrategy,
+    pub parity_status: ParityFeatureStatus,
+    pub fixture_backed: bool,
+    pub prompt_snapshot: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SynthesizerPromptMessage {
+    pub role: String,
+    pub template: String,
+}
+
+impl SynthesizerPromptMessage {
+    pub fn new(role: impl Into<String>, template: impl Into<String>) -> Self {
+        Self {
+            role: role.into(),
+            template: template.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SynthesizerPromptSnapshot {
+    pub strategy: SynthesizerStrategy,
+    pub variables: BTreeMap<String, String>,
+    pub messages: Vec<SynthesizerPromptMessage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenderedSynthesizerPromptMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenderedSynthesizerPromptSnapshot {
+    pub strategy: SynthesizerStrategy,
+    pub variables: BTreeMap<String, String>,
+    pub rendered_messages: Vec<RenderedSynthesizerPromptMessage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SynthesizerSampleComparison {
+    pub matches: bool,
+    pub drift: Option<String>,
+}
+
 pub fn parse_graph_parity_fixture(input: &str) -> Result<GraphParityFixture, RagasError> {
     serde_json::from_str(input).map_err(|error| RagasError::Parse {
         message: format!("graph parity fixture parse failed: {error}"),
@@ -258,6 +314,34 @@ pub fn transform_parity_claims() -> Vec<ParityClaim> {
             fixtures: Vec::new(),
         })
         .collect()
+}
+
+pub fn synthesizer_descriptors() -> Vec<SynthesizerDescriptor> {
+    Vec::new()
+}
+
+pub fn render_synthesizer_prompt_snapshot(
+    _snapshot: &SynthesizerPromptSnapshot,
+) -> Result<RenderedSynthesizerPromptSnapshot, RagasError> {
+    Ok(RenderedSynthesizerPromptSnapshot {
+        strategy: SynthesizerStrategy::SingleHop,
+        variables: BTreeMap::new(),
+        rendered_messages: Vec::new(),
+    })
+}
+
+pub fn compare_synthesized_sample_fixture(
+    _expected: &SynthesizedSample,
+    _actual: &SynthesizedSample,
+) -> SynthesizerSampleComparison {
+    SynthesizerSampleComparison {
+        matches: false,
+        drift: Some("not implemented".to_string()),
+    }
+}
+
+pub fn synthesizer_parity_claims() -> Vec<ParityClaim> {
+    Vec::new()
 }
 
 fn graph_query_descriptor(
@@ -1161,6 +1245,136 @@ mod tests {
                 .filter(|claim| claim.feature.starts_with("testset::transform::"))
                 .all(|claim| claim.status != ParityFeatureStatus::Complete),
             "release blockers must not be marked complete"
+        );
+    }
+
+    #[test]
+    fn test_20_3_1_synthesizer_registry_lists_core_strategies() {
+        // SCEN-20.3.1 / AC1 / TEST-20.3.1
+        let descriptors = synthesizer_descriptors();
+        let by_strategy: BTreeMap<_, _> = descriptors
+            .iter()
+            .map(|descriptor| (descriptor.strategy, descriptor))
+            .collect();
+
+        for expected in [
+            SynthesizerStrategy::SingleHop,
+            SynthesizerStrategy::MultiHop,
+            SynthesizerStrategy::PreChunked,
+        ] {
+            assert!(by_strategy.contains_key(&expected), "missing {expected:?}");
+        }
+
+        let single_hop = by_strategy
+            .get(&SynthesizerStrategy::SingleHop)
+            .expect("single-hop descriptor");
+        assert_eq!(single_hop.parity_status, ParityFeatureStatus::Complete);
+        assert!(single_hop.fixture_backed);
+        assert_eq!(single_hop.prompt_snapshot.as_str(), "single_hop_question");
+
+        let pre_chunked = by_strategy
+            .get(&SynthesizerStrategy::PreChunked)
+            .expect("pre-chunked descriptor");
+        assert_eq!(pre_chunked.parity_status, ParityFeatureStatus::KnownGap);
+        assert!(!pre_chunked.fixture_backed);
+    }
+
+    #[test]
+    fn test_20_3_2_prompt_snapshots_preserve_variables_and_message_order() {
+        // SCEN-20.3.2 / AC2 / TEST-20.3.2
+        let snapshot = SynthesizerPromptSnapshot {
+            strategy: SynthesizerStrategy::SingleHop,
+            variables: BTreeMap::from([
+                ("chunk_id".to_string(), "chunk-1".to_string()),
+                ("persona_role".to_string(), "domain evaluator".to_string()),
+                (
+                    "summary".to_string(),
+                    "retrieval evaluation summary".to_string(),
+                ),
+            ]),
+            messages: vec![
+                SynthesizerPromptMessage::new(
+                    "system",
+                    "Generate a {{strategy}} question without unsupported assumptions.",
+                ),
+                SynthesizerPromptMessage::new(
+                    "user",
+                    "Persona: {{persona_role}}\nChunk: {{chunk_id}}\nSummary: {{summary}}",
+                ),
+            ],
+        };
+
+        let rendered =
+            render_synthesizer_prompt_snapshot(&snapshot).expect("snapshot renders deterministically");
+
+        assert_eq!(rendered.strategy, SynthesizerStrategy::SingleHop);
+        assert_eq!(rendered.variables, snapshot.variables);
+        assert_eq!(rendered.rendered_messages.len(), 2);
+        assert_eq!(rendered.rendered_messages[0].role, "system");
+        assert_eq!(rendered.rendered_messages[1].role, "user");
+        assert_eq!(
+            rendered.rendered_messages[0].content,
+            "Generate a single-hop question without unsupported assumptions."
+        );
+        assert_eq!(
+            rendered.rendered_messages[1].content,
+            "Persona: domain evaluator\nChunk: chunk-1\nSummary: retrieval evaluation summary"
+        );
+
+        let graph = synthesizer_graph();
+        let persona = PersonaGenerator::new("deterministic-seed").generate(
+            "Research Analyst",
+            "domain evaluator",
+            vec!["ask grounded questions".to_string()],
+        );
+        let expected =
+            synthesize_single_hop_sample(&graph, "chunk-1", &persona).expect("expected sample");
+        let actual =
+            synthesize_single_hop_sample(&graph, "chunk-1", &persona).expect("actual sample");
+        let comparison = compare_synthesized_sample_fixture(&expected, &actual);
+
+        assert!(comparison.matches, "sample fixture drift: {:?}", comparison.drift);
+        assert_eq!(comparison.drift, None);
+    }
+
+    #[test]
+    fn test_20_3_3_unsupported_or_unfixture_backed_synthesizers_block_release() {
+        // SCEN-20.3.3 / AC3 / TEST-20.3.3
+        let claims = synthesizer_parity_claims();
+        let blockers = release_blocking_claims(&claims);
+        let blocking_features: BTreeSet<_> = blockers
+            .iter()
+            .map(|claim| claim.feature.as_str())
+            .collect();
+
+        assert!(
+            blocking_features.contains("testset::synthesizer::pre_chunked"),
+            "missing pre-chunked synthesizer release blocker"
+        );
+
+        for expected in [
+            "testset::synthesizer::single_hop",
+            "testset::synthesizer::multi_hop",
+        ] {
+            let claim = claims
+                .iter()
+                .find(|claim| claim.feature == expected)
+                .unwrap_or_else(|| panic!("missing claim {expected}"));
+            assert_eq!(claim.status, ParityFeatureStatus::Complete);
+            assert!(
+                !claim.fixtures.is_empty(),
+                "complete synthesizer claim {expected} must be fixture-backed"
+            );
+        }
+
+        let unfixture_backed_complete = ParityClaim {
+            feature: "testset::synthesizer::missing_fixture".to_string(),
+            status: ParityFeatureStatus::Complete,
+            fixtures: Vec::new(),
+        };
+        assert_eq!(
+            release_blocking_claims(&[unfixture_backed_complete]).len(),
+            1
         );
     }
 }

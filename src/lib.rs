@@ -116,11 +116,15 @@ pub use schema::{Message, MessageRole, MultiTurnSample, Rubric, ToolCall};
 pub use testset::{
     ExtractionBundle, GraphEdge, GraphNode, GraphParityFixture, GraphProperty,
     GraphQueryCapability, GraphQueryDescriptor, KnowledgeGraph, Persona, PersonaGenerator,
-    SynthesizedSample, TextChunk, TransformStageDescriptor, TransformStageFamily,
-    TransformStageMode, attach_extractions, build_chunk_relationships, graph_parity_claims,
-    graph_query_descriptors, normalize_extraction_properties, parse_graph_parity_fixture,
+    RenderedSynthesizerPromptMessage, RenderedSynthesizerPromptSnapshot, SynthesizedSample,
+    SynthesizerDescriptor, SynthesizerPromptMessage, SynthesizerPromptSnapshot,
+    SynthesizerSampleComparison, SynthesizerStrategy, TextChunk, TransformStageDescriptor,
+    TransformStageFamily, TransformStageMode, attach_extractions, build_chunk_relationships,
+    compare_synthesized_sample_fixture, graph_parity_claims, graph_query_descriptors,
+    normalize_extraction_properties, parse_graph_parity_fixture, render_synthesizer_prompt_snapshot,
     serialize_graph_parity_fixture, split_text_into_chunks, synthesize_multi_hop_sample,
-    synthesize_single_hop_sample, transform_parity_claims, transform_stage_descriptors,
+    synthesize_single_hop_sample, synthesizer_descriptors, synthesizer_parity_claims,
+    transform_parity_claims, transform_stage_descriptors,
 };
 pub use validation::{
     MetricRequirements, SampleField, ValidationIssue, ValidationReport, validate_before_evaluate,
