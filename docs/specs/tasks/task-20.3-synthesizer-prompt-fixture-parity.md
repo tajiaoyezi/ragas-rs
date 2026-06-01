@@ -1,6 +1,6 @@
 # Task 20.3 - synthesizer-prompt-fixture-parity
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 20
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
