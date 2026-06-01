@@ -1,6 +1,6 @@
 # Task 19.2 - metric-golden-fixture-runner
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 19
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -54,9 +54,9 @@ RED tests own final signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-19.2.1 | TEST-19.2.1 | Not Started |
-| AC2 | SCEN-19.2.2 | TEST-19.2.2 | Not Started |
-| AC3 | SCEN-19.2.3 | TEST-19.2.3 | Not Started |
+| AC1 | SCEN-19.2.1 | TEST-19.2.1 | Done |
+| AC2 | SCEN-19.2.2 | TEST-19.2.2 | Done |
+| AC3 | SCEN-19.2.3 | TEST-19.2.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,18 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：<TBD-after-impl>
-- **改动文件**：<TBD-after-impl>
-- **commit 列表**：<TBD-after-impl>
-- **§9 Verification 结果**：<TBD-after-impl>
-- **剩余风险 / 未做项**：<TBD-after-impl>
-- **下游 task 影响**：<TBD-after-impl>
+- **完成日期**：2026-06-01
+- **改动文件**：src/parity/mod.rs; src/lib.rs
+- **commit 列表**：
+  - ba7e607 docs(spec): task-19.2 进入实施
+  - 43dd230 test(parity): 加 task-19.2 RED 测试
+  - 80c8ec6 feat(parity): 实现 task-19.2 metric golden fixture runner
+- **RED 结果**：`cargo test test_19_2` failed as expected with 3 failing 19.2 tests because metric fixture parsing, drift classification, and fixture-required complete-claim validation were not implemented.
+- **§9 Verification 结果**：
+  - install: `cargo build` passed
+  - typecheck: `cargo check` passed
+  - unit-test: `cargo test` passed, 151 passed / 0 failed
+  - parity-test: `cargo test parity::` passed, 12 passed / 0 failed
+  - build: `cargo build` passed
+- **剩余风险 / 未做项**：The runner compares deterministic fixture payloads; generating or refreshing Python baselines remains outside default CI and must be handled by later fixture-authoring work.
+- **下游 task 影响**：task 19.3 can aggregate metric catalog blockers with `validate_metric_golden_claim()` and `compare_metric_golden_fixture()` evidence.
