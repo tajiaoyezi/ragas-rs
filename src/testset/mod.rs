@@ -180,17 +180,84 @@ pub fn graph_parity_claims() -> Vec<ParityClaim> {
 }
 
 pub fn transform_stage_descriptors() -> Vec<TransformStageDescriptor> {
-    Vec::new()
+    vec![
+        transform_stage_descriptor(
+            TransformStageFamily::Splitter,
+            TransformStageMode::Deterministic,
+            ParityFeatureStatus::Complete,
+            vec!["chunks", "text", "source_id", "chunk_index"],
+        ),
+        transform_stage_descriptor(
+            TransformStageFamily::EntityExtractor,
+            TransformStageMode::Deterministic,
+            ParityFeatureStatus::Complete,
+            vec!["entities"],
+        ),
+        transform_stage_descriptor(
+            TransformStageFamily::ThemeExtractor,
+            TransformStageMode::Deterministic,
+            ParityFeatureStatus::Complete,
+            vec!["themes"],
+        ),
+        transform_stage_descriptor(
+            TransformStageFamily::SummaryExtractor,
+            TransformStageMode::Deterministic,
+            ParityFeatureStatus::Complete,
+            vec!["summary"],
+        ),
+        transform_stage_descriptor(
+            TransformStageFamily::RelationshipBuilder,
+            TransformStageMode::Deterministic,
+            ParityFeatureStatus::Complete,
+            vec!["relationships", "contains", "next", "order"],
+        ),
+        transform_stage_descriptor(
+            TransformStageFamily::LlmExtractor,
+            TransformStageMode::LiveLlm,
+            ParityFeatureStatus::KnownGap,
+            vec!["entities", "themes", "summary"],
+        ),
+        transform_stage_descriptor(
+            TransformStageFamily::Filter,
+            TransformStageMode::Deterministic,
+            ParityFeatureStatus::KnownGap,
+            vec!["filtered_nodes"],
+        ),
+    ]
 }
 
 pub fn normalize_extraction_properties(
-    _extractions: ExtractionBundle,
+    extractions: ExtractionBundle,
 ) -> BTreeMap<String, GraphProperty> {
-    BTreeMap::new()
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "entities".to_string(),
+        GraphProperty::TextList(normalize_text_list(extractions.entities)),
+    );
+    properties.insert(
+        "themes".to_string(),
+        GraphProperty::TextList(normalize_text_list(extractions.themes)),
+    );
+    properties.insert(
+        "summary".to_string(),
+        GraphProperty::Text(extractions.summary.trim().to_string()),
+    );
+    properties
 }
 
 pub fn transform_parity_claims() -> Vec<ParityClaim> {
-    Vec::new()
+    transform_stage_descriptors()
+        .into_iter()
+        .filter(|descriptor| descriptor.parity_status != ParityFeatureStatus::Complete)
+        .map(|descriptor| ParityClaim {
+            feature: format!(
+                "testset::transform::{}",
+                transform_stage_slug(descriptor.family)
+            ),
+            status: descriptor.parity_status,
+            fixtures: Vec::new(),
+        })
+        .collect()
 }
 
 fn graph_query_descriptor(
@@ -214,6 +281,43 @@ fn graph_query_slug(capability: GraphQueryCapability) -> &'static str {
         GraphQueryCapability::Clusters => "clusters",
         GraphQueryCapability::AdvancedQuery => "advanced_query",
     }
+}
+
+fn transform_stage_descriptor(
+    family: TransformStageFamily,
+    mode: TransformStageMode,
+    parity_status: ParityFeatureStatus,
+    output_properties: Vec<&'static str>,
+) -> TransformStageDescriptor {
+    TransformStageDescriptor {
+        family,
+        mode,
+        parity_status,
+        output_properties,
+    }
+}
+
+fn transform_stage_slug(family: TransformStageFamily) -> &'static str {
+    match family {
+        TransformStageFamily::Splitter => "splitter",
+        TransformStageFamily::EntityExtractor => "entity_extractor",
+        TransformStageFamily::ThemeExtractor => "theme_extractor",
+        TransformStageFamily::SummaryExtractor => "summary_extractor",
+        TransformStageFamily::RelationshipBuilder => "relationship_builder",
+        TransformStageFamily::LlmExtractor => "llm_extractor",
+        TransformStageFamily::Filter => "filter",
+    }
+}
+
+fn normalize_text_list(mut values: Vec<String>) -> Vec<String> {
+    values.iter_mut().for_each(|value| {
+        let trimmed = value.trim().to_string();
+        *value = trimmed;
+    });
+    values.retain(|value| !value.is_empty());
+    values.sort();
+    values.dedup();
+    values
 }
 
 impl KnowledgeGraph {
@@ -359,18 +463,8 @@ pub fn attach_extractions(
     extractions: ExtractionBundle,
 ) -> KnowledgeGraph {
     if let Some(node) = graph.nodes.iter_mut().find(|node| node.id == node_id) {
-        node.properties.insert(
-            "entities".to_string(),
-            GraphProperty::TextList(extractions.entities),
-        );
-        node.properties.insert(
-            "themes".to_string(),
-            GraphProperty::TextList(extractions.themes),
-        );
-        node.properties.insert(
-            "summary".to_string(),
-            GraphProperty::Text(extractions.summary),
-        );
+        node.properties
+            .extend(normalize_extraction_properties(extractions));
     }
 
     graph
