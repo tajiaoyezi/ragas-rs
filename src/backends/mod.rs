@@ -96,11 +96,60 @@ impl Default for BackendRegistry {
 }
 
 pub fn backend_descriptors() -> Vec<BackendDescriptor> {
-    Vec::new()
+    vec![
+        BackendDescriptor::new(
+            BackendFamily::InMemory,
+            BackendMode::Deterministic,
+            BackendCapability::DatasetStorage,
+            false,
+            false,
+            ParityFeatureStatus::Complete,
+        ),
+        BackendDescriptor::new(
+            BackendFamily::LocalJsonl,
+            BackendMode::Deterministic,
+            BackendCapability::DatasetStorage,
+            false,
+            false,
+            ParityFeatureStatus::Complete,
+        ),
+        BackendDescriptor::new(
+            BackendFamily::LocalCsv,
+            BackendMode::Deterministic,
+            BackendCapability::DatasetStorage,
+            false,
+            false,
+            ParityFeatureStatus::Complete,
+        ),
+        BackendDescriptor::new(
+            BackendFamily::DiskCache,
+            BackendMode::Deterministic,
+            BackendCapability::KeyValueCache,
+            true,
+            false,
+            ParityFeatureStatus::Partial,
+        ),
+        BackendDescriptor::new(
+            BackendFamily::GoogleDrive,
+            BackendMode::External,
+            BackendCapability::DatasetStorage,
+            false,
+            true,
+            ParityFeatureStatus::KnownGap,
+        ),
+    ]
 }
 
 pub fn backend_parity_claims() -> Vec<ParityClaim> {
-    Vec::new()
+    backend_descriptors()
+        .into_iter()
+        .filter(|descriptor| descriptor.parity_status != ParityFeatureStatus::Complete)
+        .map(|descriptor| ParityClaim {
+            feature: descriptor.parity_feature(),
+            status: descriptor.parity_status,
+            fixtures: Vec::new(),
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Default)]
@@ -113,7 +162,9 @@ impl DiskCacheCompatibility {
         Self::default()
     }
 
-    pub fn put(&mut self, _key: impl Into<String>, _value: Vec<u8>) {}
+    pub fn put(&mut self, key: impl Into<String>, value: Vec<u8>) {
+        self.entries.insert(key.into(), value);
+    }
 
     pub fn get(&self, key: &str) -> Option<Vec<u8>> {
         self.entries.get(key).cloned()
