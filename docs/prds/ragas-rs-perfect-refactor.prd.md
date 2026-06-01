@@ -68,8 +68,8 @@ Out of scope:
 
 | Phase | Name | Goal | Initial status |
 |---|---|---|---|
-| 17 | latest-baseline-and-quality-gates | Freeze current upstream baseline, replace informal gaps with a machine-readable parity inventory, and define release-blocking quality gates. | Ready |
-| 18 | provider-backend-runtime-parity | Complete provider, backend, cache, tokenizer, cost, callback, and integration-facing parity. | Draft |
+| 17 | latest-baseline-and-quality-gates | Freeze current upstream baseline, replace informal gaps with a machine-readable parity inventory, and define release-blocking quality gates. | Done |
+| 18 | provider-backend-runtime-parity | Complete provider, backend, cache, tokenizer, cost, callback, and integration-facing parity. | Ready |
 | 19 | metric-catalog-golden-parity | Drive every upstream metric to fixture-backed parity or block release. | Draft |
 | 20 | testset-generation-full-parity | Complete graph, transforms, synthesizers, personas, and pre-chunked generation parity. | Draft |
 | 21 | optimizer-experiment-cli-docs-parity | Complete DSPy/MIPROv2, experiment, SDK, CLI, quickstart, and docs parity. | Draft |
@@ -84,6 +84,10 @@ Out of scope:
 | 17.2 | 17 | parity/tests | Expand fixture policy so parity claims require golden data. |
 | 17.3 | 17 | quality | Define stronger test gates and wire them into release evidence. |
 | 17.4 | 17 | release | Establish no-known-bug ledger and release-blocking audit rules. |
+| 18.1 | 18 | runtime | Implement upstream-compatible cache key, lazy tokenizer, and token cost accounting contracts. |
+| 18.2 | 18 | providers | Implement provider adapter capability descriptors, system prompt support, and structured LLM contract metadata. |
+| 18.3 | 18 | backends | Implement backend registry and disk-cache compatibility model for local deterministic CI. |
+| 18.4 | 18 | integrations | Implement integration adapter registry, redaction policy, and callback payload contract coverage. |
 
 ## 8. Decisions
 
@@ -109,4 +113,3 @@ Out of scope:
 
 - Should release parity target upstream `main` only, latest release `v0.4.3` only, or both? Assumption for this PRD: both are tracked; release cannot ignore either.
 - Which live providers can be used in opt-in CI? Assumption: none by default; all live checks are feature-gated and documented.
-

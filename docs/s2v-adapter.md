@@ -105,6 +105,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 15 | optimizers-experiments | docs/specs/phases/phase-15-optimizers-experiments.md | Done | 3 | - |
 | 16 | parity-docs-release | docs/specs/phases/phase-16-parity-docs-release.md | Done | 3 | - |
 | 17 | latest-baseline-and-quality-gates | docs/specs/phases/phase-17-latest-baseline-and-quality-gates.md | Done | 4 | - |
+| 18 | provider-backend-runtime-parity | docs/specs/phases/phase-18-provider-backend-runtime-parity.md | Ready | 4 | - |
 
 ## Task 总索引
 
@@ -154,6 +155,10 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 17.2 | parity-tests | docs/specs/tasks/task-17.2-parity-fixture-policy.md | Done | after task 17.1 | - |
 | 17.3 | quality | docs/specs/tasks/task-17.3-quality-gates.md | Done | after task 17.2 | - |
 | 17.4 | release | docs/specs/tasks/task-17.4-bug-zero-release-audit.md | Done | after task 17.3 | - |
+| 18.1 | runtime | docs/specs/tasks/task-18.1-runtime-cache-tokenizer-cost.md | Ready | after task 17.4 | - |
+| 18.2 | providers | docs/specs/tasks/task-18.2-provider-adapter-contracts.md | Ready | after task 18.1 | - |
+| 18.3 | backends | docs/specs/tasks/task-18.3-backend-registry-diskcache.md | Ready | after task 18.2 | - |
+| 18.4 | integrations | docs/specs/tasks/task-18.4-integration-callback-contracts.md | Ready | after task 18.3 | - |
 
 ## ADR 索引
 
@@ -213,3 +218,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 17.2 | test/features/parity-fixture-policy.feature |
 | 17.3 | test/features/quality-gates.feature |
 | 17.4 | test/features/bug-zero-release-audit.feature |
+| 18.1 | test/features/runtime-cache-tokenizer-cost.feature |
+| 18.2 | test/features/provider-adapter-contracts.feature |
+| 18.3 | test/features/backend-registry-diskcache.feature |
+| 18.4 | test/features/integration-callback-contracts.feature |
