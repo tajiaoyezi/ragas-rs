@@ -22,7 +22,10 @@ pub use rag::{
     context_recall, context_relevance, factual_correctness, id_based_context_precision,
     noise_sensitivity, response_groundedness,
 };
-pub use registry::{MetricRegistry, MetricRegistryEntry, ParityStatus};
+pub use registry::{
+    MetricCatalogDescriptor, MetricCatalogFamily, MetricFixtureCoverage, MetricRegistry,
+    MetricRegistryEntry, ParityStatus, metric_catalog, metric_catalog_parity_claims,
+};
 pub use result::{
     DetailedMetricResult, MetricError, MetricErrorKind, MetricEvidence, MetricValueType,
     ScoreNormalizationPolicy, normalize_score,

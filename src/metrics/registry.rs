@@ -1,7 +1,70 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::MetricMetadata;
-use crate::RagasError;
+use super::{MetricMetadata, MetricProviderRequirement, MetricSampleKind, MetricValueType};
+use crate::{ParityClaim, ParityFeatureStatus, RagasError};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum MetricCatalogFamily {
+    ContextPrecision,
+    ContextRecall,
+    ContextEntityRecall,
+    ContextRelevance,
+    Faithfulness,
+    ResponseRelevancy,
+    ResponseGroundedness,
+    FactualCorrectness,
+    AnswerRelevancy,
+    AnswerCorrectness,
+    NoiseSensitivity,
+    ExactMatch,
+    Bleu,
+    RougeL,
+    Chrf,
+    SemanticSimilarity,
+    StringSimilarity,
+    Rubrics,
+    AspectCritic,
+    ToolCallAccuracy,
+    ToolCallF1,
+    AgentGoalAccuracy,
+    TopicAdherence,
+    SqlSemanticEquivalence,
+    Multimodal,
+    Summarization,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetricFixtureCoverage {
+    FixtureBacked,
+    Missing,
+    NotRequired,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetricCatalogDescriptor {
+    pub family: MetricCatalogFamily,
+    pub upstream_name: &'static str,
+    pub rust_owner: &'static str,
+    pub sample_kind: MetricSampleKind,
+    pub provider_requirements: Vec<MetricProviderRequirement>,
+    pub output_type: MetricValueType,
+    pub fixture_coverage: MetricFixtureCoverage,
+    pub parity_status: ParityFeatureStatus,
+}
+
+impl MetricCatalogDescriptor {
+    pub fn parity_feature(&self) -> String {
+        format!("metric::{}", self.upstream_name)
+    }
+}
+
+pub fn metric_catalog() -> Vec<MetricCatalogDescriptor> {
+    Vec::new()
+}
+
+pub fn metric_catalog_parity_claims() -> Vec<ParityClaim> {
+    Vec::new()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParityStatus {
@@ -123,7 +186,7 @@ impl MetricRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MetricProviderRequirement, MetricSampleKind};
+    use crate::release_blocking_claims;
 
     fn entry(name: &str) -> MetricRegistryEntry {
         MetricRegistryEntry::new(
@@ -198,5 +261,93 @@ mod tests {
 
         let registered = entry("faithfulness").with_parity_status(ParityStatus::KnownGap);
         assert_eq!(registered.parity_label(), "known-gap");
+    }
+
+    #[test]
+    fn test_19_1_1_metric_catalog_descriptors_list_upstream_families_and_owners() {
+        // SCEN-19.1.1 / AC1 / TEST-19.1.1
+        let catalog = metric_catalog();
+        let families: BTreeSet<_> = catalog.iter().map(|descriptor| descriptor.family).collect();
+
+        for expected in [
+            MetricCatalogFamily::ContextPrecision,
+            MetricCatalogFamily::ContextRecall,
+            MetricCatalogFamily::Faithfulness,
+            MetricCatalogFamily::ResponseRelevancy,
+            MetricCatalogFamily::FactualCorrectness,
+            MetricCatalogFamily::AnswerCorrectness,
+            MetricCatalogFamily::SemanticSimilarity,
+            MetricCatalogFamily::AspectCritic,
+            MetricCatalogFamily::ToolCallAccuracy,
+            MetricCatalogFamily::TopicAdherence,
+            MetricCatalogFamily::SqlSemanticEquivalence,
+            MetricCatalogFamily::Multimodal,
+            MetricCatalogFamily::Summarization,
+        ] {
+            assert!(families.contains(&expected), "missing {expected:?}");
+        }
+
+        assert!(catalog.iter().all(|descriptor| {
+            !descriptor.upstream_name.is_empty() && !descriptor.rust_owner.is_empty()
+        }));
+    }
+
+    #[test]
+    fn test_19_1_2_metric_catalog_records_scoring_contract_metadata() {
+        // SCEN-19.1.2 / AC2 / TEST-19.1.2
+        let catalog = metric_catalog();
+        let faithfulness = catalog
+            .iter()
+            .find(|descriptor| descriptor.family == MetricCatalogFamily::Faithfulness)
+            .expect("faithfulness descriptor");
+
+        assert_eq!(faithfulness.sample_kind, MetricSampleKind::SingleTurn);
+        assert!(
+            faithfulness
+                .provider_requirements
+                .contains(&MetricProviderRequirement::Llm)
+        );
+        assert_eq!(faithfulness.output_type, MetricValueType::Numeric);
+        assert_ne!(
+            faithfulness.fixture_coverage,
+            MetricFixtureCoverage::NotRequired
+        );
+
+        let semantic = catalog
+            .iter()
+            .find(|descriptor| descriptor.family == MetricCatalogFamily::SemanticSimilarity)
+            .expect("semantic descriptor");
+        assert!(
+            semantic
+                .provider_requirements
+                .contains(&MetricProviderRequirement::Embedding)
+        );
+    }
+
+    #[test]
+    fn test_19_1_3_metrics_without_complete_fixture_parity_block_release() {
+        // SCEN-19.1.3 / AC3 / TEST-19.1.3
+        let claims = metric_catalog_parity_claims();
+        let blockers = release_blocking_claims(&claims);
+        let blocking_features: BTreeSet<_> = blockers
+            .iter()
+            .map(|claim| claim.feature.as_str())
+            .collect();
+
+        for expected in [
+            "metric::summarization",
+            "metric::multimodal",
+            "metric::sql_semantic_equivalence",
+        ] {
+            assert!(
+                blocking_features.contains(expected),
+                "missing metric release blocker {expected}"
+            );
+        }
+
+        assert!(claims.iter().all(|claim| {
+            !(blocking_features.contains(claim.feature.as_str())
+                && claim.status == ParityFeatureStatus::Complete)
+        }));
     }
 }
