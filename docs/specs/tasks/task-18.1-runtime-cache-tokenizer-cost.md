@@ -1,6 +1,6 @@
 # Task 18.1 - runtime-cache-tokenizer-cost
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 18
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -82,4 +82,3 @@ RED tests own final signatures; public exports must be added through `src/lib.rs
 - **§9 Verification 结果**：<TBD-after-impl>
 - **剩余风险 / 未做项**：<TBD-after-impl>
 - **下游 task 影响**：<TBD-after-impl>
-
