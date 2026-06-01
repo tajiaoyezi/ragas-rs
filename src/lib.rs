@@ -89,7 +89,11 @@ pub use prompts::{
 pub use providers::{
     MockEmbeddingProvider, MockLlmProvider, ProviderRegistry, record_provider_usage,
 };
-pub use release::release_gate_files;
+pub use release::{
+    GateEvidenceStatus, QualityGateEvidence, QualityGateKind, QualityGateSummary,
+    ReleaseGateReport, quality_gate_blockers, release_gate_files, required_quality_gates,
+    summarize_quality_gates,
+};
 pub use runtime::{
     AsyncExecutor, CacheKey, CallbackManager, CancellationConfig, ExecutorJobResult,
     ExecutorOutcome, ExecutorReport, ProgressEvent, ProgressEventKind, RetryConfig, RunConfig,
