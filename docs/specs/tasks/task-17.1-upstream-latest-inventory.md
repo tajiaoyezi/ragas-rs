@@ -1,6 +1,6 @@
 # Task 17.1 - upstream-latest-inventory
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 17
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -54,9 +54,9 @@ RED tests own the final signatures, but the task must provide a stable query for
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|---|
-| AC1 | SCEN-17.1.1 | TEST-17.1.1 | Not Started |
-| AC2 | SCEN-17.1.2 | TEST-17.1.2 | Not Started |
-| AC3 | SCEN-17.1.3 | TEST-17.1.3 | Not Started |
+| AC1 | SCEN-17.1.1 | TEST-17.1.1 | Done |
+| AC2 | SCEN-17.1.2 | TEST-17.1.2 | Done |
+| AC3 | SCEN-17.1.3 | TEST-17.1.3 | Done |
 
 ## 8. Risks
 
@@ -73,9 +73,20 @@ RED tests own the final signatures, but the task must provide a stable query for
 
 ## 10. Completion Notes
 
-- **完成日期**：<TBD-after-impl>
-- **改动文件**：<TBD-after-impl>
-- **commit 列表**：<TBD-after-impl>
-- **§9 Verification 结果**：<TBD-after-impl>
-- **剩余风险 / 未做项**：<TBD-after-impl>
-- **下游 task 影响**：<TBD-after-impl>
+- **完成日期**：2026-06-01
+- **改动文件**：
+  - `src/parity/mod.rs`（新增 upstream baseline、inventory entry、release-blocking inventory 查询和 TEST-17.1.1~17.1.3）
+  - `src/lib.rs`（导出 upstream baseline / inventory public API）
+- **commit 列表**：
+  - `c00a3ec` docs(spec): add latest upstream parity phase
+  - `cfc1956` docs(spec): task-17.1 进入实施
+  - `75b132c` test(parity): 加 task-17.1 RED 测试
+  - `df581a9` feat(parity): 实现 task-17.1 upstream inventory
+- **§9 Verification 结果**：
+  - install: ✅ `cargo build`
+  - typecheck: ✅ `cargo check`
+  - unit-test: ✅ `cargo test` (124 passed / 0 failed)
+  - build: ✅ `cargo build`
+  - extra: ✅ `cargo test parity::` (6 passed / 0 failed)
+- **剩余风险 / 未做项**：当前 inventory 是类别级 release blocker；task 17.2 必须把 `ParityComplete` 与 fixture evidence 绑定，后续 phases 18-23 需要继续拆到具体 provider/metric/testset feature。
+- **下游 task 影响**：task 17.2 可复用 `UpstreamInventoryEntry` 和 `release_blocking_inventory`；task 17.3/17.4 可把未完成 category 作为 release gate 输入。
