@@ -1,6 +1,6 @@
 # Task 19.3 - metric-release-blockers
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 19
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -54,9 +54,9 @@ RED tests own final signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-19.3.1 | TEST-19.3.1 | Not Started |
-| AC2 | SCEN-19.3.2 | TEST-19.3.2 | Not Started |
-| AC3 | SCEN-19.3.3 | TEST-19.3.3 | Not Started |
+| AC1 | SCEN-19.3.1 | TEST-19.3.1 | Done |
+| AC2 | SCEN-19.3.2 | TEST-19.3.2 | Done |
+| AC3 | SCEN-19.3.3 | TEST-19.3.3 | Done |
 
 ## 8. Risks
 
@@ -72,9 +72,17 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：<TBD-after-impl>
-- **改动文件**：<TBD-after-impl>
-- **commit 列表**：<TBD-after-impl>
-- **§9 Verification 结果**：<TBD-after-impl>
-- **剩余风险 / 未做项**：<TBD-after-impl>
-- **下游 task 影响**：<TBD-after-impl>
+- **完成日期**：2026-06-01
+- **改动文件**：src/release/mod.rs; src/lib.rs
+- **commit 列表**：
+  - b488785 docs(spec): task-19.3 进入实施
+  - 28be2d1 test(release): 加 task-19.3 RED 测试
+  - 284eb56 feat(release): 实现 task-19.3 metric release blockers
+- **RED 结果**：`cargo test test_19_3` failed as expected because metric release blocker aggregation did not include catalog or unclassified blockers.
+- **§9 Verification 结果**：
+  - install: `cargo build` passed
+  - typecheck: `cargo check` passed
+  - unit-test: `cargo test` passed, 154 passed / 0 failed
+  - build: `cargo build` passed
+- **剩余风险 / 未做项**：Most metric families remain release-blocking until golden fixtures are added and drift is resolved; Phase 19 intentionally prevents release claims from hiding those gaps.
+- **下游 task 影响**：Later release ledger tasks can consume `metric_release_blockers()` and `summarize_metric_release_blockers()` as one source of release blockers.
