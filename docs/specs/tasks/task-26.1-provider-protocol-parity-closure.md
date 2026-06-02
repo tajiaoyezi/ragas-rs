@@ -1,6 +1,6 @@
 # Task 26.1 - provider-protocol-parity-closure
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 26
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -68,9 +68,9 @@ RED tests own final signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-26.1.1 | TEST-26.1.1 | Spec Ready |
-| AC2 | SCEN-26.1.2 | TEST-26.1.2 | Spec Ready |
-| AC3 | SCEN-26.1.3 | TEST-26.1.3 | Spec Ready |
+| AC1 | SCEN-26.1.1 | TEST-26.1.1 | Done |
+| AC2 | SCEN-26.1.2 | TEST-26.1.2 | Done |
+| AC3 | SCEN-26.1.3 | TEST-26.1.3 | Done |
 
 ## 8. Risks
 
@@ -89,9 +89,20 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施后回填
-- **改动文件**：待实施后回填
-- **commit 列表**：待实施后回填
-- **§9 Verification 结果**：待实施后回填
-- **剩余风险 / 未做项**：待实施后回填
-- **下游 task 影响**：待实施后回填
+- **完成日期**：2026-06-02
+- **改动文件**：`src/providers.rs`; `src/lib.rs`; `src/release/mod.rs`; `tests/parity/fixtures/provider_openai_compatible.json`; `tests/parity/fixtures/provider_azure_openai.json`; `tests/parity/fixtures/provider_litellm.json`; `tests/parity/fixtures/provider_instructor.json`; `tests/parity/fixtures/provider_haystack.json`; `tests/parity/fixtures/provider_huggingface.json`; `tests/parity/fixtures/provider_google.json`; `tests/parity/fixtures/provider_oci_genai.json`; `docs/specs/tasks/task-26.1-provider-protocol-parity-closure.md`
+- **commit 列表**：
+  - `68b8746 docs(spec): add task-26.1 provider protocol parity closure`
+  - `37daa10 docs(spec): task-26.1 进入实施`
+  - `f008a25 test(providers): 加 task-26.1 RED 测试`
+  - `f9e096e feat(providers): 实现 task-26.1 provider protocol parity closure`
+- **RED 结果**：`cargo test test_26_1` failed as expected with 3 tests discovered, 0 passed, 3 failed. The failures were `TEST-26.1.1`, `TEST-26.1.2`, and `TEST-26.1.3`, covering missing provider protocol descriptors, unimplemented request planning, and stale provider release blockers.
+- **§9 Verification 结果**：
+  - Install: `cargo build` passed.
+  - Typecheck: `cargo check` passed.
+  - Unit Test: `cargo test` passed with 205 passed, 0 failed.
+  - Build: `cargo build` passed.
+  - Providers Test: `cargo test providers::` passed with 9 passed, 0 failed.
+  - Parity Test: `cargo test parity::` passed with 12 passed, 0 failed.
+- **剩余风险 / 未做项**：Default CI now proves provider request-planning, auth redaction, fixture metadata, and release-ledger closure; live vendor authentication, quotas, SDK-specific runtime behavior, and network failures remain opt-in live-service evidence and are not claimed as default CI coverage.
+- **下游 task 影响**：Provider release blockers dropped from 8 to 0; consolidated ledger moved from 65 to 57 non-waived blockers and now starts with Integration, Metric, Testset, Optimizer, and Quality categories.
