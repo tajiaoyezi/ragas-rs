@@ -170,7 +170,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 20.1 | testset | docs/specs/tasks/task-20.1-graph-persistence-query-parity.md | Done | after task 19.3 | - |
 | 20.2 | testset | docs/specs/tasks/task-20.2-transform-engine-extractor-parity.md | Done | after task 20.1 | - |
 | 20.3 | testset | docs/specs/tasks/task-20.3-synthesizer-prompt-fixture-parity.md | Done | after task 20.2 | - |
-| 21.1 | optimizers | docs/specs/tasks/task-21.1-dspy-mipro-cache-contracts.md | Ready | after task 20.3 | - |
+| 21.1 | optimizers | docs/specs/tasks/task-21.1-dspy-mipro-cache-contracts.md | Done | after task 20.3 | - |
 | 21.2 | cli | docs/specs/tasks/task-21.2-experiment-sdk-cli-contracts.md | Ready | after task 21.1 | - |
 | 21.3 | docs | docs/specs/tasks/task-21.3-quickstart-docs-parity.md | Ready | after task 21.2 | - |
 | 22.1 | quality | docs/specs/tasks/task-22.1-property-fuzz-coverage-gates.md | Ready | after task 21.3 | - |
