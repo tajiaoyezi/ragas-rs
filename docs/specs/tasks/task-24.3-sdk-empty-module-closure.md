@@ -1,6 +1,6 @@
 # Task 24.3 - sdk-empty-module-closure
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 24
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
