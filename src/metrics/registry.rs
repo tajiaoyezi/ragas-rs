@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{MetricMetadata, MetricProviderRequirement, MetricSampleKind, MetricValueType};
-use crate::{ParityClaim, ParityFeatureStatus, RagasError};
+use crate::{ParityClaim, ParityFeatureStatus, ParityFixtureMetadata, RagasError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum MetricCatalogFamily {
@@ -367,6 +367,10 @@ pub fn metric_catalog_parity_claims() -> Vec<ParityClaim> {
         .collect()
 }
 
+pub fn metric_golden_fixture_metadata() -> Vec<ParityFixtureMetadata> {
+    Vec::new()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParityStatus {
     ParityComplete,
@@ -487,6 +491,13 @@ impl MetricRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parity::{
+        MetricGoldenOutcome, compare_metric_golden_fixture, parse_metric_golden_fixture,
+        validate_metric_golden_claim,
+    };
+    use crate::release::{
+        ReleaseBlockerCategory, build_release_blocker_ledger, summarize_release_blocker_ledger,
+    };
     use crate::release_blocking_claims;
 
     fn entry(name: &str) -> MetricRegistryEntry {
@@ -650,5 +661,110 @@ mod tests {
             !(blocking_features.contains(claim.feature.as_str())
                 && claim.status == ParityFeatureStatus::Complete)
         }));
+    }
+
+    #[test]
+    fn test_28_1_1_metric_catalog_descriptors_are_complete_and_fixture_backed() {
+        // SCEN-28.1.1 / AC1 / TEST-28.1.1
+        let catalog = metric_catalog();
+        let metadata = metric_golden_fixture_metadata();
+        let fixture_features = metadata
+            .iter()
+            .map(|fixture| fixture.feature.as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(
+            metadata.len(),
+            catalog.len(),
+            "each metric catalog descriptor must have one golden fixture metadata entry"
+        );
+
+        for descriptor in &catalog {
+            assert_eq!(
+                descriptor.parity_status,
+                ParityFeatureStatus::Complete,
+                "{} must be marked complete only after fixture evidence exists",
+                descriptor.upstream_name
+            );
+            assert_eq!(
+                descriptor.fixture_coverage,
+                MetricFixtureCoverage::FixtureBacked,
+                "{} must be fixture-backed",
+                descriptor.upstream_name
+            );
+            assert!(
+                fixture_features.contains(descriptor.upstream_name),
+                "{} missing golden fixture metadata",
+                descriptor.upstream_name
+            );
+        }
+
+        assert!(metadata.iter().all(|fixture| {
+            fixture.upstream_module_path.starts_with("src/ragas/metrics/")
+                && fixture.fixture_path.starts_with("tests/parity/fixtures/metric_")
+        }));
+    }
+
+    #[test]
+    fn test_28_1_2_metric_golden_fixtures_parse_and_compare_for_all_tracked_metrics() {
+        // SCEN-28.1.2 / AC2 / TEST-28.1.2
+        let metadata = metric_golden_fixture_metadata();
+        assert_eq!(metadata.len(), metric_catalog().len());
+
+        let mut checked = BTreeSet::new();
+        for fixture_metadata in metadata {
+            let fixture_path = fixture_metadata.fixture_path.clone();
+            let raw = std::fs::read_to_string(&fixture_path).expect("metric fixture file");
+            let golden =
+                parse_metric_golden_fixture(&raw, fixture_metadata).expect("metric fixture parses");
+            let comparison = compare_metric_golden_fixture(&golden);
+            assert!(
+                matches!(
+                    comparison.outcome,
+                    MetricGoldenOutcome::ExactMatch | MetricGoldenOutcome::ToleratedNumericDrift
+                ),
+                "{} has undeclared drift: {:?}",
+                comparison.feature,
+                comparison.drift
+            );
+            validate_metric_golden_claim(&ParityClaim {
+                feature: format!("metric::{}", golden.metadata.feature),
+                status: ParityFeatureStatus::Complete,
+                fixtures: vec![golden.metadata.clone()],
+            })
+            .expect("complete metric claim validates");
+            checked.insert(golden.metadata.feature);
+        }
+
+        assert_eq!(checked.len(), metric_catalog().len());
+    }
+
+    #[test]
+    fn test_28_1_3_metric_release_ledger_has_no_metric_blockers_after_fixture_closure() {
+        // SCEN-28.1.3 / AC3 / TEST-28.1.3
+        let ledger = build_release_blocker_ledger();
+        let summary = summarize_release_blocker_ledger(&ledger);
+        let categories = ledger
+            .entries
+            .iter()
+            .map(|entry| entry.category)
+            .collect::<BTreeSet<_>>();
+
+        assert!(
+            !categories.contains(&ReleaseBlockerCategory::Metric),
+            "metric release blockers must be fully closed"
+        );
+        assert!(!summary.by_category.contains_key(&ReleaseBlockerCategory::Metric));
+
+        for expected in [
+            ReleaseBlockerCategory::Testset,
+            ReleaseBlockerCategory::Optimizer,
+            ReleaseBlockerCategory::Quality,
+        ] {
+            assert!(
+                categories.contains(&expected),
+                "non-metric category {expected:?} should remain until its own closure task"
+            );
+        }
     }
 }
