@@ -1,6 +1,6 @@
 # Task 23.2 - gap-resolution-and-waiver-policy
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 23
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
