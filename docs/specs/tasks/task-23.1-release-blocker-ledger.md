@@ -1,6 +1,6 @@
 # Task 23.1 - release-blocker-ledger
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 23
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
