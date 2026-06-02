@@ -1,6 +1,6 @@
 # Task 21.3 - quickstart-docs-parity
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 21
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -45,17 +45,17 @@ RED tests own final signatures.
 
 ## 6. Acceptance Criteria
 
-- [ ] **AC1**: Quickstart registry maps upstream quickstart names to Rust examples or known gaps.
-- [ ] **AC2**: Runnable example metadata includes command, expected output type, and feature flags.
-- [ ] **AC3**: Missing or non-runnable docs examples create release-blocking claims.
+- [x] **AC1**: Quickstart registry maps upstream quickstart names to Rust examples or known gaps.
+- [x] **AC2**: Runnable example metadata includes command, expected output type, and feature flags.
+- [x] **AC3**: Missing or non-runnable docs examples create release-blocking claims.
 
 ## 7. Traceability
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-21.3.1 | TEST-21.3.1 | Not Started |
-| AC2 | SCEN-21.3.2 | TEST-21.3.2 | Not Started |
-| AC3 | SCEN-21.3.3 | TEST-21.3.3 | Not Started |
+| AC1 | SCEN-21.3.1 | TEST-21.3.1 | Done |
+| AC2 | SCEN-21.3.2 | TEST-21.3.2 | Done |
+| AC3 | SCEN-21.3.3 | TEST-21.3.3 | Done |
 
 ## 8. Risks
 
@@ -71,9 +71,19 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：<TBD-after-impl>
-- **改动文件**：<TBD-after-impl>
-- **commit 列表**：<TBD-after-impl>
-- **§9 Verification 结果**：<TBD-after-impl>
-- **剩余风险 / 未做项**：<TBD-after-impl>
-- **下游 task 影响**：<TBD-after-impl>
+- **完成日期**：2026-06-02
+- **改动文件**：
+  - `src/docs_examples/mod.rs`（新增 quickstart descriptor registry、runnable example metadata、docs parity release blockers 与 TEST-21.3.1~21.3.3）
+  - `src/lib.rs`（导出 docs parity public API）
+- **commit 列表**：
+  - `44d01fd` docs(spec): task-21.3 Ready gate format
+  - `a54e5f5` docs(spec): task-21.3 进入实施
+  - `fbd9893` test(docs): 加 task-21.3 RED 测试
+  - `050a94e` feat(docs): 实现 task-21.3 quickstart docs parity
+- **§9 Verification 结果**：
+  - Install: passed (`cargo build`)
+  - Typecheck: passed (`cargo check`)
+  - Unit Test: passed, 172 passed / 0 failed (`cargo test`)
+  - Build: passed (`cargo build`)
+- **剩余风险 / 未做项**：Docs parity registry blocks missing upstream quickstarts at release, but hosted documentation publishing remains out of scope.
+- **下游 task 影响**：Phase 22 quality tasks can include quickstart example metadata and docs release blockers in coverage, panic-safety, E2E, and release audit evidence.
