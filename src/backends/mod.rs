@@ -3,9 +3,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
-    EvaluationDataset, EvaluationSample, ParityClaim, ParityFeatureStatus, RagasError,
-    SingleTurnSample,
+    EvaluationDataset, EvaluationSample, ParityClaim, ParityFeatureStatus, ParityFixtureMetadata,
+    ParityFixtureMode, RagasError, SingleTurnSample,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -130,7 +132,7 @@ pub fn backend_descriptors() -> Vec<BackendDescriptor> {
             BackendCapability::KeyValueCache,
             true,
             false,
-            ParityFeatureStatus::Partial,
+            ParityFeatureStatus::Complete,
         ),
         BackendDescriptor::new(
             BackendFamily::GoogleDrive,
@@ -146,13 +148,49 @@ pub fn backend_descriptors() -> Vec<BackendDescriptor> {
 pub fn backend_parity_claims() -> Vec<ParityClaim> {
     backend_descriptors()
         .into_iter()
-        .filter(|descriptor| descriptor.parity_status != ParityFeatureStatus::Complete)
-        .map(|descriptor| ParityClaim {
-            feature: descriptor.parity_feature(),
-            status: descriptor.parity_status,
-            fixtures: Vec::new(),
+        .filter_map(|descriptor| {
+            let feature = descriptor.parity_feature();
+            if descriptor.family == BackendFamily::DiskCache {
+                return Some(ParityClaim {
+                    feature,
+                    status: descriptor.parity_status,
+                    fixtures: vec![backend_fixture_metadata(
+                        "backend::disk-cache",
+                        "src/ragas/cache.py",
+                        Some("tests/unit/test_cache.py"),
+                        "tests/parity/fixtures/backend_disk_cache.json",
+                    )],
+                });
+            }
+            (descriptor.parity_status != ParityFeatureStatus::Complete).then_some(ParityClaim {
+                feature,
+                status: descriptor.parity_status,
+                fixtures: Vec::new(),
+            })
         })
         .collect()
+}
+
+fn backend_fixture_metadata(
+    feature: &str,
+    upstream_module_path: &str,
+    upstream_test_path: Option<&str>,
+    fixture_path: &str,
+) -> ParityFixtureMetadata {
+    ParityFixtureMetadata::new(
+        feature,
+        upstream_module_path,
+        upstream_test_path.map(str::to_string),
+        fixture_path,
+        ParityFixtureMode::DeterministicMock,
+        None,
+    )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DiskCacheRecord {
+    key: String,
+    value: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -167,20 +205,31 @@ impl DiskCacheCompatibility {
     }
 
     pub fn open(cache_dir: impl AsRef<Path>) -> Result<Self, RagasError> {
+        let directory = cache_dir.as_ref().to_path_buf();
+        std::fs::create_dir_all(&directory).map_err(|error| {
+            dataset_io_error(format!(
+                "disk cache directory create failed for {}: {error}",
+                directory.display()
+            ))
+        })?;
+        let entries = load_disk_cache_entries(&directory)?;
         Ok(Self {
-            entries: BTreeMap::new(),
-            directory: Some(cache_dir.as_ref().to_path_buf()),
+            entries,
+            directory: Some(directory),
         })
     }
 
     pub fn set(&mut self, key: impl Into<String>, value: Vec<u8>) -> Result<(), RagasError> {
-        let _ = (key.into(), value, &self.directory);
+        let key = key.into();
+        if let Some(directory) = &self.directory {
+            write_disk_cache_record(directory, &key, &value)?;
+        }
+        self.entries.insert(key, value);
         Ok(())
     }
 
     pub fn has_key(&self, key: &str) -> bool {
-        let _ = (&self.directory, key);
-        false
+        self.entries.contains_key(key)
     }
 
     pub fn put(&mut self, key: impl Into<String>, value: Vec<u8>) {
@@ -192,11 +241,102 @@ impl DiskCacheCompatibility {
     }
 
     pub fn delete(&mut self, key: &str) -> bool {
-        self.entries.remove(key).is_some()
+        let removed = self.entries.remove(key).is_some();
+        if removed {
+            if let Some(directory) = &self.directory {
+                let path = disk_cache_record_path(directory, key);
+                match std::fs::remove_file(path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => {}
+                }
+            }
+        }
+        removed
     }
 
     pub fn keys(&self) -> Vec<String> {
         self.entries.keys().cloned().collect()
+    }
+}
+
+fn load_disk_cache_entries(directory: &Path) -> Result<BTreeMap<String, Vec<u8>>, RagasError> {
+    let mut entries = BTreeMap::new();
+    for entry in std::fs::read_dir(directory).map_err(|error| {
+        dataset_io_error(format!(
+            "disk cache directory read failed for {}: {error}",
+            directory.display()
+        ))
+    })? {
+        let entry =
+            entry.map_err(|error| dataset_io_error(format!("disk cache entry failed: {error}")))?;
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+            continue;
+        }
+        let bytes = std::fs::read(&path).map_err(|error| {
+            dataset_io_error(format!(
+                "disk cache record read failed for {}: {error}",
+                path.display()
+            ))
+        })?;
+        let record: DiskCacheRecord = serde_json::from_slice(&bytes).map_err(|error| {
+            dataset_io_error(format!(
+                "disk cache record parse failed for {}: {error}",
+                path.display()
+            ))
+        })?;
+        entries.insert(record.key, record.value);
+    }
+    Ok(entries)
+}
+
+fn write_disk_cache_record(directory: &Path, key: &str, value: &[u8]) -> Result<(), RagasError> {
+    std::fs::create_dir_all(directory).map_err(|error| {
+        dataset_io_error(format!(
+            "disk cache directory create failed for {}: {error}",
+            directory.display()
+        ))
+    })?;
+    let path = disk_cache_record_path(directory, key);
+    let record = DiskCacheRecord {
+        key: key.to_string(),
+        value: value.to_vec(),
+    };
+    let bytes = serde_json::to_vec(&record).map_err(|error| {
+        dataset_io_error(format!(
+            "disk cache record encode failed for key {key}: {error}"
+        ))
+    })?;
+    std::fs::write(&path, bytes).map_err(|error| {
+        dataset_io_error(format!(
+            "disk cache record write failed for {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+fn disk_cache_record_path(directory: &Path, key: &str) -> PathBuf {
+    directory.join(format!("{}.json", key_to_hex_file_stem(key)))
+}
+
+fn key_to_hex_file_stem(key: &str) -> String {
+    if key.is_empty() {
+        return "empty".to_string();
+    }
+    let mut encoded = String::with_capacity(key.len() * 2);
+    for byte in key.as_bytes() {
+        encoded.push(nibble_to_hex(byte >> 4));
+        encoded.push(nibble_to_hex(byte & 0x0f));
+    }
+    encoded
+}
+
+fn nibble_to_hex(nibble: u8) -> char {
+    match nibble {
+        0..=9 => (b'0' + nibble) as char,
+        10..=15 => (b'a' + nibble - 10) as char,
+        _ => unreachable!("nibble is masked to 4 bits"),
     }
 }
 

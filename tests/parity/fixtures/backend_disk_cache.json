@@ -1,0 +1,26 @@
+{
+  "feature": "backend::disk-cache",
+  "python_baseline": {
+    "upstream_module": "src/ragas/cache.py",
+    "upstream_test": "tests/unit/test_cache.py",
+    "operations": [
+      "set",
+      "get",
+      "has_key"
+    ],
+    "persists_across_instances": true
+  },
+  "rust_output": {
+    "implementation": "DiskCacheCompatibility::open",
+    "operations": [
+      "set",
+      "get",
+      "has_key",
+      "delete",
+      "keys"
+    ],
+    "persists_across_instances": true,
+    "path_policy": "hex-encoded key file names"
+  },
+  "tolerance": null
+}
