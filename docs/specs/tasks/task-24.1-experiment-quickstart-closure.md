@@ -1,6 +1,6 @@
 # Task 24.1 - experiment-quickstart-closure
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 24
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -57,9 +57,9 @@ RED tests own final signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-24.1.1 | TEST-24.1.1 | Spec Ready |
-| AC2 | SCEN-24.1.2 | TEST-24.1.2 | Spec Ready |
-| AC3 | SCEN-24.1.3 | TEST-24.1.3 | Spec Ready |
+| AC1 | SCEN-24.1.1 | TEST-24.1.1 | Done |
+| AC2 | SCEN-24.1.2 | TEST-24.1.2 | Done |
+| AC3 | SCEN-24.1.3 | TEST-24.1.3 | Done |
 
 ## 8. Risks
 
@@ -77,9 +77,21 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施后回填
-- **改动文件**：待实施后回填
-- **commit 列表**：待实施后回填
-- **§9 Verification 结果**：待实施后回填
-- **剩余风险 / 未做项**：待实施后回填
-- **下游 task 影响**：待实施后回填
+- **完成日期**：2026-06-02
+- **改动文件**：
+  - `src/docs_examples/mod.rs`（新增 `Run experiments` runnable metadata、fixture-backed docs parity claim 与 TEST-24.1.1~24.1.3）
+  - `src/release/mod.rs`（修正 ledger 聚合测试，允许已关闭 docs blockers 后 Docs 类别为空）
+  - `examples/experiment.rs`（新增确定性 experiment quickstart）
+- **commit 列表**：
+  - `8f42d4f` docs(spec): task-24.1 进入实施
+  - `73d9701` test(docs): 加 task-24.1 RED 测试
+  - `45f190d` feat(docs): 实现 task-24.1 experiment quickstart closure
+- **§9 Verification 结果**：
+  - Install: passed (`cargo build`)
+  - Typecheck: passed (`cargo check`)
+  - Unit Test: passed, 193 passed / 0 failed (`cargo test`)
+  - Manual parity: passed, 12 passed / 0 failed (`cargo test parity::`; helper `manual` step requires `/dev/tty`, so parity was verified by direct command execution)
+  - Build: passed (`cargo build`)
+  - Additional smoke: passed (`cargo build --examples`)
+- **剩余风险 / 未做项**：This closes only the `docs::quickstart::experiments` docs release blocker; provider, backend, integration, metric, testset, optimizer, and quality evidence blockers remain outside this task.
+- **下游 task 影响**：Phase 24 can continue with the next release-blocker closure task; final audit must still refuse release until all remaining non-waived blockers and required evidence are resolved.
