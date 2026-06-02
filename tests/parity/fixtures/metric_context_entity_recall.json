@@ -1,0 +1,1 @@
+{"feature":"context_entity_recall","upstream_commit":"298b68274234c060deacab3cf5fb52aa3a20e885","python_baseline":{"score":0.666667,"reason":"two of three entities found in contexts"},"rust_output":{"score":0.666667,"reason":"two of three entities found in contexts"},"tolerance":1e-9,"known_gap":null}

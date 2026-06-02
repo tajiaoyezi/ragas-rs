@@ -1,0 +1,1 @@
+{"feature":"summarization","upstream_commit":"298b68274234c060deacab3cf5fb52aa3a20e885","python_baseline":{"score":0.7,"reason":"average of coverage and conciseness"},"rust_output":{"score":0.7,"reason":"average of coverage and conciseness"},"tolerance":1e-9,"known_gap":null}

@@ -1,0 +1,1 @@
+{"feature":"answer_relevancy","upstream_commit":"298b68274234c060deacab3cf5fb52aa3a20e885","python_baseline":{"score":0.82,"reason":"answer directly addresses the question"},"rust_output":{"score":0.82,"reason":"answer directly addresses the question"},"tolerance":1e-9,"known_gap":null}

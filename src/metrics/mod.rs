@@ -25,6 +25,7 @@ pub use rag::{
 pub use registry::{
     MetricCatalogDescriptor, MetricCatalogFamily, MetricFixtureCoverage, MetricRegistry,
     MetricRegistryEntry, ParityStatus, metric_catalog, metric_catalog_parity_claims,
+    metric_golden_fixture_metadata,
 };
 pub use result::{
     DetailedMetricResult, MetricError, MetricErrorKind, MetricEvidence, MetricValueType,

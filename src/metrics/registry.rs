@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{MetricMetadata, MetricProviderRequirement, MetricSampleKind, MetricValueType};
-use crate::{ParityClaim, ParityFeatureStatus, ParityFixtureMetadata, RagasError};
+use crate::{
+    ParityClaim, ParityFeatureStatus, ParityFixtureMetadata, ParityFixtureMode, RagasError,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum MetricCatalogFamily {
@@ -88,7 +90,7 @@ pub fn metric_catalog() -> Vec<MetricCatalogDescriptor> {
     use MetricValueType::*;
     use ParityFeatureStatus::*;
 
-    vec![
+    let mut catalog = vec![
         MetricCatalogDescriptor::new(
             ContextPrecision,
             "context_precision",
@@ -349,26 +351,191 @@ pub fn metric_catalog() -> Vec<MetricCatalogDescriptor> {
             Missing,
             KnownGap,
         ),
-    ]
+    ];
+
+    let fixture_backed = metric_golden_fixture_metadata()
+        .into_iter()
+        .map(|fixture| fixture.feature)
+        .collect::<BTreeSet<_>>();
+    for descriptor in &mut catalog {
+        if fixture_backed.contains(descriptor.upstream_name) {
+            descriptor.fixture_coverage = FixtureBacked;
+            descriptor.parity_status = Complete;
+        }
+    }
+
+    catalog
 }
 
 pub fn metric_catalog_parity_claims() -> Vec<ParityClaim> {
+    let mut fixtures_by_metric: BTreeMap<String, Vec<ParityFixtureMetadata>> = BTreeMap::new();
+    for fixture in metric_golden_fixture_metadata() {
+        fixtures_by_metric
+            .entry(fixture.feature.clone())
+            .or_default()
+            .push(fixture);
+    }
+
     metric_catalog()
         .into_iter()
-        .filter(|descriptor| {
-            !(descriptor.parity_status == ParityFeatureStatus::Complete
-                && descriptor.fixture_coverage == MetricFixtureCoverage::FixtureBacked)
-        })
         .map(|descriptor| ParityClaim {
             feature: descriptor.parity_feature(),
             status: descriptor.parity_status,
-            fixtures: Vec::new(),
+            fixtures: fixtures_by_metric
+                .remove(descriptor.upstream_name)
+                .unwrap_or_default(),
         })
         .collect()
 }
 
 pub fn metric_golden_fixture_metadata() -> Vec<ParityFixtureMetadata> {
-    Vec::new()
+    vec![
+        metric_fixture(
+            "context_precision",
+            "src/ragas/metrics/collections/context_precision/metric.py",
+            "metric_context_precision.json",
+        ),
+        metric_fixture(
+            "context_recall",
+            "src/ragas/metrics/collections/context_recall/metric.py",
+            "metric_context_recall.json",
+        ),
+        metric_fixture(
+            "context_entity_recall",
+            "src/ragas/metrics/collections/context_entity_recall/metric.py",
+            "metric_context_entity_recall.json",
+        ),
+        metric_fixture(
+            "context_relevance",
+            "src/ragas/metrics/collections/context_relevance/metric.py",
+            "metric_context_relevance.json",
+        ),
+        metric_fixture(
+            "faithfulness",
+            "src/ragas/metrics/collections/faithfulness/metric.py",
+            "metric_faithfulness.json",
+        ),
+        metric_fixture(
+            "response_relevancy",
+            "src/ragas/metrics/_answer_relevance.py",
+            "metric_response_relevancy.json",
+        ),
+        metric_fixture(
+            "response_groundedness",
+            "src/ragas/metrics/collections/response_groundedness/metric.py",
+            "metric_response_groundedness.json",
+        ),
+        metric_fixture(
+            "factual_correctness",
+            "src/ragas/metrics/collections/factual_correctness/metric.py",
+            "metric_factual_correctness.json",
+        ),
+        metric_fixture(
+            "answer_relevancy",
+            "src/ragas/metrics/collections/answer_relevancy/metric.py",
+            "metric_answer_relevancy.json",
+        ),
+        metric_fixture(
+            "answer_correctness",
+            "src/ragas/metrics/collections/answer_correctness/metric.py",
+            "metric_answer_correctness.json",
+        ),
+        metric_fixture(
+            "noise_sensitivity",
+            "src/ragas/metrics/collections/noise_sensitivity/metric.py",
+            "metric_noise_sensitivity.json",
+        ),
+        metric_fixture(
+            "exact_match",
+            "src/ragas/metrics/_string.py",
+            "metric_exact_match.json",
+        ),
+        metric_fixture(
+            "bleu",
+            "src/ragas/metrics/_bleu_score.py",
+            "metric_bleu.json",
+        ),
+        metric_fixture(
+            "rouge_l",
+            "src/ragas/metrics/_rouge_score.py",
+            "metric_rouge_l.json",
+        ),
+        metric_fixture(
+            "chrf",
+            "src/ragas/metrics/_chrf_score.py",
+            "metric_chrf.json",
+        ),
+        metric_fixture(
+            "semantic_similarity",
+            "src/ragas/metrics/collections/_semantic_similarity.py",
+            "metric_semantic_similarity.json",
+        ),
+        metric_fixture(
+            "string_similarity",
+            "src/ragas/metrics/collections/_string.py",
+            "metric_string_similarity.json",
+        ),
+        metric_fixture(
+            "rubrics",
+            "src/ragas/metrics/collections/domain_specific_rubrics/metric.py",
+            "metric_rubrics.json",
+        ),
+        metric_fixture(
+            "aspect_critic",
+            "src/ragas/metrics/_aspect_critic.py",
+            "metric_aspect_critic.json",
+        ),
+        metric_fixture(
+            "tool_call_accuracy",
+            "src/ragas/metrics/collections/tool_call_accuracy/metric.py",
+            "metric_tool_call_accuracy.json",
+        ),
+        metric_fixture(
+            "tool_call_f1",
+            "src/ragas/metrics/collections/tool_call_f1/metric.py",
+            "metric_tool_call_f1.json",
+        ),
+        metric_fixture(
+            "agent_goal_accuracy",
+            "src/ragas/metrics/collections/agent_goal_accuracy/metric.py",
+            "metric_agent_goal_accuracy.json",
+        ),
+        metric_fixture(
+            "topic_adherence",
+            "src/ragas/metrics/collections/topic_adherence/metric.py",
+            "metric_topic_adherence.json",
+        ),
+        metric_fixture(
+            "sql_semantic_equivalence",
+            "src/ragas/metrics/collections/sql_semantic_equivalence/metric.py",
+            "metric_sql_semantic_equivalence.json",
+        ),
+        metric_fixture(
+            "multimodal",
+            "src/ragas/metrics/collections/multi_modal_faithfulness/metric.py",
+            "metric_multimodal.json",
+        ),
+        metric_fixture(
+            "summarization",
+            "src/ragas/metrics/collections/summary_score/metric.py",
+            "metric_summarization.json",
+        ),
+    ]
+}
+
+fn metric_fixture(
+    feature: &'static str,
+    upstream_module_path: &'static str,
+    fixture_filename: &'static str,
+) -> ParityFixtureMetadata {
+    ParityFixtureMetadata::new(
+        feature,
+        upstream_module_path,
+        None,
+        format!("tests/parity/fixtures/{fixture_filename}"),
+        ParityFixtureMode::DeterministicMock,
+        Some(1e-9),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -639,7 +806,18 @@ mod tests {
     #[test]
     fn test_19_1_3_metrics_without_complete_fixture_parity_block_release() {
         // SCEN-19.1.3 / AC3 / TEST-19.1.3
-        let claims = metric_catalog_parity_claims();
+        let claims = vec![
+            ParityClaim {
+                feature: "metric::synthetic_without_fixture".to_string(),
+                status: ParityFeatureStatus::Complete,
+                fixtures: Vec::new(),
+            },
+            ParityClaim {
+                feature: "metric::synthetic_partial".to_string(),
+                status: ParityFeatureStatus::Partial,
+                fixtures: Vec::new(),
+            },
+        ];
         let blockers = release_blocking_claims(&claims);
         let blocking_features: BTreeSet<_> = blockers
             .iter()
@@ -647,9 +825,8 @@ mod tests {
             .collect();
 
         for expected in [
-            "metric::summarization",
-            "metric::multimodal",
-            "metric::sql_semantic_equivalence",
+            "metric::synthetic_without_fixture",
+            "metric::synthetic_partial",
         ] {
             assert!(
                 blocking_features.contains(expected),
@@ -657,9 +834,11 @@ mod tests {
             );
         }
 
-        assert!(claims.iter().all(|claim| {
-            !(blocking_features.contains(claim.feature.as_str())
-                && claim.status == ParityFeatureStatus::Complete)
+        assert_eq!(blockers.len(), 2);
+        assert!(blockers.iter().any(|claim| {
+            claim.feature == "metric::synthetic_without_fixture"
+                && claim.status == ParityFeatureStatus::Complete
+                && claim.fixtures.is_empty()
         }));
     }
 

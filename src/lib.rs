@@ -80,10 +80,11 @@ pub use metrics::{
     context_precision_from_relevance, context_recall, context_relevance, exact_match,
     extract_quoted_spans, factual_correctness, id_based_context_precision,
     lexical_tokenizer_assumptions, metric_catalog, metric_catalog_parity_claims,
-    multimodal_metric_from_prompt, noise_sensitivity, normalize_score, quoted_citation_coverage,
-    quoted_span_overlap, response_groundedness, rouge_l_recall, score_aspect_critic,
-    semantic_similarity_batch, semantic_similarity_from_vectors, sql_semantic_equivalence,
-    string_distance_similarity, summarization_score_from_judge_output,
+    metric_golden_fixture_metadata, multimodal_metric_from_prompt, noise_sensitivity,
+    normalize_score, quoted_citation_coverage, quoted_span_overlap, response_groundedness,
+    rouge_l_recall, score_aspect_critic, semantic_similarity_batch,
+    semantic_similarity_from_vectors, sql_semantic_equivalence, string_distance_similarity,
+    summarization_score_from_judge_output,
     threshold_semantic_similarity, tool_call_accuracy, tool_call_f1, topic_adherence,
 };
 pub use optimizers::{

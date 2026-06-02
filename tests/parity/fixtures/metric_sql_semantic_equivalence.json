@@ -1,0 +1,1 @@
+{"feature":"sql_semantic_equivalence","upstream_commit":"298b68274234c060deacab3cf5fb52aa3a20e885","python_baseline":{"score":1.0,"reason":"normalized SQL exact match"},"rust_output":{"score":1.0,"reason":"normalized SQL exact match"},"tolerance":1e-9,"known_gap":null}

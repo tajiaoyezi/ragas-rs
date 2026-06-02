@@ -1543,13 +1543,16 @@ mod tests {
         let categories: BTreeSet<_> = ledger.entries.iter().map(|entry| entry.category).collect();
 
         for category in [
-            ReleaseBlockerCategory::Metric,
             ReleaseBlockerCategory::Testset,
             ReleaseBlockerCategory::Optimizer,
             ReleaseBlockerCategory::Quality,
         ] {
             assert!(categories.contains(&category), "missing {category:?}");
         }
+        assert!(
+            !categories.contains(&ReleaseBlockerCategory::Metric),
+            "closed metric claims should not keep Metric in blocker ledger"
+        );
 
         let docs_claims = docs_parity_claims();
         assert!(
@@ -1941,7 +1944,12 @@ mod tests {
     #[test]
     fn test_19_3_1_metric_release_blockers_aggregate_catalog_fixture_and_drift_failures() {
         // SCEN-19.3.1 / AC1 / TEST-19.3.1
-        let catalog_claims = metric_catalog_parity_claims();
+        let mut catalog_claims = metric_catalog_parity_claims();
+        catalog_claims.push(ParityClaim {
+            feature: "metric::synthetic_missing_fixture".to_string(),
+            status: ParityFeatureStatus::Partial,
+            fixtures: Vec::new(),
+        });
         let drift = MetricGoldenComparison {
             feature: "metric::faithfulness".to_string(),
             outcome: MetricGoldenOutcome::UndeclaredDrift,
@@ -1954,11 +1962,11 @@ mod tests {
         assert!(
             catalog_blockers
                 .iter()
-                .any(|claim| claim.feature == "metric::summarization")
+                .any(|claim| claim.feature == "metric::synthetic_missing_fixture")
         );
         assert!(blockers.iter().any(|blocker| {
             blocker.source == MetricReleaseBlockerSource::Catalog
-                && blocker.feature == "metric::summarization"
+                && blocker.feature == "metric::synthetic_missing_fixture"
         }));
         assert!(blockers.iter().any(|blocker| {
             blocker.source == MetricReleaseBlockerSource::FixtureDrift
