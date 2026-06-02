@@ -15,6 +15,8 @@ pub enum QualityGateKind {
     FuzzProperty,
     PanicSafety,
     Mutation,
+    Platform,
+    E2E,
     BugLedgerAudit,
 }
 
@@ -25,6 +27,8 @@ pub enum QualityEvidenceKind {
     Coverage,
     PanicSafety,
     Mutation,
+    Platform,
+    E2E,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -32,6 +36,22 @@ pub enum SafetyFailureClass {
     DirectPanic,
     AsyncTaskPanic,
     UnwindBoundary,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PlatformTarget {
+    LinuxX64,
+    MacOsArm64,
+    WindowsX64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum E2eWorkflow {
+    Evaluate,
+    ProviderMock,
+    DatasetIo,
+    Cli,
+    DocsExamples,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -67,6 +87,24 @@ pub struct MutationGateDescriptor {
     pub command: &'static str,
     pub scope: &'static str,
     pub threshold_percent: u8,
+    pub mode: QualityGateMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlatformEvidenceDescriptor {
+    pub gate_id: &'static str,
+    pub target: PlatformTarget,
+    pub command: &'static str,
+    pub scope: &'static str,
+    pub mode: QualityGateMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct E2eWorkflowDescriptor {
+    pub gate_id: &'static str,
+    pub workflow: E2eWorkflow,
+    pub command: &'static str,
+    pub scope: &'static str,
     pub mode: QualityGateMode,
 }
 
@@ -326,6 +364,8 @@ pub fn required_quality_gates() -> Vec<QualityGateKind> {
         QualityGateKind::FuzzProperty,
         QualityGateKind::PanicSafety,
         QualityGateKind::Mutation,
+        QualityGateKind::Platform,
+        QualityGateKind::E2E,
         QualityGateKind::BugLedgerAudit,
     ]
 }
@@ -464,6 +504,18 @@ pub fn panic_mutation_quality_gate_descriptors() -> Vec<QualityGateDescriptor> {
                 }),
         )
         .collect()
+}
+
+pub fn platform_evidence_matrix() -> Vec<PlatformEvidenceDescriptor> {
+    Vec::new()
+}
+
+pub fn e2e_workflow_matrix() -> Vec<E2eWorkflowDescriptor> {
+    Vec::new()
+}
+
+pub fn platform_e2e_quality_gate_descriptors() -> Vec<QualityGateDescriptor> {
+    Vec::new()
 }
 
 pub fn summarize_quality_gates(report: &ReleaseGateReport) -> QualityGateSummary {
@@ -606,6 +658,8 @@ mod tests {
             QualityGateKind::FuzzProperty,
             QualityGateKind::PanicSafety,
             QualityGateKind::Mutation,
+            QualityGateKind::Platform,
+            QualityGateKind::E2E,
             QualityGateKind::BugLedgerAudit,
         ] {
             assert!(gates.contains(&gate), "missing gate {gate:?}");
@@ -828,6 +882,77 @@ mod tests {
                 .iter()
                 .any(|finding| finding.gate_id == "quality::mutation::extended-campaign")
         );
+    }
+
+    #[test]
+    fn test_22_3_1_platform_matrix_covers_supported_targets() {
+        // SCEN-22.3.1 / AC1 / TEST-22.3.1
+        let matrix = platform_evidence_matrix();
+        let targets: BTreeSet<_> = matrix.iter().map(|entry| entry.target).collect();
+
+        assert!(targets.contains(&PlatformTarget::LinuxX64));
+        assert!(targets.contains(&PlatformTarget::MacOsArm64));
+        assert!(targets.contains(&PlatformTarget::WindowsX64));
+        assert!(matrix.iter().all(|entry| !entry.gate_id.is_empty()));
+        assert!(matrix.iter().all(|entry| !entry.command.is_empty()));
+        assert!(matrix.iter().all(|entry| !entry.scope.is_empty()));
+        assert!(
+            matrix
+                .iter()
+                .all(|entry| entry.mode == QualityGateMode::RequiredReleaseEvidence)
+        );
+    }
+
+    #[test]
+    fn test_22_3_2_e2e_matrix_covers_critical_flows() {
+        // SCEN-22.3.2 / AC2 / TEST-22.3.2
+        let matrix = e2e_workflow_matrix();
+        let workflows: BTreeSet<_> = matrix.iter().map(|entry| entry.workflow).collect();
+
+        for workflow in [
+            E2eWorkflow::Evaluate,
+            E2eWorkflow::ProviderMock,
+            E2eWorkflow::DatasetIo,
+            E2eWorkflow::Cli,
+            E2eWorkflow::DocsExamples,
+        ] {
+            assert!(workflows.contains(&workflow), "missing {workflow:?}");
+        }
+        assert!(matrix.iter().all(|entry| !entry.gate_id.is_empty()));
+        assert!(matrix.iter().all(|entry| !entry.command.is_empty()));
+        assert!(matrix.iter().all(|entry| !entry.scope.is_empty()));
+    }
+
+    #[test]
+    fn test_22_3_3_missing_platform_or_e2e_evidence_blocks_release() {
+        // SCEN-22.3.3 / AC3 / TEST-22.3.3
+        let descriptors = platform_e2e_quality_gate_descriptors();
+        let evidence = vec![
+            QualityCommandEvidence::new(
+                "quality::platform::windows-x64",
+                GateEvidenceStatus::Passed,
+                "Windows local verification passed",
+            ),
+            QualityCommandEvidence::new(
+                "quality::e2e::evaluate",
+                GateEvidenceStatus::Passed,
+                "evaluate workflow passed",
+            ),
+        ];
+
+        let blockers = required_quality_evidence_blockers(&descriptors, &evidence);
+
+        assert!(blockers.iter().any(|finding| {
+            finding.gate_id == "quality::platform::linux-x64"
+                && finding.evidence_kind == QualityEvidenceKind::Platform
+                && finding.release_blocking
+        }));
+        assert!(blockers.iter().any(|finding| {
+            finding.gate_id == "quality::e2e::cli"
+                && finding.evidence_kind == QualityEvidenceKind::E2E
+                && finding.command == "cargo test cli::"
+                && finding.release_blocking
+        }));
     }
 
     #[test]
