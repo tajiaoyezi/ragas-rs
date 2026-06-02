@@ -59,6 +59,15 @@ pub struct WorkflowDescriptor {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SdkModuleContract {
+    pub upstream_module_path: String,
+    pub upstream_size_bytes: usize,
+    pub surface: WorkflowSurface,
+    pub exports_remote_client: bool,
+    pub release_blocking: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CliContractSnapshot {
     pub command: String,
     pub status: String,
@@ -152,6 +161,16 @@ pub fn workflow_descriptors() -> Vec<WorkflowDescriptor> {
             false,
         ),
     ]
+}
+
+pub fn sdk_module_contract() -> SdkModuleContract {
+    SdkModuleContract {
+        upstream_module_path: "src/ragas/sdk.py".to_string(),
+        upstream_size_bytes: 1,
+        surface: WorkflowSurface::Sdk,
+        exports_remote_client: true,
+        release_blocking: true,
+    }
 }
 
 pub fn cli_contract_snapshot(output: &CliOutput) -> Result<CliContractSnapshot, RagasError> {
@@ -593,5 +612,71 @@ mod tests {
                 "missing complete workflow claim {expected}"
             );
         }
+    }
+
+    #[test]
+    fn test_24_3_1_sdk_module_contract_records_empty_upstream_module() {
+        // SCEN-24.3.1 / AC1 / TEST-24.3.1
+        let contract = sdk_module_contract();
+
+        assert_eq!(contract.upstream_module_path, "src/ragas/sdk.py");
+        assert_eq!(contract.upstream_size_bytes, 0);
+        assert_eq!(contract.surface, WorkflowSurface::Sdk);
+        assert!(!contract.exports_remote_client);
+        assert!(!contract.release_blocking);
+    }
+
+    #[test]
+    fn test_24_3_2_sdk_workflow_claim_is_fixture_backed_complete() {
+        // SCEN-24.3.2 / AC2 / TEST-24.3.2
+        let descriptors = workflow_descriptors();
+        let sdk = descriptors
+            .iter()
+            .find(|descriptor| descriptor.family == WorkflowFamily::SdkFacing)
+            .expect("SDK-facing descriptor");
+
+        assert_eq!(sdk.surface, WorkflowSurface::Sdk);
+        assert_eq!(sdk.parity_status, ParityFeatureStatus::Complete);
+        assert_eq!(sdk.command, None);
+        assert!(sdk.machine_readable);
+
+        let claims = workflow_parity_claims();
+        let claim = claims
+            .iter()
+            .find(|claim| claim.feature == "workflow::sdk_facing")
+            .expect("SDK-facing parity claim");
+
+        assert_eq!(claim.status, ParityFeatureStatus::Complete);
+        assert_eq!(claim.fixtures.len(), 1);
+        assert_eq!(
+            claim.fixtures[0].upstream_module_path,
+            "src/ragas/sdk.py"
+        );
+        assert_eq!(
+            claim.fixtures[0].fixture_path,
+            "tests/parity/fixtures/workflow_sdk_facing.json"
+        );
+    }
+
+    #[test]
+    fn test_24_3_3_sdk_workflow_is_absent_from_release_blockers() {
+        // SCEN-24.3.3 / AC3 / TEST-24.3.3
+        let claims = workflow_parity_claims();
+        let blockers = release_blocking_claims(&claims);
+        let blocking_features: BTreeSet<_> = blockers
+            .iter()
+            .map(|claim| claim.feature.as_str())
+            .collect();
+
+        assert!(!blocking_features.contains("workflow::sdk_facing"));
+
+        let synthetic_missing = vec![ParityClaim {
+            feature: "workflow::missing".to_string(),
+            status: ParityFeatureStatus::KnownGap,
+            fixtures: Vec::new(),
+        }];
+        let synthetic_blockers = release_blocking_claims(&synthetic_missing);
+        assert_eq!(synthetic_blockers.len(), 1);
+        assert_eq!(synthetic_blockers[0].feature, "workflow::missing");
     }
 }
