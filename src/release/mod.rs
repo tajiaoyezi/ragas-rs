@@ -13,6 +13,8 @@ pub enum QualityGateKind {
     Examples,
     Coverage,
     FuzzProperty,
+    PanicSafety,
+    Mutation,
     BugLedgerAudit,
 }
 
@@ -21,6 +23,15 @@ pub enum QualityEvidenceKind {
     Property,
     Fuzz,
     Coverage,
+    PanicSafety,
+    Mutation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SafetyFailureClass {
+    DirectPanic,
+    AsyncTaskPanic,
+    UnwindBoundary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -37,6 +48,25 @@ pub struct QualityGateDescriptor {
     pub gate_kind: QualityGateKind,
     pub command: &'static str,
     pub scope: &'static str,
+    pub mode: QualityGateMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PanicSafetyGateDescriptor {
+    pub gate_id: &'static str,
+    pub command: &'static str,
+    pub scope: &'static str,
+    pub failure_classes: Vec<SafetyFailureClass>,
+    pub mode: QualityGateMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MutationGateDescriptor {
+    pub gate_id: &'static str,
+    pub tool: &'static str,
+    pub command: &'static str,
+    pub scope: &'static str,
+    pub threshold_percent: u8,
     pub mode: QualityGateMode,
 }
 
@@ -294,6 +324,8 @@ pub fn required_quality_gates() -> Vec<QualityGateKind> {
         QualityGateKind::Examples,
         QualityGateKind::Coverage,
         QualityGateKind::FuzzProperty,
+        QualityGateKind::PanicSafety,
+        QualityGateKind::Mutation,
         QualityGateKind::BugLedgerAudit,
     ]
 }
@@ -371,6 +403,18 @@ pub fn required_quality_evidence_blockers(
             }
         })
         .collect()
+}
+
+pub fn panic_safety_gate_descriptors() -> Vec<PanicSafetyGateDescriptor> {
+    Vec::new()
+}
+
+pub fn mutation_gate_descriptors() -> Vec<MutationGateDescriptor> {
+    Vec::new()
+}
+
+pub fn panic_mutation_quality_gate_descriptors() -> Vec<QualityGateDescriptor> {
+    Vec::new()
 }
 
 pub fn summarize_quality_gates(report: &ReleaseGateReport) -> QualityGateSummary {
@@ -511,6 +555,8 @@ mod tests {
             QualityGateKind::Examples,
             QualityGateKind::Coverage,
             QualityGateKind::FuzzProperty,
+            QualityGateKind::PanicSafety,
+            QualityGateKind::Mutation,
             QualityGateKind::BugLedgerAudit,
         ] {
             assert!(gates.contains(&gate), "missing gate {gate:?}");
@@ -665,6 +711,74 @@ mod tests {
             "cargo fuzz run ragas_evaluation -- -max_total_time=3600"
         );
         assert!(blockers.is_empty());
+    }
+
+    #[test]
+    fn test_22_2_1_panic_safety_gates_declare_scope_command_and_failure_classes() {
+        // SCEN-22.2.1 / AC1 / TEST-22.2.1
+        let descriptors = panic_safety_gate_descriptors();
+
+        assert!(descriptors.iter().all(|gate| !gate.gate_id.is_empty()));
+        assert!(descriptors.iter().all(|gate| !gate.command.is_empty()));
+        assert!(descriptors.iter().all(|gate| !gate.scope.is_empty()));
+        assert!(descriptors.iter().all(|gate| !gate.failure_classes.is_empty()));
+        assert!(descriptors.iter().any(|gate| {
+            gate.gate_id == "quality::panic::unwind-boundaries"
+                && gate.command == "cargo test panic_safety::"
+                && gate.scope == "src/"
+                && gate.failure_classes.contains(&SafetyFailureClass::UnwindBoundary)
+                && gate.failure_classes.contains(&SafetyFailureClass::AsyncTaskPanic)
+                && gate.mode == QualityGateMode::RequiredDefaultCi
+        }));
+    }
+
+    #[test]
+    fn test_22_2_2_mutation_gates_declare_tool_threshold_and_mode() {
+        // SCEN-22.2.2 / AC2 / TEST-22.2.2
+        let descriptors = mutation_gate_descriptors();
+
+        assert!(descriptors.iter().all(|gate| !gate.gate_id.is_empty()));
+        assert!(descriptors.iter().all(|gate| !gate.tool.is_empty()));
+        assert!(descriptors.iter().all(|gate| !gate.command.is_empty()));
+        assert!(descriptors.iter().all(|gate| gate.threshold_percent > 0));
+        assert!(descriptors.iter().any(|gate| {
+            gate.gate_id == "quality::mutation::release-threshold"
+                && gate.tool == "cargo-mutants"
+                && gate.command == "cargo mutants --minimum-test-timeout 60 --timeout 300"
+                && gate.scope == "src/"
+                && gate.threshold_percent == 80
+                && gate.mode == QualityGateMode::RequiredReleaseEvidence
+        }));
+        assert!(descriptors.iter().any(|gate| {
+            gate.gate_id == "quality::mutation::extended-campaign"
+                && gate.tool == "cargo-mutants"
+                && gate.mode == QualityGateMode::OptionalLongRunning
+        }));
+    }
+
+    #[test]
+    fn test_22_2_3_missing_required_panic_or_mutation_evidence_blocks_release() {
+        // SCEN-22.2.3 / AC3 / TEST-22.2.3
+        let descriptors = panic_mutation_quality_gate_descriptors();
+        let evidence = vec![QualityCommandEvidence::new(
+            "quality::panic::unwind-boundaries",
+            GateEvidenceStatus::Passed,
+            "panic safety tests passed",
+        )];
+
+        let blockers = required_quality_evidence_blockers(&descriptors, &evidence);
+
+        assert!(blockers.iter().any(|finding| {
+            finding.gate_id == "quality::mutation::release-threshold"
+                && finding.evidence_kind == QualityEvidenceKind::Mutation
+                && finding.command == "cargo mutants --minimum-test-timeout 60 --timeout 300"
+                && finding.release_blocking
+        }));
+        assert!(
+            !blockers
+                .iter()
+                .any(|finding| finding.gate_id == "quality::mutation::extended-campaign")
+        );
     }
 
     #[test]
