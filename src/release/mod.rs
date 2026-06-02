@@ -406,15 +406,64 @@ pub fn required_quality_evidence_blockers(
 }
 
 pub fn panic_safety_gate_descriptors() -> Vec<PanicSafetyGateDescriptor> {
-    Vec::new()
+    vec![PanicSafetyGateDescriptor {
+        gate_id: "quality::panic::unwind-boundaries",
+        command: "cargo test panic_safety::",
+        scope: "src/",
+        failure_classes: vec![
+            SafetyFailureClass::DirectPanic,
+            SafetyFailureClass::AsyncTaskPanic,
+            SafetyFailureClass::UnwindBoundary,
+        ],
+        mode: QualityGateMode::RequiredDefaultCi,
+    }]
 }
 
 pub fn mutation_gate_descriptors() -> Vec<MutationGateDescriptor> {
-    Vec::new()
+    vec![
+        MutationGateDescriptor {
+            gate_id: "quality::mutation::release-threshold",
+            tool: "cargo-mutants",
+            command: "cargo mutants --minimum-test-timeout 60 --timeout 300",
+            scope: "src/",
+            threshold_percent: 80,
+            mode: QualityGateMode::RequiredReleaseEvidence,
+        },
+        MutationGateDescriptor {
+            gate_id: "quality::mutation::extended-campaign",
+            tool: "cargo-mutants",
+            command: "cargo mutants --minimum-test-timeout 60 --timeout 900",
+            scope: "src/",
+            threshold_percent: 90,
+            mode: QualityGateMode::OptionalLongRunning,
+        },
+    ]
 }
 
 pub fn panic_mutation_quality_gate_descriptors() -> Vec<QualityGateDescriptor> {
-    Vec::new()
+    panic_safety_gate_descriptors()
+        .into_iter()
+        .map(|descriptor| QualityGateDescriptor {
+            gate_id: descriptor.gate_id,
+            evidence_kind: QualityEvidenceKind::PanicSafety,
+            gate_kind: QualityGateKind::PanicSafety,
+            command: descriptor.command,
+            scope: descriptor.scope,
+            mode: descriptor.mode,
+        })
+        .chain(
+            mutation_gate_descriptors()
+                .into_iter()
+                .map(|descriptor| QualityGateDescriptor {
+                    gate_id: descriptor.gate_id,
+                    evidence_kind: QualityEvidenceKind::Mutation,
+                    gate_kind: QualityGateKind::Mutation,
+                    command: descriptor.command,
+                    scope: descriptor.scope,
+                    mode: descriptor.mode,
+                }),
+        )
+        .collect()
 }
 
 pub fn summarize_quality_gates(report: &ReleaseGateReport) -> QualityGateSummary {
