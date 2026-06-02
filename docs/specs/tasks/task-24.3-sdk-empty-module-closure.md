@@ -1,6 +1,6 @@
 # Task 24.3 - sdk-empty-module-closure
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 24
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -57,9 +57,9 @@ RED tests own final signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-24.3.1 | TEST-24.3.1 | Spec Ready |
-| AC2 | SCEN-24.3.2 | TEST-24.3.2 | Spec Ready |
-| AC3 | SCEN-24.3.3 | TEST-24.3.3 | Spec Ready |
+| AC1 | SCEN-24.3.1 | TEST-24.3.1 | Done |
+| AC2 | SCEN-24.3.2 | TEST-24.3.2 | Done |
+| AC3 | SCEN-24.3.3 | TEST-24.3.3 | Done |
 
 ## 8. Risks
 
@@ -76,9 +76,18 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施后回填
-- **改动文件**：待实施后回填
-- **commit 列表**：待实施后回填
-- **§9 Verification 结果**：待实施后回填
-- **剩余风险 / 未做项**：待实施后回填
-- **下游 task 影响**：待实施后回填
+- **完成日期**：2026-06-02
+- **改动文件**：src/cli/mod.rs; src/lib.rs; tests/parity/fixtures/workflow_sdk_facing.json; docs/specs/tasks/task-24.3-sdk-empty-module-closure.md
+- **commit 列表**：
+  - fb2ed8f docs(spec): add task-24.3 sdk empty module closure
+  - 50dca59 docs(spec): task-24.3 进入实施
+  - c10510c test(cli): 加 task-24.3 RED 测试
+  - e4780f5 feat(cli): 实现 task-24.3 sdk empty module closure
+- **RED 结果**：`cargo test` failed as expected with 199 tests discovered, 196 passed / 3 failed. The failing tests were TEST-24.3.1, TEST-24.3.2, and TEST-24.3.3 because the compileable skeleton reported nonzero upstream SDK size, kept `WorkflowFamily::SdkFacing` as `KnownGap`, and left `workflow::sdk_facing` release-blocking.
+- **§9 Verification 结果**：
+  - Install: `cargo build` passed
+  - Typecheck: `cargo check` passed
+  - Unit Test: `cargo test` passed, 199 passed / 0 failed
+  - Build: `cargo build` passed
+- **剩余风险 / 未做项**：If upstream later adds behavior to `src/ragas/sdk.py`, this fixture-backed closure must be reopened against the new baseline. This task does not close provider, integration, metric, testset, optimizer, or quality release blockers.
+- **下游 task 影响**：Workflow SDK-facing parity is now fixture-backed complete; downstream release-blocker work should focus on the remaining blocker ledger categories rather than hosted SDK behavior absent from the current upstream module.
