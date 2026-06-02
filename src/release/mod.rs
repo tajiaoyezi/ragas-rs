@@ -507,15 +507,95 @@ pub fn panic_mutation_quality_gate_descriptors() -> Vec<QualityGateDescriptor> {
 }
 
 pub fn platform_evidence_matrix() -> Vec<PlatformEvidenceDescriptor> {
-    Vec::new()
+    vec![
+        PlatformEvidenceDescriptor {
+            gate_id: "quality::platform::linux-x64",
+            target: PlatformTarget::LinuxX64,
+            command: "ci:linux-x64:cargo build && cargo test",
+            scope: "src/",
+            mode: QualityGateMode::RequiredReleaseEvidence,
+        },
+        PlatformEvidenceDescriptor {
+            gate_id: "quality::platform::macos-arm64",
+            target: PlatformTarget::MacOsArm64,
+            command: "ci:macos-arm64:cargo build && cargo test",
+            scope: "src/",
+            mode: QualityGateMode::RequiredReleaseEvidence,
+        },
+        PlatformEvidenceDescriptor {
+            gate_id: "quality::platform::windows-x64",
+            target: PlatformTarget::WindowsX64,
+            command: "ci:windows-x64:cargo build && cargo test",
+            scope: "src/",
+            mode: QualityGateMode::RequiredReleaseEvidence,
+        },
+    ]
 }
 
 pub fn e2e_workflow_matrix() -> Vec<E2eWorkflowDescriptor> {
-    Vec::new()
+    vec![
+        E2eWorkflowDescriptor {
+            gate_id: "quality::e2e::evaluate",
+            workflow: E2eWorkflow::Evaluate,
+            command: "cargo test eval::",
+            scope: "src/eval.rs",
+            mode: QualityGateMode::RequiredReleaseEvidence,
+        },
+        E2eWorkflowDescriptor {
+            gate_id: "quality::e2e::provider-mock",
+            workflow: E2eWorkflow::ProviderMock,
+            command: "cargo test providers::",
+            scope: "src/providers.rs",
+            mode: QualityGateMode::RequiredReleaseEvidence,
+        },
+        E2eWorkflowDescriptor {
+            gate_id: "quality::e2e::dataset-io",
+            workflow: E2eWorkflow::DatasetIo,
+            command: "cargo test dataset::tests::test_5_2",
+            scope: "src/dataset.rs",
+            mode: QualityGateMode::RequiredReleaseEvidence,
+        },
+        E2eWorkflowDescriptor {
+            gate_id: "quality::e2e::cli",
+            workflow: E2eWorkflow::Cli,
+            command: "cargo test cli::",
+            scope: "src/cli/",
+            mode: QualityGateMode::RequiredReleaseEvidence,
+        },
+        E2eWorkflowDescriptor {
+            gate_id: "quality::e2e::docs-examples",
+            workflow: E2eWorkflow::DocsExamples,
+            command: "cargo build --examples",
+            scope: "examples/",
+            mode: QualityGateMode::RequiredReleaseEvidence,
+        },
+    ]
 }
 
 pub fn platform_e2e_quality_gate_descriptors() -> Vec<QualityGateDescriptor> {
-    Vec::new()
+    platform_evidence_matrix()
+        .into_iter()
+        .map(|descriptor| QualityGateDescriptor {
+            gate_id: descriptor.gate_id,
+            evidence_kind: QualityEvidenceKind::Platform,
+            gate_kind: QualityGateKind::Platform,
+            command: descriptor.command,
+            scope: descriptor.scope,
+            mode: descriptor.mode,
+        })
+        .chain(
+            e2e_workflow_matrix()
+                .into_iter()
+                .map(|descriptor| QualityGateDescriptor {
+                    gate_id: descriptor.gate_id,
+                    evidence_kind: QualityEvidenceKind::E2E,
+                    gate_kind: QualityGateKind::E2E,
+                    command: descriptor.command,
+                    scope: descriptor.scope,
+                    mode: descriptor.mode,
+                }),
+        )
+        .collect()
 }
 
 pub fn summarize_quality_gates(report: &ReleaseGateReport) -> QualityGateSummary {
