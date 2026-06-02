@@ -104,6 +104,23 @@ pub struct DspyCacheContract {
     pub unsupported_runtime_behavior: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OptimizerContractDescriptor {
+    pub family: OptimizerFamily,
+    pub upstream_module_path: String,
+    pub fixture_path: String,
+    pub cache_namespace: String,
+    pub python_runtime_embedded: bool,
+    pub parity_status: ParityFeatureStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MiproV2Trial {
+    pub index: usize,
+    pub seed: u64,
+    pub candidate_limit: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct GeneticOptimizer {
     config: GeneticOptimizerConfig,
@@ -221,6 +238,14 @@ pub fn dspy_cache_contract(payload: &Value) -> DspyCacheContract {
             "Python DSPy runtime is not embedded in the Rust crate".to_string(),
         ),
     }
+}
+
+pub fn optimizer_contract_descriptors() -> Vec<OptimizerContractDescriptor> {
+    Vec::new()
+}
+
+pub fn plan_mipro_v2_trials(_seed: u64, _trials: usize) -> Vec<MiproV2Trial> {
+    Vec::new()
 }
 
 pub fn optimizer_parity_claims() -> Vec<ParityClaim> {
@@ -502,6 +527,98 @@ mod tests {
                 .iter()
                 .all(|claim| claim.status != ParityFeatureStatus::Complete),
             "unsupported optimizer blockers must not be marked complete"
+        );
+    }
+
+    #[test]
+    fn test_30_1_1_dspy_and_mipro_descriptors_are_fixture_backed_complete() {
+        // SCEN-30.1.1 / AC1 / TEST-30.1.1
+        let descriptors = optimizer_family_descriptors();
+        let by_family: BTreeMap<_, _> = descriptors
+            .iter()
+            .map(|descriptor| (descriptor.family, descriptor))
+            .collect();
+        for family in [OptimizerFamily::Dspy, OptimizerFamily::MiproV2] {
+            let descriptor = by_family.get(&family).expect("optimizer descriptor");
+            assert_eq!(descriptor.parity_status, ParityFeatureStatus::Complete);
+            assert_eq!(descriptor.runtime, OptimizerRuntime::PythonRuntime);
+        }
+
+        let contracts = optimizer_contract_descriptors();
+        let contract_by_family: BTreeMap<_, _> = contracts
+            .iter()
+            .map(|descriptor| (descriptor.family, descriptor))
+            .collect();
+        for family in [OptimizerFamily::Dspy, OptimizerFamily::MiproV2] {
+            let contract = contract_by_family.get(&family).expect("contract descriptor");
+            assert!(contract.upstream_module_path.starts_with("src/ragas/optimizers/"));
+            assert!(contract.fixture_path.starts_with("tests/parity/fixtures/optimizer_"));
+            assert_eq!(contract.parity_status, ParityFeatureStatus::Complete);
+            assert!(!contract.python_runtime_embedded);
+        }
+
+        assert!(release_blocking_claims(&optimizer_parity_claims()).is_empty());
+    }
+
+    #[test]
+    fn test_30_1_2_optimizer_planning_is_deterministic_and_redacted() {
+        // SCEN-30.1.2 / AC2 / TEST-30.1.2
+        let payload = serde_json::json!({
+            "api_key": "sk-secret",
+            "optimizer": "MIPROv2",
+            "prompt": "answer with evidence",
+            "params": {"num_trials": 3, "seed": 9}
+        });
+        let first = dspy_cache_contract(&payload);
+        let second = dspy_cache_contract(&payload);
+        assert_eq!(first.cache_key.digest, second.cache_key.digest);
+        assert!(!first.cache_key.redacted_payload.to_string().contains("sk-secret"));
+
+        let trials = plan_mipro_v2_trials(9, 3);
+        assert_eq!(
+            trials,
+            vec![
+                MiproV2Trial {
+                    index: 0,
+                    seed: 9,
+                    candidate_limit: 4,
+                },
+                MiproV2Trial {
+                    index: 1,
+                    seed: 9_u64
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407),
+                    candidate_limit: 8,
+                },
+                MiproV2Trial {
+                    index: 2,
+                    seed: 9_u64
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407)
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407),
+                    candidate_limit: 12,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_30_1_3_optimizer_release_ledger_category_is_closed() {
+        // SCEN-30.1.3 / AC3 / TEST-30.1.3
+        let ledger = crate::release::build_release_blocker_ledger();
+        let categories = ledger
+            .entries
+            .iter()
+            .map(|entry| entry.category)
+            .collect::<BTreeSet<_>>();
+        assert!(
+            !categories.contains(&crate::release::ReleaseBlockerCategory::Optimizer),
+            "optimizer release blockers must be fully closed"
+        );
+        assert!(
+            categories.contains(&crate::release::ReleaseBlockerCategory::Quality),
+            "quality blockers remain for the dedicated quality closure task"
         );
     }
 }
