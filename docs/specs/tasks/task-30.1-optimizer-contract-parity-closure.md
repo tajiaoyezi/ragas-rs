@@ -1,6 +1,6 @@
 # Task 30.1 - optimizer-contract-parity-closure
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 30
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
