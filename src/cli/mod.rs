@@ -5,9 +5,9 @@ use serde_json::json;
 
 use crate::{
     DatasetBackend, EvaluationDataset, EvaluationSample, ExtractionBundle, GraphNode,
-    InMemoryDatasetBackend, KnowledgeGraph, ParityClaim, ParityFeatureStatus, PersonaGenerator,
-    RagasError, attach_extractions, build_chunk_relationships, split_text_into_chunks,
-    synthesize_single_hop_sample,
+    InMemoryDatasetBackend, KnowledgeGraph, ParityClaim, ParityFeatureStatus,
+    ParityFixtureMetadata, ParityFixtureMode, PersonaGenerator, RagasError, attach_extractions,
+    build_chunk_relationships, split_text_into_chunks, synthesize_single_hop_sample,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,30 +115,96 @@ pub fn run_cli_command(
 }
 
 pub fn workflow_descriptors() -> Vec<WorkflowDescriptor> {
-    Vec::new()
+    vec![
+        workflow_descriptor(
+            WorkflowFamily::Evaluate,
+            WorkflowSurface::Cli,
+            ParityFeatureStatus::Complete,
+            Some("evaluate"),
+            true,
+        ),
+        workflow_descriptor(
+            WorkflowFamily::Testset,
+            WorkflowSurface::Cli,
+            ParityFeatureStatus::Complete,
+            Some("testset"),
+            true,
+        ),
+        workflow_descriptor(
+            WorkflowFamily::Benchmark,
+            WorkflowSurface::Cli,
+            ParityFeatureStatus::Complete,
+            Some("benchmark"),
+            true,
+        ),
+        workflow_descriptor(
+            WorkflowFamily::Experiment,
+            WorkflowSurface::Library,
+            ParityFeatureStatus::Complete,
+            None,
+            true,
+        ),
+        workflow_descriptor(
+            WorkflowFamily::SdkFacing,
+            WorkflowSurface::Sdk,
+            ParityFeatureStatus::KnownGap,
+            None,
+            false,
+        ),
+    ]
 }
 
-pub fn cli_contract_snapshot(_output: &CliOutput) -> Result<CliContractSnapshot, RagasError> {
+pub fn cli_contract_snapshot(output: &CliOutput) -> Result<CliContractSnapshot, RagasError> {
+    let stdout: serde_json::Value = serde_json::from_str(&output.stdout)
+        .map_err(|error| parse_error(format!("CLI stdout snapshot parse failed: {error}")))?;
+    let object = stdout.as_object().ok_or_else(|| {
+        parse_error("CLI stdout snapshot expected a machine-readable JSON object")
+    })?;
+    let mut stdout_keys = object.keys().cloned().collect::<Vec<_>>();
+    stdout_keys.sort();
     Ok(CliContractSnapshot {
-        command: String::new(),
-        status: String::new(),
-        stdout_keys: Vec::new(),
-        stderr_empty: false,
-        exit_code: -1,
+        command: object
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        status: object
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        stdout_keys,
+        stderr_empty: output.stderr.is_empty(),
+        exit_code: output.exit_code,
     })
 }
 
-pub fn cli_error_snapshot(_error: &RagasError) -> Result<CliErrorSnapshot, RagasError> {
+pub fn cli_error_snapshot(error: &RagasError) -> Result<CliErrorSnapshot, RagasError> {
     Ok(CliErrorSnapshot {
-        status: String::new(),
-        error_kind: String::new(),
-        stderr_keys: Vec::new(),
-        exit_code: 0,
+        status: "error".to_string(),
+        error_kind: cli_error_kind(error).to_string(),
+        stderr_keys: vec!["error".to_string(), "kind".to_string(), "status".to_string()],
+        exit_code: 1,
     })
 }
 
 pub fn workflow_parity_claims() -> Vec<ParityClaim> {
-    Vec::new()
+    workflow_descriptors()
+        .into_iter()
+        .map(|descriptor| {
+            let feature = format!("workflow::{}", workflow_family_slug(descriptor.family));
+            let fixtures = if descriptor.parity_status == ParityFeatureStatus::Complete {
+                vec![workflow_fixture_metadata(&feature, descriptor.family)]
+            } else {
+                Vec::new()
+            };
+            ParityClaim {
+                feature,
+                status: descriptor.parity_status,
+                fixtures,
+            }
+        })
+        .collect()
 }
 
 fn run_evaluate(
@@ -245,6 +311,64 @@ fn parse_error(message: impl Into<String>) -> RagasError {
 fn dataset_io_error(message: impl Into<String>) -> RagasError {
     RagasError::DatasetIo {
         message: message.into(),
+    }
+}
+
+fn workflow_descriptor(
+    family: WorkflowFamily,
+    surface: WorkflowSurface,
+    parity_status: ParityFeatureStatus,
+    command: Option<&str>,
+    machine_readable: bool,
+) -> WorkflowDescriptor {
+    WorkflowDescriptor {
+        family,
+        surface,
+        parity_status,
+        command: command.map(str::to_string),
+        machine_readable,
+    }
+}
+
+fn workflow_family_slug(family: WorkflowFamily) -> &'static str {
+    match family {
+        WorkflowFamily::Evaluate => "evaluate",
+        WorkflowFamily::Testset => "testset",
+        WorkflowFamily::Benchmark => "benchmark",
+        WorkflowFamily::Experiment => "experiment",
+        WorkflowFamily::SdkFacing => "sdk_facing",
+    }
+}
+
+fn workflow_fixture_metadata(feature: &str, family: WorkflowFamily) -> ParityFixtureMetadata {
+    let module_path = match family {
+        WorkflowFamily::Evaluate | WorkflowFamily::Testset | WorkflowFamily::Benchmark => {
+            "src/ragas/cli.py"
+        }
+        WorkflowFamily::Experiment => "src/ragas/experiment.py",
+        WorkflowFamily::SdkFacing => "src/ragas/sdk.py",
+    };
+    ParityFixtureMetadata::new(
+        feature,
+        module_path,
+        None,
+        format!(
+            "tests/parity/fixtures/workflow_{}.json",
+            workflow_family_slug(family)
+        ),
+        ParityFixtureMode::DeterministicMock,
+        None,
+    )
+}
+
+fn cli_error_kind(error: &RagasError) -> &'static str {
+    match error {
+        RagasError::EmptyDataset => "empty_dataset",
+        RagasError::InvalidSample { .. } => "invalid_sample",
+        RagasError::DatasetIo { .. } => "dataset_io",
+        RagasError::Provider { .. } => "provider",
+        RagasError::Parse { .. } => "parse",
+        RagasError::Prompt { .. } => "prompt",
     }
 }
 
