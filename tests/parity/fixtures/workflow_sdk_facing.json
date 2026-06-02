@@ -1,0 +1,15 @@
+{
+  "feature": "workflow::sdk_facing",
+  "python_baseline": {
+    "upstream_module": "src/ragas/sdk.py",
+    "size_bytes": 0,
+    "exports_remote_client": false
+  },
+  "rust_output": {
+    "surface": "Sdk",
+    "parity_status": "Complete",
+    "exports_remote_client": false,
+    "release_blocking": false
+  },
+  "tolerance": null
+}

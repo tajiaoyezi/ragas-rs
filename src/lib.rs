@@ -31,9 +31,8 @@ pub use benchmarks::{
 };
 pub use cli::{
     CliCommand, CliContractSnapshot, CliErrorSnapshot, CliOutput, CliRuntime, SdkModuleContract,
-    WorkflowDescriptor, WorkflowFamily, WorkflowSurface, cli_contract_snapshot,
-    cli_error_snapshot, run_cli_command, sdk_module_contract, workflow_descriptors,
-    workflow_parity_claims,
+    WorkflowDescriptor, WorkflowFamily, WorkflowSurface, cli_contract_snapshot, cli_error_snapshot,
+    run_cli_command, sdk_module_contract, workflow_descriptors, workflow_parity_claims,
 };
 pub use dataset::{
     EvaluationDataset, EvaluationDatasetBuilder, EvaluationSample, SingleTurnSample,

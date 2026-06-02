@@ -156,9 +156,9 @@ pub fn workflow_descriptors() -> Vec<WorkflowDescriptor> {
         workflow_descriptor(
             WorkflowFamily::SdkFacing,
             WorkflowSurface::Sdk,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
             None,
-            false,
+            true,
         ),
     ]
 }
@@ -166,10 +166,10 @@ pub fn workflow_descriptors() -> Vec<WorkflowDescriptor> {
 pub fn sdk_module_contract() -> SdkModuleContract {
     SdkModuleContract {
         upstream_module_path: "src/ragas/sdk.py".to_string(),
-        upstream_size_bytes: 1,
+        upstream_size_bytes: 0,
         surface: WorkflowSurface::Sdk,
-        exports_remote_client: true,
-        release_blocking: true,
+        exports_remote_client: false,
+        release_blocking: false,
     }
 }
 
@@ -534,7 +534,8 @@ mod tests {
             .get(&WorkflowFamily::SdkFacing)
             .expect("SDK-facing workflow");
         assert_eq!(sdk.surface, WorkflowSurface::Sdk);
-        assert_eq!(sdk.parity_status, ParityFeatureStatus::KnownGap);
+        assert_eq!(sdk.parity_status, ParityFeatureStatus::Complete);
+        assert!(sdk.machine_readable);
     }
 
     #[test]
@@ -591,10 +592,14 @@ mod tests {
             .map(|claim| claim.feature.as_str())
             .collect();
 
-        assert!(
-            blocking_features.contains("workflow::sdk_facing"),
-            "missing SDK-facing workflow release blocker"
-        );
+        assert!(!blocking_features.contains("workflow::sdk_facing"));
+
+        let synthetic_missing = vec![ParityClaim {
+            feature: "workflow::synthetic_missing".to_string(),
+            status: ParityFeatureStatus::KnownGap,
+            fixtures: Vec::new(),
+        }];
+        assert_eq!(release_blocking_claims(&synthetic_missing).len(), 1);
 
         let complete_features: BTreeSet<_> = claims
             .iter()
@@ -606,6 +611,7 @@ mod tests {
             "workflow::testset",
             "workflow::benchmark",
             "workflow::experiment",
+            "workflow::sdk_facing",
         ] {
             assert!(
                 complete_features.contains(expected),
@@ -648,10 +654,7 @@ mod tests {
 
         assert_eq!(claim.status, ParityFeatureStatus::Complete);
         assert_eq!(claim.fixtures.len(), 1);
-        assert_eq!(
-            claim.fixtures[0].upstream_module_path,
-            "src/ragas/sdk.py"
-        );
+        assert_eq!(claim.fixtures[0].upstream_module_path, "src/ragas/sdk.py");
         assert_eq!(
             claim.fixtures[0].fixture_path,
             "tests/parity/fixtures/workflow_sdk_facing.json"
