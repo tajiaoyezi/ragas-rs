@@ -1,6 +1,6 @@
 # Task 30.1 - optimizer-contract-parity-closure
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 30
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -58,9 +58,9 @@ RED tests own final signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-30.1.1 | TEST-30.1.1 | Spec Ready |
-| AC2 | SCEN-30.1.2 | TEST-30.1.2 | Spec Ready |
-| AC3 | SCEN-30.1.3 | TEST-30.1.3 | Spec Ready |
+| AC1 | SCEN-30.1.1 | TEST-30.1.1 | Done |
+| AC2 | SCEN-30.1.2 | TEST-30.1.2 | Done |
+| AC3 | SCEN-30.1.3 | TEST-30.1.3 | Done |
 
 ## 8. Risks
 
@@ -80,10 +80,27 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施后回填
-- **改动文件**：待实施后回填
-- **commit 列表**：待实施后回填
-- **RED 结果**：待实施后回填
-- **§9 Verification 结果**：待实施后回填
-- **剩余风险 / 未做项**：待实施后回填
-- **下游 task 影响**：待实施后回填
+- **完成日期**：2026-06-02
+- **改动文件**：
+  - `src/optimizers/mod.rs`（修改：DSPy/MIPROv2 contract descriptors、fixture-backed parity claims、MIPROv2 deterministic trial planner、RED/GREEN tests）
+  - `src/lib.rs`（修改：导出 optimizer contract API）
+  - `src/release/mod.rs`（修改：release ledger 测试期望 Optimizer 已关闭）
+  - `src/metrics/registry.rs`（修改：metric closure ledger 测试期望 Optimizer 已关闭）
+  - `tests/parity/fixtures/optimizer_dspy.json`（新增）
+  - `tests/parity/fixtures/optimizer_mipro_v2.json`（新增）
+  - `docs/specs/tasks/task-30.1-optimizer-contract-parity-closure.md`（本回填）
+- **commit 列表**：
+  - `82d9ef5` test(optimizers): 加 task-30.1 RED 测试
+  - `bd2b3fc` feat(optimizers): 实现 task-30.1 optimizer contract parity closure
+- **RED 结果**：`cargo test test_30_1` failed as expected with 3 failing tests because DSPy/MIPROv2 descriptors were still `KnownGap`, `plan_mipro_v2_trials(9, 3)` returned no schedule, and the release ledger still contained `ReleaseBlockerCategory::Optimizer`.
+- **§9 Verification 结果**：
+  - install: `cargo build` passed
+  - typecheck: `cargo check` passed
+  - unit-test: `cargo test` passed, 217 passed / 0 failed
+  - build: `cargo build` passed
+  - optimizers-test: `cargo test optimizers::` passed, 9 passed / 0 failed
+  - parity-test: `cargo test parity::` passed, 12 passed / 0 failed
+  - examples-build: `cargo build --examples` passed
+  - ledger-smoke: `total=13 non_waived=13 release_ready=false`; remaining category is `Quality=13`
+- **剩余风险 / 未做项**：Optimizer release blockers are closed; unrelated Quality release evidence blockers remain and keep the overall project below the perfect-refactor release bar.
+- **下游 task 影响**：A follow-up Quality closure task must supply property, fuzz, coverage, panic, mutation, platform, and E2E evidence before the final release ledger can be zero.
