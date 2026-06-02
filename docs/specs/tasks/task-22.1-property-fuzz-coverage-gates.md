@@ -1,6 +1,6 @@
 # Task 22.1 - property-fuzz-coverage-gates
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 22
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
