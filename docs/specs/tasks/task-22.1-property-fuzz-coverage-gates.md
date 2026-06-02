@@ -1,6 +1,6 @@
 # Task 22.1 - property-fuzz-coverage-gates
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 22
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -45,17 +45,17 @@ RED tests own final signatures.
 
 ## 6. Acceptance Criteria
 
-- [ ] **AC1**: Property, fuzz, and coverage gates declare command, scope, and required/optional mode.
-- [ ] **AC2**: Missing required quality evidence creates release-blocking findings.
-- [ ] **AC3**: Optional long-running gates are represented without blocking deterministic default CI.
+- [x] **AC1**: Property, fuzz, and coverage gates declare command, scope, and required/optional mode.
+- [x] **AC2**: Missing required quality evidence creates release-blocking findings.
+- [x] **AC3**: Optional long-running gates are represented without blocking deterministic default CI.
 
 ## 7. Traceability
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-22.1.1 | TEST-22.1.1 | Not Started |
-| AC2 | SCEN-22.1.2 | TEST-22.1.2 | Not Started |
-| AC3 | SCEN-22.1.3 | TEST-22.1.3 | Not Started |
+| AC1 | SCEN-22.1.1 | TEST-22.1.1 | Done |
+| AC2 | SCEN-22.1.2 | TEST-22.1.2 | Done |
+| AC3 | SCEN-22.1.3 | TEST-22.1.3 | Done |
 
 ## 8. Risks
 
@@ -71,9 +71,19 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：<TBD-after-impl>
-- **改动文件**：<TBD-after-impl>
-- **commit 列表**：<TBD-after-impl>
-- **§9 Verification 结果**：<TBD-after-impl>
-- **剩余风险 / 未做项**：<TBD-after-impl>
-- **下游 task 影响**：<TBD-after-impl>
+- **完成日期**：2026-06-02
+- **改动文件**：
+  - `src/release/mod.rs`（新增 property/fuzz/coverage gate descriptor、required/optional mode、quality command evidence 与 blocker 计算；新增 TEST-22.1.1~22.1.3）
+  - `src/lib.rs`（RED 阶段导出新增 release quality gate API）
+- **commit 列表**：
+  - `acee66e` docs(spec): task-22.1 Ready gate format
+  - `a6e1934` docs(spec): task-22.1 进入实施
+  - `4fb3153` test(release): 加 task-22.1 RED 测试
+  - `78bd04c` feat(release): 实现 task-22.1 quality evidence gates
+- **§9 Verification 结果**：
+  - Install: passed (`cargo build`)
+  - Typecheck: passed (`cargo check`)
+  - Unit Test: passed, 175 passed / 0 failed (`cargo test`)
+  - Build: passed (`cargo build`)
+- **剩余风险 / 未做项**：Long-running fuzz campaign remains optional and non-blocking for deterministic default CI; task 22.2/22.3 must add panic, mutation, platform, and E2E evidence gates before the release audit can claim no known unresolved blockers.
+- **下游 task 影响**：task 22.2 can reuse `QualityGateDescriptor`, `QualityGateMode`, and `required_quality_evidence_blockers`; task 23.x can aggregate missing required quality evidence into the final release blocker ledger.
