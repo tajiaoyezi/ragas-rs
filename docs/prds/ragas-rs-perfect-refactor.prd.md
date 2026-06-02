@@ -75,6 +75,7 @@ Out of scope:
 | 21 | optimizer-experiment-cli-docs-parity | Complete DSPy/MIPROv2, experiment, SDK, CLI, quickstart, and docs parity. | Ready |
 | 22 | exhaustive-test-engineering | Add coverage, fuzz/property, mutation, E2E, and cross-platform evidence gates. | Ready |
 | 23 | release-candidate-bug-zero-audit | Resolve every open gap/bug and produce final release evidence. | Ready |
+| 24 | release-blocker-closure | Resolve concrete release blockers produced by the final audit ledger, starting with quickstart/example parity gaps that can be closed with deterministic Rust evidence. | Ready |
 
 ## 7. First Delta Task Matrix
 
@@ -103,6 +104,7 @@ Out of scope:
 | 23.1 | 23 | release | Aggregate all release blockers into one ledger. |
 | 23.2 | 23 | release | Implement gap resolution and waiver policy. |
 | 23.3 | 23 | release | Implement final bug-zero release audit evidence checks. |
+| 24.1 | 24 | docs/examples | Close the `docs::quickstart::experiments` release blocker with a runnable Rust experiment example and fixture-backed parity claim. |
 
 ## 8. Decisions
 
