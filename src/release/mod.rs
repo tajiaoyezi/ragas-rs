@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::parity::{
     MetricGoldenComparison, MetricGoldenOutcome, ParityClaim, ParityFeatureStatus,
-    validate_parity_claim,
+    release_blocking_claims, validate_parity_claim,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -404,8 +404,76 @@ pub fn summarize_metric_release_blockers(
 }
 
 pub fn build_release_blocker_ledger() -> ReleaseBlockerLedger {
+    let mut entries = Vec::new();
+
+    append_parity_blockers(
+        &mut entries,
+        ReleaseBlockerCategory::Provider,
+        "providers::provider_parity_claims",
+        crate::providers::provider_parity_claims(),
+    );
+    append_parity_blockers(
+        &mut entries,
+        ReleaseBlockerCategory::Backend,
+        "backends::backend_parity_claims",
+        crate::backends::backend_parity_claims(),
+    );
+    append_parity_blockers(
+        &mut entries,
+        ReleaseBlockerCategory::Integration,
+        "integrations::integration_parity_claims",
+        crate::integrations::integration_parity_claims(),
+    );
+    append_parity_blockers(
+        &mut entries,
+        ReleaseBlockerCategory::Metric,
+        "metrics::metric_catalog_parity_claims",
+        crate::metrics::metric_catalog_parity_claims(),
+    );
+
+    let mut testset_claims = crate::testset::graph_parity_claims();
+    testset_claims.extend(crate::testset::transform_parity_claims());
+    testset_claims.extend(crate::testset::synthesizer_parity_claims());
+    append_parity_blockers(
+        &mut entries,
+        ReleaseBlockerCategory::Testset,
+        "testset::*_parity_claims",
+        testset_claims,
+    );
+
+    append_parity_blockers(
+        &mut entries,
+        ReleaseBlockerCategory::Optimizer,
+        "optimizers::optimizer_parity_claims",
+        crate::optimizers::optimizer_parity_claims(),
+    );
+    append_parity_blockers(
+        &mut entries,
+        ReleaseBlockerCategory::Docs,
+        "docs_examples::docs_parity_claims",
+        crate::docs_examples::docs_parity_claims(),
+    );
+
+    let mut quality_descriptors = property_fuzz_coverage_gate_descriptors();
+    quality_descriptors.extend(panic_mutation_quality_gate_descriptors());
+    quality_descriptors.extend(platform_e2e_quality_gate_descriptors());
+    entries.extend(required_quality_evidence_blockers(&quality_descriptors, &[]).into_iter().map(
+        |finding| ReleaseBlockerEntry {
+            id: format!("RB-quality-{}", sanitize_id_component(&finding.gate_id)),
+            category: ReleaseBlockerCategory::Quality,
+            feature: finding.gate_id,
+            severity: BugSeverity::High,
+            source: "release::required_quality_evidence_blockers".to_string(),
+            impact: format!(
+                "{}; command `{}` must produce release evidence",
+                finding.detail, finding.command
+            ),
+            waived: false,
+        },
+    ));
+
     ReleaseBlockerLedger {
-        entries: Vec::new(),
+        entries,
     }
 }
 
@@ -424,6 +492,72 @@ pub fn summarize_release_blocker_ledger(
         by_category,
         release_ready: non_waived == 0,
     }
+}
+
+fn append_parity_blockers(
+    entries: &mut Vec<ReleaseBlockerEntry>,
+    category: ReleaseBlockerCategory,
+    source: &'static str,
+    claims: Vec<ParityClaim>,
+) {
+    entries.extend(release_blocking_claims(&claims).into_iter().map(|claim| {
+        ReleaseBlockerEntry {
+            id: format!(
+                "RB-{}-{}",
+                category_slug(category),
+                sanitize_id_component(&claim.feature)
+            ),
+            category,
+            feature: claim.feature.clone(),
+            severity: severity_for_parity_status(claim.status),
+            source: source.to_string(),
+            impact: format!(
+                "Blocks current-upstream parity because {} is {:?}",
+                claim.feature, claim.status
+            ),
+            waived: false,
+        }
+    }));
+}
+
+fn severity_for_parity_status(status: ParityFeatureStatus) -> BugSeverity {
+    match status {
+        ParityFeatureStatus::Partial => BugSeverity::Medium,
+        ParityFeatureStatus::Complete
+        | ParityFeatureStatus::KnownGap
+        | ParityFeatureStatus::NotStarted
+        | ParityFeatureStatus::Blocked => BugSeverity::High,
+    }
+}
+
+fn category_slug(category: ReleaseBlockerCategory) -> &'static str {
+    match category {
+        ReleaseBlockerCategory::Provider => "provider",
+        ReleaseBlockerCategory::Backend => "backend",
+        ReleaseBlockerCategory::Integration => "integration",
+        ReleaseBlockerCategory::Metric => "metric",
+        ReleaseBlockerCategory::Testset => "testset",
+        ReleaseBlockerCategory::Optimizer => "optimizer",
+        ReleaseBlockerCategory::Docs => "docs",
+        ReleaseBlockerCategory::Quality => "quality",
+    }
+}
+
+fn sanitize_id_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 pub fn release_gate_files() -> Vec<&'static str> {
