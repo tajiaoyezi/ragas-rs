@@ -180,7 +180,7 @@ fn docs_fixture_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::release_blocking_claims;
+    use crate::{ReleaseBlockerCategory, build_release_blocker_ledger, release_blocking_claims};
     use std::{collections::BTreeSet, path::Path};
 
     #[test]
@@ -341,5 +341,67 @@ mod tests {
                 "missing complete docs claim {expected}"
             );
         }
+    }
+
+    #[test]
+    fn test_24_1_1_experiment_quickstart_maps_to_runnable_example() {
+        // SCEN-24.1.1 / AC1 / TEST-24.1.1
+        let descriptors = quickstart_descriptors();
+        let experiments = descriptors
+            .iter()
+            .find(|descriptor| descriptor.upstream_template == "Run experiments")
+            .expect("Run experiments quickstart descriptor");
+
+        assert_eq!(
+            experiments.rust_example.as_deref(),
+            Some("examples/experiment.rs")
+        );
+        assert_eq!(experiments.parity_status, ParityFeatureStatus::Complete);
+        assert_eq!(experiments.known_gap, None);
+
+        let metadata = runnable_example_metadata();
+        let experiment_metadata = metadata
+            .iter()
+            .find(|example| example.example_path == "examples/experiment.rs")
+            .expect("experiment quickstart runnable metadata");
+        assert_eq!(experiment_metadata.command, "cargo run --example experiment");
+        assert_eq!(experiment_metadata.expected_output, ExampleOutputType::Json);
+        assert!(experiment_metadata.feature_flags.contains(&"default".to_string()));
+    }
+
+    #[test]
+    fn test_24_1_2_experiment_quickstart_uses_deterministic_experiment_apis() {
+        // SCEN-24.1.2 / AC2 / TEST-24.1.2
+        let source =
+            std::fs::read_to_string("examples/experiment.rs").expect("experiment example source");
+
+        assert!(source.contains("ExperimentRecord::new"));
+        assert!(source.contains("summarize_experiment"));
+        assert!(source.contains("compare_runs"));
+        assert!(!source.contains("OpenAi"));
+        assert!(!source.contains("reqwest"));
+        assert!(!source.contains("std::env::var"));
+    }
+
+    #[test]
+    fn test_24_1_3_experiment_quickstart_is_absent_from_docs_release_blockers() {
+        // SCEN-24.1.3 / AC3 / TEST-24.1.3
+        let claims = docs_parity_claims();
+        let experiment = claims
+            .iter()
+            .find(|claim| claim.feature == "docs::quickstart::experiments")
+            .expect("experiment docs parity claim");
+
+        assert_eq!(experiment.status, ParityFeatureStatus::Complete);
+        assert!(
+            !experiment.fixtures.is_empty(),
+            "complete docs claims require fixture metadata"
+        );
+
+        let ledger = build_release_blocker_ledger();
+        assert!(!ledger.entries.iter().any(|entry| {
+            entry.category == ReleaseBlockerCategory::Docs
+                && entry.feature == "docs::quickstart::experiments"
+        }));
     }
 }
