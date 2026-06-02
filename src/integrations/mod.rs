@@ -87,6 +87,82 @@ impl IntegrationDescriptor {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IntegrationBoundaryMode {
+    CallbackAdapter,
+    DelegatedFramework,
+    ObservabilityExporter,
+    EndpointStream,
+    CloudService,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IntegrationAuthMode {
+    None,
+    EnvVars,
+    BearerToken,
+    AwsSigV4,
+    DelegatedSdk,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IntegrationContractDescriptor {
+    pub family: IntegrationFamily,
+    pub boundary_mode: IntegrationBoundaryMode,
+    pub auth_mode: IntegrationAuthMode,
+    pub auth_envs: Vec<&'static str>,
+    pub target_operation: &'static str,
+    pub lifecycle_fields: Vec<&'static str>,
+    pub upstream_module_path: &'static str,
+    pub fixture_path: &'static str,
+    pub requires_vendor_sdk: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IntegrationExportInput {
+    pub event: RuntimeEvent,
+    pub payload: IntegrationPayload,
+    pub api_token: Option<String>,
+}
+
+impl IntegrationExportInput {
+    pub fn new(event: RuntimeEvent, payload: IntegrationPayload) -> Self {
+        Self {
+            event,
+            payload,
+            api_token: None,
+        }
+    }
+
+    pub fn with_api_token(mut self, api_token: impl Into<String>) -> Self {
+        self.api_token = Some(api_token.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IntegrationExportPlan {
+    pub family: IntegrationFamily,
+    pub boundary_mode: IntegrationBoundaryMode,
+    pub target_operation: String,
+    pub headers: BTreeMap<String, String>,
+    pub event: IntegrationEvent,
+    pub safe_debug: String,
+}
+
+pub fn integration_contract_descriptors() -> Vec<IntegrationContractDescriptor> {
+    Vec::new()
+}
+
+pub fn plan_integration_export(
+    _family: IntegrationFamily,
+    _input: IntegrationExportInput,
+) -> Result<IntegrationExportPlan, RagasError> {
+    Err(RagasError::DatasetIo {
+        message: "integration export planning is not implemented".to_string(),
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct IntegrationRegistry {
     descriptors: Vec<IntegrationDescriptor>,
@@ -379,7 +455,10 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    use crate::{CallbackManager, release_blocking_claims};
+    use crate::{
+        CallbackManager, ReleaseBlockerCategory, build_release_blocker_ledger,
+        release_blocking_claims, validate_parity_claim,
+    };
 
     #[test]
     fn test_14_2_1_tracing_integration_receives_callback_events() {
@@ -568,5 +647,178 @@ mod tests {
             !(blocking_features.contains(claim.feature.as_str())
                 && claim.status == ParityFeatureStatus::Complete)
         }));
+    }
+
+    #[test]
+    fn test_27_1_1_integration_contract_descriptors_cover_tracked_upstream_families() {
+        // SCEN-27.1.1 / AC1 / TEST-27.1.1
+        let descriptors = integration_contract_descriptors();
+        let families: BTreeSet<_> = descriptors
+            .iter()
+            .map(|descriptor| descriptor.family)
+            .collect();
+
+        for expected in [
+            IntegrationFamily::LangChain,
+            IntegrationFamily::LangGraph,
+            IntegrationFamily::LangSmith,
+            IntegrationFamily::LlamaIndex,
+            IntegrationFamily::AgUi,
+            IntegrationFamily::Bedrock,
+            IntegrationFamily::Griptape,
+            IntegrationFamily::Helicone,
+            IntegrationFamily::Langfuse,
+            IntegrationFamily::Opik,
+            IntegrationFamily::R2R,
+            IntegrationFamily::Swarm,
+        ] {
+            assert!(families.contains(&expected), "missing {expected:?}");
+        }
+
+        assert!(descriptors.iter().all(|descriptor| {
+            descriptor
+                .upstream_module_path
+                .starts_with("src/ragas/integrations/")
+                && descriptor
+                    .fixture_path
+                    .starts_with("tests/parity/fixtures/integration_")
+                && !descriptor.target_operation.is_empty()
+                && descriptor.lifecycle_fields.contains(&"run_id")
+                && descriptor.lifecycle_fields.contains(&"event_kind")
+        }));
+        assert!(descriptors.iter().any(|descriptor| {
+            descriptor.family == IntegrationFamily::LangSmith
+                && descriptor.auth_envs.contains(&"LANGCHAIN_API_KEY")
+                && descriptor.boundary_mode == IntegrationBoundaryMode::ObservabilityExporter
+        }));
+        assert!(descriptors.iter().any(|descriptor| {
+            descriptor.family == IntegrationFamily::AgUi
+                && descriptor.boundary_mode == IntegrationBoundaryMode::EndpointStream
+        }));
+        assert!(descriptors.iter().any(|descriptor| {
+            descriptor.family == IntegrationFamily::Bedrock
+                && descriptor.auth_mode == IntegrationAuthMode::AwsSigV4
+        }));
+        assert!(descriptors.iter().any(|descriptor| {
+            descriptor.family == IntegrationFamily::LangChain
+                && descriptor.boundary_mode == IntegrationBoundaryMode::DelegatedFramework
+        }));
+    }
+
+    #[test]
+    fn test_27_1_2_integration_export_plans_preserve_lifecycle_and_redact_auth() {
+        // SCEN-27.1.2 / AC2 / TEST-27.1.2
+        let event = RuntimeEvent::metric_started("run-27", "faithfulness", 3);
+        let payload = IntegrationPayload::new()
+            .with("authorization", "Bearer secret-token")
+            .with("score", "0.91")
+            .with("trace_id", "trace-123");
+
+        let langsmith = plan_integration_export(
+            IntegrationFamily::LangSmith,
+            IntegrationExportInput::new(event.clone(), payload.clone())
+                .with_api_token("langsmith-secret"),
+        )
+        .expect("langsmith export plan");
+
+        assert_eq!(langsmith.family, IntegrationFamily::LangSmith);
+        assert_eq!(
+            langsmith.boundary_mode,
+            IntegrationBoundaryMode::ObservabilityExporter
+        );
+        assert_eq!(langsmith.headers["Authorization"], "Bearer <redacted>");
+        assert_eq!(langsmith.event.run_id, "run-27");
+        assert_eq!(langsmith.event.metric_name.as_deref(), Some("faithfulness"));
+        assert_eq!(langsmith.event.sample_index, Some(3));
+        assert_eq!(
+            langsmith
+                .event
+                .payload
+                .fields
+                .get("authorization")
+                .map(String::as_str),
+            Some("[REDACTED]")
+        );
+        assert_eq!(
+            langsmith
+                .event
+                .payload
+                .fields
+                .get("score")
+                .map(String::as_str),
+            Some("0.91")
+        );
+        assert!(!langsmith.safe_debug.contains("langsmith-secret"));
+
+        let ag_ui = plan_integration_export(
+            IntegrationFamily::AgUi,
+            IntegrationExportInput::new(event.clone(), payload.clone()),
+        )
+        .expect("ag-ui export plan");
+        assert_eq!(ag_ui.boundary_mode, IntegrationBoundaryMode::EndpointStream);
+        assert!(ag_ui.target_operation.contains("stream"));
+        assert_eq!(
+            ag_ui
+                .event
+                .payload
+                .fields
+                .get("trace_id")
+                .map(String::as_str),
+            Some("trace-123")
+        );
+
+        let bedrock = plan_integration_export(
+            IntegrationFamily::Bedrock,
+            IntegrationExportInput::new(event, payload).with_api_token("aws-secret"),
+        )
+        .expect("bedrock export plan");
+        assert_eq!(
+            bedrock.headers["Authorization"],
+            "AWS4-HMAC-SHA256 <redacted>"
+        );
+        assert!(!bedrock.safe_debug.contains("aws-secret"));
+    }
+
+    #[test]
+    fn test_27_1_3_integration_claims_are_fixture_backed_and_not_release_blocking() {
+        // SCEN-27.1.3 / AC3 / TEST-27.1.3
+        let claims = integration_parity_claims();
+        let features: BTreeSet<_> = claims.iter().map(|claim| claim.feature.as_str()).collect();
+
+        for expected in [
+            "integration::langchain",
+            "integration::langgraph",
+            "integration::langsmith",
+            "integration::llamaindex",
+            "integration::ag-ui",
+            "integration::bedrock",
+            "integration::griptape",
+            "integration::helicone",
+            "integration::langfuse",
+            "integration::opik",
+            "integration::r2r",
+            "integration::swarm",
+        ] {
+            assert!(features.contains(expected), "missing {expected}");
+        }
+
+        assert!(claims.iter().all(|claim| {
+            claim.status == ParityFeatureStatus::Complete
+                && !claim.fixtures.is_empty()
+                && validate_parity_claim(claim).is_ok()
+        }));
+        assert!(
+            release_blocking_claims(&claims).is_empty(),
+            "integration claims should not block release"
+        );
+
+        let ledger = build_release_blocker_ledger();
+        assert!(
+            !ledger
+                .entries
+                .iter()
+                .any(|entry| entry.category == ReleaseBlockerCategory::Integration),
+            "integration category should be absent from release blockers"
+        );
     }
 }
