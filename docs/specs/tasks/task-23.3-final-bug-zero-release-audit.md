@@ -46,9 +46,9 @@ RED tests own final signatures.
 
 ## 6. Acceptance Criteria
 
-- **AC1**: Final audit requires build, check, unit, parity, examples, quality, blocker, and bug-ledger evidence.
-- **AC2**: Audit refuses release when unresolved high/critical bugs or unwaived blockers exist.
-- **AC3**: Audit wording states evidence scope and avoids unsupported absolute bug-free claims.
+- [ ] **AC1**: Final audit requires build, check, unit, parity, examples, quality, blocker, and bug-ledger evidence.
+- [ ] **AC2**: Audit refuses release when unresolved high/critical bugs or unwaived blockers exist.
+- [ ] **AC3**: Audit wording states evidence scope and avoids unsupported absolute bug-free claims.
 
 ## 7. Traceability
 
@@ -65,11 +65,11 @@ RED tests own final signatures.
 
 ## 9. Verification Plan
 
-- install
-- typecheck
-- unit-test
-- parity-test
-- build
+- Install
+- Typecheck
+- Unit Test
+- Parity Test
+- Build
 
 ## 10. Completion Notes
 
