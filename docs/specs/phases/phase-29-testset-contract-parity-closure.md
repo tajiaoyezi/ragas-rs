@@ -1,6 +1,6 @@
 # Phase 29 - testset-contract-parity-closure
 
-**Status**: Ready
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 **Depends On**: 28
 
@@ -26,7 +26,7 @@ Phase 20 testset contracts, Phase 23 release blocker ledger, Phase 28 metric fix
 
 | Task | Spec | Status |
 |---|---|---|
-| 29.1 | docs/specs/tasks/task-29.1-testset-contract-parity-closure.md | Ready |
+| 29.1 | docs/specs/tasks/task-29.1-testset-contract-parity-closure.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 
