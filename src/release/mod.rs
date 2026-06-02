@@ -61,6 +61,15 @@ impl QualityCommandEvidence {
     }
 }
 
+impl QualityGateMode {
+    pub fn is_required(self) -> bool {
+        matches!(
+            self,
+            QualityGateMode::RequiredDefaultCi | QualityGateMode::RequiredReleaseEvidence
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QualityEvidenceFinding {
     pub gate_id: String,
@@ -290,14 +299,78 @@ pub fn required_quality_gates() -> Vec<QualityGateKind> {
 }
 
 pub fn property_fuzz_coverage_gate_descriptors() -> Vec<QualityGateDescriptor> {
-    Vec::new()
+    vec![
+        QualityGateDescriptor {
+            gate_id: "quality::property::invariants",
+            evidence_kind: QualityEvidenceKind::Property,
+            gate_kind: QualityGateKind::FuzzProperty,
+            command: "cargo test property::",
+            scope: "src/",
+            mode: QualityGateMode::RequiredDefaultCi,
+        },
+        QualityGateDescriptor {
+            gate_id: "quality::fuzz::smoke-corpus",
+            evidence_kind: QualityEvidenceKind::Fuzz,
+            gate_kind: QualityGateKind::FuzzProperty,
+            command: "cargo test fuzz_smoke::",
+            scope: "src/",
+            mode: QualityGateMode::RequiredDefaultCi,
+        },
+        QualityGateDescriptor {
+            gate_id: "quality::coverage::llvm-cov-summary",
+            evidence_kind: QualityEvidenceKind::Coverage,
+            gate_kind: QualityGateKind::Coverage,
+            command: "cargo llvm-cov --summary-only",
+            scope: "src/",
+            mode: QualityGateMode::RequiredReleaseEvidence,
+        },
+        QualityGateDescriptor {
+            gate_id: "quality::fuzz::long-running-campaign",
+            evidence_kind: QualityEvidenceKind::Fuzz,
+            gate_kind: QualityGateKind::FuzzProperty,
+            command: "cargo fuzz run ragas_evaluation -- -max_total_time=3600",
+            scope: "fuzz/",
+            mode: QualityGateMode::OptionalLongRunning,
+        },
+    ]
 }
 
 pub fn required_quality_evidence_blockers(
-    _descriptors: &[QualityGateDescriptor],
-    _evidence: &[QualityCommandEvidence],
+    descriptors: &[QualityGateDescriptor],
+    evidence: &[QualityCommandEvidence],
 ) -> Vec<QualityEvidenceFinding> {
-    Vec::new()
+    descriptors
+        .iter()
+        .filter(|descriptor| descriptor.mode.is_required())
+        .filter_map(|descriptor| {
+            match evidence
+                .iter()
+                .find(|evidence| evidence.gate_id == descriptor.gate_id)
+            {
+                Some(record) => match record.status {
+                    GateEvidenceStatus::Passed | GateEvidenceStatus::SkippedWithJustification => {
+                        None
+                    }
+                    GateEvidenceStatus::Failed | GateEvidenceStatus::Missing => {
+                        Some(QualityEvidenceFinding {
+                            gate_id: descriptor.gate_id.to_string(),
+                            evidence_kind: descriptor.evidence_kind,
+                            command: descriptor.command.to_string(),
+                            detail: record.detail.clone(),
+                            release_blocking: true,
+                        })
+                    }
+                },
+                None => Some(QualityEvidenceFinding {
+                    gate_id: descriptor.gate_id.to_string(),
+                    evidence_kind: descriptor.evidence_kind,
+                    command: descriptor.command.to_string(),
+                    detail: "required quality evidence is missing".to_string(),
+                    release_blocking: true,
+                }),
+            }
+        })
+        .collect()
 }
 
 pub fn summarize_quality_gates(report: &ReleaseGateReport) -> QualityGateSummary {
@@ -551,9 +624,11 @@ mod tests {
                 && finding.command == "cargo test fuzz_smoke::"
                 && finding.release_blocking
         }));
-        assert!(!blockers
-            .iter()
-            .any(|finding| finding.gate_id == "quality::fuzz::long-running-campaign"));
+        assert!(
+            !blockers
+                .iter()
+                .any(|finding| finding.gate_id == "quality::fuzz::long-running-campaign")
+        );
     }
 
     #[test]
@@ -585,7 +660,10 @@ mod tests {
         let blockers = required_quality_evidence_blockers(&descriptors, &evidence);
 
         assert_eq!(optional.mode, QualityGateMode::OptionalLongRunning);
-        assert_eq!(optional.command, "cargo fuzz run ragas_evaluation -- -max_total_time=3600");
+        assert_eq!(
+            optional.command,
+            "cargo fuzz run ragas_evaluation -- -max_total_time=3600"
+        );
         assert!(blockers.is_empty());
     }
 
