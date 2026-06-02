@@ -1,6 +1,6 @@
 # Task 21.3 - quickstart-docs-parity
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 21
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
