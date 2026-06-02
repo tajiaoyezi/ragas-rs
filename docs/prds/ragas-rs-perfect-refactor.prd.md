@@ -105,6 +105,7 @@ Out of scope:
 | 23.2 | 23 | release | Implement gap resolution and waiver policy. |
 | 23.3 | 23 | release | Implement final bug-zero release audit evidence checks. |
 | 24.1 | 24 | docs/examples | Close the `docs::quickstart::experiments` release blocker with a runnable Rust experiment example and fixture-backed parity claim. |
+| 24.2 | 24 | backends | Close the `backend::disk-cache` release blocker with a deterministic persistent Rust disk cache and fixture-backed parity claim. |
 
 ## 8. Decisions
 

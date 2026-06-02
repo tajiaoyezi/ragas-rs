@@ -111,7 +111,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 21 | optimizer-experiment-cli-docs-parity | docs/specs/phases/phase-21-optimizer-experiment-cli-docs-parity.md | Done | 3 | - |
 | 22 | exhaustive-test-engineering | docs/specs/phases/phase-22-exhaustive-test-engineering.md | Done | 3 | - |
 | 23 | release-candidate-bug-zero-audit | docs/specs/phases/phase-23-release-candidate-bug-zero-audit.md | Done | 3 | - |
-| 24 | release-blocker-closure | docs/specs/phases/phase-24-release-blocker-closure.md | Done | 1 | - |
+| 24 | release-blocker-closure | docs/specs/phases/phase-24-release-blocker-closure.md | Ready | 2 | - |
 
 ## Task 总索引
 
@@ -181,6 +181,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 23.2 | release | docs/specs/tasks/task-23.2-gap-resolution-and-waiver-policy.md | Done | after task 23.1 | - |
 | 23.3 | release | docs/specs/tasks/task-23.3-final-bug-zero-release-audit.md | Done | after task 23.2 | - |
 | 24.1 | docs/examples | docs/specs/tasks/task-24.1-experiment-quickstart-closure.md | Done | after task 23.3 | - |
+| 24.2 | backends | docs/specs/tasks/task-24.2-disk-cache-persistence-closure.md | Ready | after task 24.1 | - |
 
 ## ADR 索引
 
@@ -260,3 +261,4 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 23.2 | test/features/gap-resolution-and-waiver-policy.feature |
 | 23.3 | test/features/final-bug-zero-release-audit.feature |
 | 24.1 | test/features/experiment-quickstart-closure.feature |
+| 24.2 | test/features/disk-cache-persistence-closure.feature |
