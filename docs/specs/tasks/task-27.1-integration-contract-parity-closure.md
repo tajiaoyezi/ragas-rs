@@ -1,6 +1,6 @@
 # Task 27.1 - integration-contract-parity-closure
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 27
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
