@@ -78,6 +78,7 @@ Out of scope:
 | 24 | release-blocker-closure | Resolve concrete release blockers produced by the final audit ledger, starting with quickstart/example parity gaps that can be closed with deterministic Rust evidence. | Done |
 | 25 | backend-gdrive-parity-closure | Close the remaining backend release blocker by implementing Google Drive / Sheets backend contracts through a deterministic Rust transport abstraction and fixture-backed parity evidence. | Done |
 | 26 | provider-protocol-parity-closure | Close provider release blockers with deterministic provider protocol contracts and fixture-backed parity claims for every tracked upstream family. | Done |
+| 27 | integration-contract-parity-closure | Close integration release blockers with deterministic integration contracts and fixture-backed parity claims for every tracked upstream family. | Ready |
 
 ## 7. First Delta Task Matrix
 
@@ -111,6 +112,7 @@ Out of scope:
 | 24.3 | 24 | cli/sdk | Close the `workflow::sdk_facing` release blocker by recording that current upstream `src/ragas/sdk.py` is an empty module and mapping the Rust SDK surface to fixture-backed complete parity. |
 | 25.1 | 25 | backends | Close the `backend::gdrive` release blocker with a deterministic Google Sheets-compatible backend transport, row roundtrip tests, and fixture-backed parity claim. |
 | 26.1 | 26 | providers | Close the provider release-blocker category with deterministic provider protocol contracts, request-plan tests, and fixture-backed complete parity claims. |
+| 27.1 | 27 | integrations | Close the integration release-blocker category with deterministic integration contracts, export-plan tests, and fixture-backed complete parity claims. |
 
 ## 8. Decisions
 

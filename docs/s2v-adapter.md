@@ -114,6 +114,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 24 | release-blocker-closure | docs/specs/phases/phase-24-release-blocker-closure.md | Done | 3 | - |
 | 25 | backend-gdrive-parity-closure | docs/specs/phases/phase-25-backend-gdrive-parity-closure.md | Done | 1 | - |
 | 26 | provider-protocol-parity-closure | docs/specs/phases/phase-26-provider-protocol-parity-closure.md | Done | 1 | - |
+| 27 | integration-contract-parity-closure | docs/specs/phases/phase-27-integration-contract-parity-closure.md | Ready | 1 | - |
 
 ## Task 总索引
 
@@ -187,6 +188,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 24.3 | cli/sdk | docs/specs/tasks/task-24.3-sdk-empty-module-closure.md | Done | after task 24.2 | - |
 | 25.1 | backends | docs/specs/tasks/task-25.1-gdrive-backend-parity-closure.md | Done | after task 24.3 | - |
 | 26.1 | providers | docs/specs/tasks/task-26.1-provider-protocol-parity-closure.md | Done | after task 25.1 | - |
+| 27.1 | integrations | docs/specs/tasks/task-27.1-integration-contract-parity-closure.md | Ready | after task 26.1 | - |
 
 ## ADR 索引
 
@@ -270,3 +272,4 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 24.3 | test/features/sdk-empty-module-closure.feature |
 | 25.1 | test/features/gdrive-backend-parity-closure.feature |
 | 26.1 | test/features/provider-protocol-parity-closure.feature |
+| 27.1 | test/features/integration-contract-parity-closure.feature |
