@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ParityClaim, ParityFeatureStatus};
+use crate::{ParityClaim, ParityFeatureStatus, ParityFixtureMetadata, ParityFixtureMode};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocExample {
@@ -61,15 +61,120 @@ pub fn public_workflow_examples() -> Vec<DocExample> {
 }
 
 pub fn quickstart_descriptors() -> Vec<QuickstartDescriptor> {
-    Vec::new()
+    vec![
+        quickstart_descriptor(
+            "Evaluate a RAG application",
+            Some("examples/evaluate.rs"),
+            ParityFeatureStatus::Complete,
+            None,
+        ),
+        quickstart_descriptor(
+            "Generate a testset",
+            Some("examples/testset.rs"),
+            ParityFeatureStatus::Complete,
+            None,
+        ),
+        quickstart_descriptor(
+            "Compare and monitor evaluation cost",
+            Some("examples/benchmark.rs"),
+            ParityFeatureStatus::Complete,
+            None,
+        ),
+        quickstart_descriptor(
+            "Run experiments",
+            None,
+            ParityFeatureStatus::KnownGap,
+            Some("no runnable Rust experiment quickstart example is available yet"),
+        ),
+    ]
 }
 
 pub fn runnable_example_metadata() -> Vec<RunnableExampleMetadata> {
-    Vec::new()
+    public_workflow_examples()
+        .into_iter()
+        .map(|example| RunnableExampleMetadata {
+            command: format!("cargo run --example {}", example.workflow),
+            expected_output: example_output_type(&example.workflow),
+            feature_flags: example.feature_flags,
+            example_path: example.example_path,
+        })
+        .collect()
 }
 
 pub fn docs_parity_claims() -> Vec<ParityClaim> {
-    Vec::new()
+    quickstart_descriptors()
+        .into_iter()
+        .map(|descriptor| {
+            let feature = format!(
+                "docs::quickstart::{}",
+                quickstart_slug(&descriptor.upstream_template)
+            );
+            let fixtures = if descriptor.parity_status == ParityFeatureStatus::Complete {
+                vec![docs_fixture_metadata(
+                    &feature,
+                    &descriptor.upstream_template,
+                    descriptor.rust_example.as_deref().unwrap_or(""),
+                )]
+            } else {
+                Vec::new()
+            };
+            ParityClaim {
+                feature,
+                status: descriptor.parity_status,
+                fixtures,
+            }
+        })
+        .collect()
+}
+
+fn quickstart_descriptor(
+    upstream_template: impl Into<String>,
+    rust_example: Option<&str>,
+    parity_status: ParityFeatureStatus,
+    known_gap: Option<&str>,
+) -> QuickstartDescriptor {
+    QuickstartDescriptor {
+        upstream_template: upstream_template.into(),
+        rust_example: rust_example.map(str::to_string),
+        parity_status,
+        known_gap: known_gap.map(str::to_string),
+    }
+}
+
+fn example_output_type(workflow: &str) -> ExampleOutputType {
+    match workflow {
+        "testset" => ExampleOutputType::Dataset,
+        "evaluate" | "benchmark" => ExampleOutputType::Json,
+        _ => ExampleOutputType::Text,
+    }
+}
+
+fn quickstart_slug(upstream_template: &str) -> &'static str {
+    match upstream_template {
+        "Evaluate a RAG application" => "evaluate",
+        "Generate a testset" => "testset",
+        "Compare and monitor evaluation cost" => "benchmark",
+        "Run experiments" => "experiments",
+        _ => "unknown",
+    }
+}
+
+fn docs_fixture_metadata(
+    feature: &str,
+    upstream_template: &str,
+    example_path: &str,
+) -> ParityFixtureMetadata {
+    ParityFixtureMetadata::new(
+        feature,
+        format!("docs/quickstarts/{}.md", quickstart_slug(upstream_template)),
+        Some(example_path.to_string()),
+        format!(
+            "tests/parity/fixtures/docs_quickstart_{}.json",
+            quickstart_slug(upstream_template)
+        ),
+        ParityFixtureMode::DeterministicMock,
+        None,
+    )
 }
 
 #[cfg(test)]
