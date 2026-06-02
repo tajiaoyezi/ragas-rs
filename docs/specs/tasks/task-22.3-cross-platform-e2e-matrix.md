@@ -1,6 +1,6 @@
 # Task 22.3 - cross-platform-e2e-matrix
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 22
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -45,17 +45,17 @@ RED tests own final signatures.
 
 ## 6. Acceptance Criteria
 
-- [ ] **AC1**: Platform matrix includes Linux x64, macOS arm64, and Windows x64 with required evidence status.
-- [ ] **AC2**: E2E workflow matrix includes evaluate, provider mock, dataset IO, CLI, and docs examples.
-- [ ] **AC3**: Missing required platform or E2E evidence blocks release.
+- [x] **AC1**: Platform matrix includes Linux x64, macOS arm64, and Windows x64 with required evidence status.
+- [x] **AC2**: E2E workflow matrix includes evaluate, provider mock, dataset IO, CLI, and docs examples.
+- [x] **AC3**: Missing required platform or E2E evidence blocks release.
 
 ## 7. Traceability
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-22.3.1 | TEST-22.3.1 | Not Started |
-| AC2 | SCEN-22.3.2 | TEST-22.3.2 | Not Started |
-| AC3 | SCEN-22.3.3 | TEST-22.3.3 | Not Started |
+| AC1 | SCEN-22.3.1 | TEST-22.3.1 | Done |
+| AC2 | SCEN-22.3.2 | TEST-22.3.2 | Done |
+| AC3 | SCEN-22.3.3 | TEST-22.3.3 | Done |
 
 ## 8. Risks
 
@@ -71,9 +71,19 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：<TBD-after-impl>
-- **改动文件**：<TBD-after-impl>
-- **commit 列表**：<TBD-after-impl>
-- **§9 Verification 结果**：<TBD-after-impl>
-- **剩余风险 / 未做项**：<TBD-after-impl>
-- **下游 task 影响**：<TBD-after-impl>
+- **完成日期**：2026-06-02
+- **改动文件**：
+  - `src/release/mod.rs`（新增 platform/e2e evidence descriptors、platform/E2E quality gate conversion 与 TEST-22.3.1~22.3.3）
+  - `src/lib.rs`（RED 阶段导出 platform/E2E release evidence API）
+- **commit 列表**：
+  - `78ab97e` docs(spec): task-22.3 Ready gate format
+  - `20685ad` docs(spec): task-22.3 进入实施
+  - `b9b0db0` test(release): 加 task-22.3 RED 测试
+  - `0c24509` feat(release): 实现 task-22.3 platform e2e gates
+- **§9 Verification 结果**：
+  - Install: passed (`cargo build`)
+  - Typecheck: passed (`cargo check`)
+  - Unit Test: passed, 181 passed / 0 failed (`cargo test`)
+  - Build: passed (`cargo build`)
+- **剩余风险 / 未做项**：Local verification remains Windows-only; Linux and macOS entries are required release evidence descriptors that must be satisfied by CI or block final release readiness.
+- **下游 task 影响**：Phase 23 release blocker ledger can aggregate platform and E2E gaps through `platform_e2e_quality_gate_descriptors()` and `required_quality_evidence_blockers()`.
