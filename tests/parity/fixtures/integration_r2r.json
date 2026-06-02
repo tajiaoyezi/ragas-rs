@@ -1,0 +1,17 @@
+{
+  "feature": "integration::r2r",
+  "python_baseline": {
+    "upstream_module": "src/ragas/integrations/r2r.py",
+    "boundary": "R2R app endpoint",
+    "operation": "R2R app endpoint",
+    "auth_envs": ["R2R_API_KEY", "R2R_BASE_URL"]
+  },
+  "rust_output": {
+    "contract": "IntegrationContractDescriptor + IntegrationExportPlan",
+    "default_ci_mode": "deterministic endpoint stream planning",
+    "boundary_mode": "EndpointStream",
+    "auth_header": "Bearer <redacted>",
+    "live_endpoint": "opt-in only"
+  },
+  "tolerance": null
+}

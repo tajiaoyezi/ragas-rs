@@ -49,10 +49,12 @@ pub use experiments::{
     ExperimentRecord, ExperimentSummary, RunComparison, compare_runs, summarize_experiment,
 };
 pub use integrations::{
-    IntegrationDescriptor, IntegrationDestination, IntegrationEvent, IntegrationFamily,
-    IntegrationFeatureRegistry, IntegrationPayload, IntegrationRegistry, IntegrationTestMode,
-    TracingIntegration, integration_descriptors, integration_parity_claims,
-    normalize_callback_payload, redact_payload,
+    IntegrationAuthMode, IntegrationBoundaryMode, IntegrationContractDescriptor,
+    IntegrationDescriptor, IntegrationDestination, IntegrationEvent, IntegrationExportInput,
+    IntegrationExportPlan, IntegrationFamily, IntegrationFeatureRegistry, IntegrationPayload,
+    IntegrationRegistry, IntegrationTestMode, TracingIntegration, integration_contract_descriptors,
+    integration_descriptors, integration_parity_claims, normalize_callback_payload,
+    plan_integration_export, redact_payload,
 };
 pub use llm::{
     AzureOpenAiConfig, ChatMessage, EmbeddingAdapter, EmbeddingProvider, EmbeddingRequest,

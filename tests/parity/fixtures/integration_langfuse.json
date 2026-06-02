@@ -1,0 +1,17 @@
+{
+  "feature": "integration::langfuse",
+  "python_baseline": {
+    "upstream_module": "src/ragas/integrations/tracing/langfuse.py",
+    "boundary": "Langfuse trace sync",
+    "operation": "LangfuseTrace sync_trace",
+    "auth_envs": ["LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST"]
+  },
+  "rust_output": {
+    "contract": "IntegrationContractDescriptor + IntegrationExportPlan",
+    "default_ci_mode": "deterministic observability export planning",
+    "boundary_mode": "ObservabilityExporter",
+    "auth_env_header": "x-ragas-auth-envs",
+    "live_service": "opt-in only"
+  },
+  "tolerance": null
+}

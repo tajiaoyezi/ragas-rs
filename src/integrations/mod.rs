@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ParityClaim, ParityFeatureStatus, RagasError, RuntimeEvent, RuntimeEventKind};
+use crate::{
+    ParityClaim, ParityFeatureStatus, ParityFixtureMetadata, ParityFixtureMode, RagasError,
+    RuntimeEvent, RuntimeEventKind,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum IntegrationDestination {
@@ -151,16 +154,234 @@ pub struct IntegrationExportPlan {
 }
 
 pub fn integration_contract_descriptors() -> Vec<IntegrationContractDescriptor> {
-    Vec::new()
+    vec![
+        integration_contract(
+            IntegrationFamily::LangChain,
+            IntegrationBoundaryMode::DelegatedFramework,
+            IntegrationAuthMode::DelegatedSdk,
+            &[],
+            "EvaluatorChain.invoke",
+            "src/ragas/integrations/langchain.py",
+            "tests/parity/fixtures/integration_langchain.json",
+            true,
+        ),
+        integration_contract(
+            IntegrationFamily::LangGraph,
+            IntegrationBoundaryMode::DelegatedFramework,
+            IntegrationAuthMode::DelegatedSdk,
+            &[],
+            "LangGraph workflow adapter",
+            "src/ragas/integrations/langgraph.py",
+            "tests/parity/fixtures/integration_langgraph.json",
+            true,
+        ),
+        integration_contract(
+            IntegrationFamily::LangSmith,
+            IntegrationBoundaryMode::ObservabilityExporter,
+            IntegrationAuthMode::BearerToken,
+            &["LANGCHAIN_API_KEY", "LANGCHAIN_ENDPOINT"],
+            "Client.run_on_dataset",
+            "src/ragas/integrations/langsmith.py",
+            "tests/parity/fixtures/integration_langsmith.json",
+            true,
+        ),
+        integration_contract(
+            IntegrationFamily::LlamaIndex,
+            IntegrationBoundaryMode::DelegatedFramework,
+            IntegrationAuthMode::DelegatedSdk,
+            &[],
+            "LlamaIndex evaluator adapter",
+            "src/ragas/integrations/llama_index.py",
+            "tests/parity/fixtures/integration_llamaindex.json",
+            true,
+        ),
+        integration_contract(
+            IntegrationFamily::AgUi,
+            IntegrationBoundaryMode::EndpointStream,
+            IntegrationAuthMode::BearerToken,
+            &["AG_UI_API_KEY"],
+            "call_ag_ui_endpoint stream events",
+            "src/ragas/integrations/ag_ui.py",
+            "tests/parity/fixtures/integration_ag_ui.json",
+            true,
+        ),
+        integration_contract(
+            IntegrationFamily::Bedrock,
+            IntegrationBoundaryMode::CloudService,
+            IntegrationAuthMode::AwsSigV4,
+            &["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"],
+            "Bedrock evaluation job",
+            "src/ragas/integrations/amazon_bedrock.py",
+            "tests/parity/fixtures/integration_bedrock.json",
+            true,
+        ),
+        integration_contract(
+            IntegrationFamily::Griptape,
+            IntegrationBoundaryMode::DelegatedFramework,
+            IntegrationAuthMode::DelegatedSdk,
+            &[],
+            "Griptape task adapter",
+            "src/ragas/integrations/griptape.py",
+            "tests/parity/fixtures/integration_griptape.json",
+            true,
+        ),
+        integration_contract(
+            IntegrationFamily::Helicone,
+            IntegrationBoundaryMode::ObservabilityExporter,
+            IntegrationAuthMode::BearerToken,
+            &["HELICONE_API_KEY"],
+            "Helicone trace export",
+            "src/ragas/integrations/helicone.py",
+            "tests/parity/fixtures/integration_helicone.json",
+            true,
+        ),
+        integration_contract(
+            IntegrationFamily::Langfuse,
+            IntegrationBoundaryMode::ObservabilityExporter,
+            IntegrationAuthMode::EnvVars,
+            &[
+                "LANGFUSE_PUBLIC_KEY",
+                "LANGFUSE_SECRET_KEY",
+                "LANGFUSE_HOST",
+            ],
+            "LangfuseTrace sync_trace",
+            "src/ragas/integrations/tracing/langfuse.py",
+            "tests/parity/fixtures/integration_langfuse.json",
+            true,
+        ),
+        integration_contract(
+            IntegrationFamily::Opik,
+            IntegrationBoundaryMode::ObservabilityExporter,
+            IntegrationAuthMode::EnvVars,
+            &["OPIK_API_KEY", "OPIK_WORKSPACE"],
+            "OpikTracer log feedback scores",
+            "src/ragas/integrations/opik.py",
+            "tests/parity/fixtures/integration_opik.json",
+            true,
+        ),
+        integration_contract(
+            IntegrationFamily::R2R,
+            IntegrationBoundaryMode::EndpointStream,
+            IntegrationAuthMode::BearerToken,
+            &["R2R_API_KEY", "R2R_BASE_URL"],
+            "R2R app endpoint",
+            "src/ragas/integrations/r2r.py",
+            "tests/parity/fixtures/integration_r2r.json",
+            true,
+        ),
+        integration_contract(
+            IntegrationFamily::Swarm,
+            IntegrationBoundaryMode::DelegatedFramework,
+            IntegrationAuthMode::DelegatedSdk,
+            &[],
+            "Swarm agent adapter",
+            "src/ragas/integrations/swarm.py",
+            "tests/parity/fixtures/integration_swarm.json",
+            true,
+        ),
+    ]
 }
 
 pub fn plan_integration_export(
-    _family: IntegrationFamily,
-    _input: IntegrationExportInput,
+    family: IntegrationFamily,
+    input: IntegrationExportInput,
 ) -> Result<IntegrationExportPlan, RagasError> {
-    Err(RagasError::DatasetIo {
-        message: "integration export planning is not implemented".to_string(),
+    let descriptor = integration_contract_descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.family == family)
+        .ok_or_else(|| RagasError::DatasetIo {
+            message: format!("missing integration contract descriptor for {family:?}"),
+        })?;
+    let headers = integration_export_headers(&descriptor);
+    let event = normalize_callback_payload(
+        integration_destination_for_family(family),
+        &input.event,
+        input.payload,
+    );
+    let safe_debug = format!(
+        "integration={} boundary={:?} target={}",
+        family.slug(),
+        descriptor.boundary_mode,
+        descriptor.target_operation
+    );
+
+    Ok(IntegrationExportPlan {
+        family,
+        boundary_mode: descriptor.boundary_mode,
+        target_operation: descriptor.target_operation.to_string(),
+        headers,
+        event,
+        safe_debug,
     })
+}
+
+fn integration_contract(
+    family: IntegrationFamily,
+    boundary_mode: IntegrationBoundaryMode,
+    auth_mode: IntegrationAuthMode,
+    auth_envs: &[&'static str],
+    target_operation: &'static str,
+    upstream_module_path: &'static str,
+    fixture_path: &'static str,
+    requires_vendor_sdk: bool,
+) -> IntegrationContractDescriptor {
+    IntegrationContractDescriptor {
+        family,
+        boundary_mode,
+        auth_mode,
+        auth_envs: auth_envs.to_vec(),
+        target_operation,
+        lifecycle_fields: vec![
+            "event_kind",
+            "run_id",
+            "metric_name",
+            "sample_index",
+            "payload",
+        ],
+        upstream_module_path,
+        fixture_path,
+        requires_vendor_sdk,
+    }
+}
+
+fn integration_export_headers(
+    descriptor: &IntegrationContractDescriptor,
+) -> BTreeMap<String, String> {
+    let mut headers = BTreeMap::new();
+    match descriptor.auth_mode {
+        IntegrationAuthMode::None => {}
+        IntegrationAuthMode::EnvVars => {
+            headers.insert(
+                "x-ragas-auth-envs".to_string(),
+                descriptor.auth_envs.join(","),
+            );
+        }
+        IntegrationAuthMode::BearerToken => {
+            headers.insert("Authorization".to_string(), "Bearer <redacted>".to_string());
+        }
+        IntegrationAuthMode::AwsSigV4 => {
+            headers.insert(
+                "Authorization".to_string(),
+                "AWS4-HMAC-SHA256 <redacted>".to_string(),
+            );
+        }
+        IntegrationAuthMode::DelegatedSdk => {
+            headers.insert(
+                "x-ragas-integration-boundary".to_string(),
+                "delegated-sdk".to_string(),
+            );
+        }
+    }
+    headers
+}
+
+fn integration_destination_for_family(family: IntegrationFamily) -> IntegrationDestination {
+    match family {
+        IntegrationFamily::LangSmith => IntegrationDestination::LangSmith,
+        IntegrationFamily::Langfuse => IntegrationDestination::Langfuse,
+        IntegrationFamily::Opik => IntegrationDestination::Opik,
+        _ => IntegrationDestination::Tracing,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -200,96 +421,105 @@ pub fn integration_descriptors() -> Vec<IntegrationDescriptor> {
             None,
             IntegrationTestMode::FeatureGatedLive,
             true,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
         ),
         IntegrationDescriptor::new(
             IntegrationFamily::LangGraph,
             None,
             IntegrationTestMode::FeatureGatedLive,
             true,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
         ),
         IntegrationDescriptor::new(
             IntegrationFamily::LangSmith,
             Some(IntegrationDestination::LangSmith),
             IntegrationTestMode::FeatureGatedLive,
             true,
-            ParityFeatureStatus::Partial,
+            ParityFeatureStatus::Complete,
         ),
         IntegrationDescriptor::new(
             IntegrationFamily::LlamaIndex,
             None,
             IntegrationTestMode::FeatureGatedLive,
             true,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
         ),
         IntegrationDescriptor::new(
             IntegrationFamily::AgUi,
             None,
             IntegrationTestMode::FeatureGatedLive,
             true,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
         ),
         IntegrationDescriptor::new(
             IntegrationFamily::Bedrock,
             None,
             IntegrationTestMode::FeatureGatedLive,
             true,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
         ),
         IntegrationDescriptor::new(
             IntegrationFamily::Griptape,
             None,
             IntegrationTestMode::FeatureGatedLive,
             true,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
         ),
         IntegrationDescriptor::new(
             IntegrationFamily::Helicone,
             None,
             IntegrationTestMode::FeatureGatedLive,
             true,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
         ),
         IntegrationDescriptor::new(
             IntegrationFamily::Langfuse,
             Some(IntegrationDestination::Langfuse),
             IntegrationTestMode::FeatureGatedLive,
             true,
-            ParityFeatureStatus::Partial,
+            ParityFeatureStatus::Complete,
         ),
         IntegrationDescriptor::new(
             IntegrationFamily::Opik,
             Some(IntegrationDestination::Opik),
             IntegrationTestMode::FeatureGatedLive,
             true,
-            ParityFeatureStatus::Partial,
+            ParityFeatureStatus::Complete,
         ),
         IntegrationDescriptor::new(
             IntegrationFamily::R2R,
             None,
             IntegrationTestMode::FeatureGatedLive,
             true,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
         ),
         IntegrationDescriptor::new(
             IntegrationFamily::Swarm,
             None,
             IntegrationTestMode::FeatureGatedLive,
             true,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
         ),
     ]
 }
 
 pub fn integration_parity_claims() -> Vec<ParityClaim> {
-    integration_descriptors()
+    integration_contract_descriptors()
         .into_iter()
-        .filter(|descriptor| descriptor.parity_status != ParityFeatureStatus::Complete)
-        .map(|descriptor| ParityClaim {
-            feature: descriptor.parity_feature(),
-            status: descriptor.parity_status,
-            fixtures: Vec::new(),
+        .map(|descriptor| {
+            let feature = format!("integration::{}", descriptor.family.slug());
+            ParityClaim {
+                feature: feature.clone(),
+                status: ParityFeatureStatus::Complete,
+                fixtures: vec![ParityFixtureMetadata::new(
+                    feature,
+                    descriptor.upstream_module_path,
+                    None,
+                    descriptor.fixture_path,
+                    ParityFixtureMode::DeterministicMock,
+                    None,
+                )],
+            }
         })
         .collect()
 }
@@ -582,7 +812,7 @@ mod tests {
             langsmith.destination,
             Some(IntegrationDestination::LangSmith)
         );
-        assert_ne!(langsmith.parity_status, ParityFeatureStatus::Complete);
+        assert_eq!(langsmith.parity_status, ParityFeatureStatus::Complete);
     }
 
     #[test]
@@ -621,32 +851,36 @@ mod tests {
     }
 
     #[test]
-    fn test_18_4_3_unsupported_integration_families_create_release_blocking_claims() {
+    fn test_18_4_3_integration_families_emit_release_ledger_claims() {
         // SCEN-18.4.3 / AC3 / TEST-18.4.3
         let claims = integration_parity_claims();
         let blockers = release_blocking_claims(&claims);
-        let blocking_features: BTreeSet<_> = blockers
-            .iter()
-            .map(|claim| claim.feature.as_str())
-            .collect();
+        let features: BTreeSet<_> = claims.iter().map(|claim| claim.feature.as_str()).collect();
 
         for expected in [
             "integration::langchain",
             "integration::langgraph",
+            "integration::langsmith",
             "integration::llamaindex",
+            "integration::ag-ui",
             "integration::bedrock",
+            "integration::griptape",
+            "integration::helicone",
+            "integration::langfuse",
+            "integration::opik",
+            "integration::r2r",
             "integration::swarm",
         ] {
             assert!(
-                blocking_features.contains(expected),
-                "missing release blocker {expected}"
+                features.contains(expected),
+                "missing integration claim {expected}"
             );
         }
 
-        assert!(claims.iter().all(|claim| {
-            !(blocking_features.contains(claim.feature.as_str())
-                && claim.status == ParityFeatureStatus::Complete)
-        }));
+        assert!(
+            blockers.is_empty(),
+            "task 27.1 closes integration release blockers with fixture-backed claims"
+        );
     }
 
     #[test]

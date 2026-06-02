@@ -1,0 +1,17 @@
+{
+  "feature": "integration::langsmith",
+  "python_baseline": {
+    "upstream_module": "src/ragas/integrations/langsmith.py",
+    "boundary": "LangSmith dataset and run exporter",
+    "operation": "Client.run_on_dataset",
+    "auth_envs": ["LANGCHAIN_API_KEY", "LANGCHAIN_ENDPOINT"]
+  },
+  "rust_output": {
+    "contract": "IntegrationContractDescriptor + IntegrationExportPlan",
+    "default_ci_mode": "deterministic observability export planning",
+    "boundary_mode": "ObservabilityExporter",
+    "auth_header": "Bearer <redacted>",
+    "live_sdk": "opt-in only"
+  },
+  "tolerance": null
+}

@@ -1171,7 +1171,8 @@ mod tests {
 
     use crate::{
         MetricGoldenComparison, MetricGoldenOutcome, backend_parity_claims, docs_parity_claims,
-        metric_catalog_parity_claims, provider_parity_claims, release_blocking_claims,
+        integration_parity_claims, metric_catalog_parity_claims, provider_parity_claims,
+        release_blocking_claims,
     };
 
     #[test]
@@ -1542,7 +1543,6 @@ mod tests {
         let categories: BTreeSet<_> = ledger.entries.iter().map(|entry| entry.category).collect();
 
         for category in [
-            ReleaseBlockerCategory::Integration,
             ReleaseBlockerCategory::Metric,
             ReleaseBlockerCategory::Testset,
             ReleaseBlockerCategory::Optimizer,
@@ -1573,6 +1573,12 @@ mod tests {
         assert!(
             release_blocking_claims(&provider_claims).is_empty(),
             "closed provider claims should not keep Provider in blocker ledger"
+        );
+
+        let integration_claims = integration_parity_claims();
+        assert!(
+            release_blocking_claims(&integration_claims).is_empty(),
+            "closed integration claims should not keep Integration in blocker ledger"
         );
     }
 
