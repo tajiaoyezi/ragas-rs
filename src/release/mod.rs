@@ -276,6 +276,98 @@ pub struct ReleaseBlockerSummary {
     pub release_ready: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum GapResolutionKind {
+    Fixed,
+    Waived,
+    Deferred,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseWaiver {
+    pub blocker_id: String,
+    pub scope: String,
+    pub rationale: String,
+    pub owner: String,
+    pub expires_on: String,
+    pub risk: String,
+    pub rollback_impact: String,
+}
+
+impl ReleaseWaiver {
+    pub fn new(
+        blocker_id: impl Into<String>,
+        scope: impl Into<String>,
+        rationale: impl Into<String>,
+        owner: impl Into<String>,
+        expires_on: impl Into<String>,
+        risk: impl Into<String>,
+        rollback_impact: impl Into<String>,
+    ) -> Self {
+        Self {
+            blocker_id: blocker_id.into(),
+            scope: scope.into(),
+            rationale: rationale.into(),
+            owner: owner.into(),
+            expires_on: expires_on.into(),
+            risk: risk.into(),
+            rollback_impact: rollback_impact.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WaiverValidationError {
+    MissingField(&'static str),
+    Expired,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GapResolutionRecord {
+    pub blocker_id: String,
+    pub kind: GapResolutionKind,
+    pub evidence: String,
+    pub waiver: Option<ReleaseWaiver>,
+}
+
+impl GapResolutionRecord {
+    pub fn fixed(blocker_id: impl Into<String>, evidence: impl Into<String>) -> Self {
+        Self {
+            blocker_id: blocker_id.into(),
+            kind: GapResolutionKind::Fixed,
+            evidence: evidence.into(),
+            waiver: None,
+        }
+    }
+
+    pub fn waived(waiver: ReleaseWaiver) -> Self {
+        Self {
+            blocker_id: waiver.blocker_id.clone(),
+            kind: GapResolutionKind::Waived,
+            evidence: waiver.rationale.clone(),
+            waiver: Some(waiver),
+        }
+    }
+
+    pub fn deferred(blocker_id: impl Into<String>, evidence: impl Into<String>) -> Self {
+        Self {
+            blocker_id: blocker_id.into(),
+            kind: GapResolutionKind::Deferred,
+            evidence: evidence.into(),
+            waiver: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GapResolutionSummary {
+    pub fixed: usize,
+    pub waived: usize,
+    pub deferred: usize,
+    pub still_blocking: usize,
+    pub release_ready: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BugLedgerEntry {
     pub id: String,
@@ -558,6 +650,27 @@ fn sanitize_id_component(value: &str) -> String {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("-")
+}
+
+pub fn validate_release_waiver(
+    _waiver: &ReleaseWaiver,
+    _as_of: &str,
+) -> Result<(), WaiverValidationError> {
+    Ok(())
+}
+
+pub fn summarize_gap_resolutions(
+    _ledger: &ReleaseBlockerLedger,
+    _resolutions: &[GapResolutionRecord],
+    _as_of: &str,
+) -> GapResolutionSummary {
+    GapResolutionSummary {
+        fixed: 0,
+        waived: 0,
+        deferred: 0,
+        still_blocking: 0,
+        release_ready: true,
+    }
 }
 
 pub fn release_gate_files() -> Vec<&'static str> {
@@ -1311,6 +1424,131 @@ mod tests {
         assert_eq!(summary.total, 1);
         assert_eq!(summary.non_waived, 1);
         assert_eq!(summary.by_category[&ReleaseBlockerCategory::Quality], 1);
+        assert!(!summary.release_ready);
+    }
+
+    #[test]
+    fn test_23_2_1_waiver_requires_audit_fields() {
+        // SCEN-23.2.1 / AC1 / TEST-23.2.1
+        let waiver = ReleaseWaiver::new(
+            "RB-docs-template",
+            "docs::quickstart::agent",
+            "Template is excluded from Rust-native v1 until upstream stabilizes",
+            "release-owner",
+            "2026-12-31",
+            "Users cannot follow the agent quickstart from Rust docs",
+            "Keep release blocked if Python parity is required",
+        );
+
+        validate_release_waiver(&waiver, "2026-06-02").expect("complete waiver validates");
+        assert_eq!(waiver.scope, "docs::quickstart::agent");
+        assert!(waiver.rationale.contains("excluded"));
+        assert_eq!(waiver.owner, "release-owner");
+        assert_eq!(waiver.expires_on, "2026-12-31");
+        assert!(waiver.risk.contains("quickstart"));
+        assert!(waiver.rollback_impact.contains("release blocked"));
+
+        let incomplete = ReleaseWaiver::new(
+            "RB-docs-template",
+            "",
+            "missing scope",
+            "release-owner",
+            "2026-12-31",
+            "risk",
+            "rollback",
+        );
+        assert_eq!(
+            validate_release_waiver(&incomplete, "2026-06-02"),
+            Err(WaiverValidationError::MissingField("scope"))
+        );
+    }
+
+    #[test]
+    fn test_23_2_2_expired_or_incomplete_waiver_does_not_unblock_release() {
+        // SCEN-23.2.2 / AC2 / TEST-23.2.2
+        let ledger = ReleaseBlockerLedger {
+            entries: vec![ReleaseBlockerEntry::new(
+                "RB-quality-linux",
+                ReleaseBlockerCategory::Quality,
+                "quality::platform::linux-x64",
+                BugSeverity::High,
+                "release::required_quality_evidence_blockers",
+                "Missing Linux x64 release evidence",
+            )],
+        };
+        let expired = ReleaseWaiver::new(
+            "RB-quality-linux",
+            "quality::platform::linux-x64",
+            "Temporarily accept missing Linux evidence",
+            "release-owner",
+            "2026-01-01",
+            "Linux-specific failures could ship",
+            "Re-run Linux CI before release",
+        );
+
+        assert_eq!(
+            validate_release_waiver(&expired, "2026-06-02"),
+            Err(WaiverValidationError::Expired)
+        );
+        let summary =
+            summarize_gap_resolutions(&ledger, &[GapResolutionRecord::waived(expired)], "2026-06-02");
+
+        assert_eq!(summary.waived, 0);
+        assert_eq!(summary.still_blocking, 1);
+        assert!(!summary.release_ready);
+    }
+
+    #[test]
+    fn test_23_2_3_release_summary_separates_fixed_waived_and_blocking_gaps() {
+        // SCEN-23.2.3 / AC3 / TEST-23.2.3
+        let ledger = ReleaseBlockerLedger {
+            entries: vec![
+                ReleaseBlockerEntry::new(
+                    "RB-provider",
+                    ReleaseBlockerCategory::Provider,
+                    "provider::litellm",
+                    BugSeverity::High,
+                    "providers::provider_parity_claims",
+                    "provider gap",
+                ),
+                ReleaseBlockerEntry::new(
+                    "RB-docs",
+                    ReleaseBlockerCategory::Docs,
+                    "docs::quickstart::agent",
+                    BugSeverity::Medium,
+                    "docs_examples::docs_parity_claims",
+                    "docs gap",
+                ),
+                ReleaseBlockerEntry::new(
+                    "RB-quality",
+                    ReleaseBlockerCategory::Quality,
+                    "quality::coverage::llvm-cov-summary",
+                    BugSeverity::High,
+                    "release::required_quality_evidence_blockers",
+                    "coverage gap",
+                ),
+            ],
+        };
+        let valid_waiver = ReleaseWaiver::new(
+            "RB-docs",
+            "docs::quickstart::agent",
+            "Documented exclusion for Rust-native v1",
+            "release-owner",
+            "2026-12-31",
+            "Docs workflow remains unavailable",
+            "Keep docs gap visible in release notes",
+        );
+        let resolutions = vec![
+            GapResolutionRecord::fixed("RB-provider", "LiteLLM descriptor implemented"),
+            GapResolutionRecord::waived(valid_waiver),
+        ];
+
+        let summary = summarize_gap_resolutions(&ledger, &resolutions, "2026-06-02");
+
+        assert_eq!(summary.fixed, 1);
+        assert_eq!(summary.waived, 1);
+        assert_eq!(summary.deferred, 0);
+        assert_eq!(summary.still_blocking, 1);
         assert!(!summary.release_ready);
     }
 
