@@ -1,6 +1,6 @@
 # Task 31.1 - quality-release-evidence-closure
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 31
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -62,9 +62,9 @@ RED tests own final signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-31.1.1 | TEST-31.1.1 | Spec Ready |
-| AC2 | SCEN-31.1.2 | TEST-31.1.2 | Spec Ready |
-| AC3 | SCEN-31.1.3 | TEST-31.1.3 | Spec Ready |
+| AC1 | SCEN-31.1.1 | TEST-31.1.1 | Done |
+| AC2 | SCEN-31.1.2 | TEST-31.1.2 | Done |
+| AC3 | SCEN-31.1.3 | TEST-31.1.3 | Done |
 
 ## 8. Risks
 
@@ -84,10 +84,26 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施后回填
-- **改动文件**：待实施后回填
-- **commit 列表**：待实施后回填
-- **RED 结果**：待实施后回填
-- **§9 Verification 结果**：待实施后回填
-- **剩余风险 / 未做项**：待实施后回填
-- **下游 task 影响**：待实施后回填
+- **完成日期**：2026-06-02
+- **改动文件**：
+  - `src/release/mod.rs`（修改：required quality evidence aggregation、release-quality evidence records、final audit evidence helper、ledger wiring、Task 31.1 tests）
+  - `src/lib.rs`（修改：导出 quality release evidence API）
+  - `src/metrics/registry.rs`（修改：historical ledger expectation now reflects final Quality closure）
+  - `src/optimizers/mod.rs`（修改：historical ledger expectation now reflects final Quality closure）
+  - `docs/specs/tasks/task-31.1-quality-release-evidence-closure.md`（本回填）
+- **commit 列表**：
+  - `b1d2184` test(release): 加 task-31.1 RED 测试
+  - `9101108` feat(release): 实现 task-31.1 quality release evidence closure
+- **RED 结果**：`cargo test test_31_1` failed as expected with 3 failing tests because required quality evidence records were empty, the release ledger still contained 13 Quality blockers, and final audit readiness was false.
+- **§9 Verification 结果**：
+  - install: `cargo build` passed
+  - typecheck: `cargo check` passed
+  - unit-test: `cargo test` passed, 220 passed / 0 failed
+  - build: `cargo build` passed
+  - release-test: `cargo test release::` passed, 33 passed / 0 failed
+  - quality-smoke: `cargo test test_31_1` passed, 3 passed / 0 failed
+  - examples-build: `cargo build --examples` passed
+  - final-ledger-smoke: `total=0 non_waived=0 release_ready=true`
+  - final-audit-smoke: `audit_release_ready=true missing=0 failed=0 blockers=0 bugs=0`
+- **剩余风险 / 未做项**：无 release-blocking blockers remain in the verified release ledger; final wording remains scoped and does not claim absolute bug-free status.
+- **下游 task 影响**：无；Phase 31 closes the final tracked release blocker category.
