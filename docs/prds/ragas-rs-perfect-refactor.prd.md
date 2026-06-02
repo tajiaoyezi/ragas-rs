@@ -77,7 +77,7 @@ Out of scope:
 | 23 | release-candidate-bug-zero-audit | Resolve every open gap/bug and produce final release evidence. | Done |
 | 24 | release-blocker-closure | Resolve concrete release blockers produced by the final audit ledger, starting with quickstart/example parity gaps that can be closed with deterministic Rust evidence. | Done |
 | 25 | backend-gdrive-parity-closure | Close the remaining backend release blocker by implementing Google Drive / Sheets backend contracts through a deterministic Rust transport abstraction and fixture-backed parity evidence. | Done |
-| 26 | provider-protocol-parity-closure | Close provider release blockers with deterministic provider protocol contracts and fixture-backed parity claims for every tracked upstream family. | Ready |
+| 26 | provider-protocol-parity-closure | Close provider release blockers with deterministic provider protocol contracts and fixture-backed parity claims for every tracked upstream family. | Done |
 
 ## 7. First Delta Task Matrix
 

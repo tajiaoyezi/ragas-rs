@@ -1,6 +1,6 @@
 # Phase 26 - provider-protocol-parity-closure
 
-**Status**: Ready
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 **Depends On**: 25
 
@@ -26,7 +26,7 @@ Phase 18 provider descriptors, phase 23 release-blocker ledger, task 24.3 SDK cl
 
 | Task | Spec | Status |
 |---|---|---|
-| 26.1 | docs/specs/tasks/task-26.1-provider-protocol-parity-closure.md | Ready |
+| 26.1 | docs/specs/tasks/task-26.1-provider-protocol-parity-closure.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 

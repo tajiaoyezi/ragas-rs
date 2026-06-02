@@ -113,7 +113,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 23 | release-candidate-bug-zero-audit | docs/specs/phases/phase-23-release-candidate-bug-zero-audit.md | Done | 3 | - |
 | 24 | release-blocker-closure | docs/specs/phases/phase-24-release-blocker-closure.md | Done | 3 | - |
 | 25 | backend-gdrive-parity-closure | docs/specs/phases/phase-25-backend-gdrive-parity-closure.md | Done | 1 | - |
-| 26 | provider-protocol-parity-closure | docs/specs/phases/phase-26-provider-protocol-parity-closure.md | Ready | 1 | - |
+| 26 | provider-protocol-parity-closure | docs/specs/phases/phase-26-provider-protocol-parity-closure.md | Done | 1 | - |
 
 ## Task 总索引
 
@@ -186,7 +186,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 24.2 | backends | docs/specs/tasks/task-24.2-disk-cache-persistence-closure.md | Done | after task 24.1 | - |
 | 24.3 | cli/sdk | docs/specs/tasks/task-24.3-sdk-empty-module-closure.md | Done | after task 24.2 | - |
 | 25.1 | backends | docs/specs/tasks/task-25.1-gdrive-backend-parity-closure.md | Done | after task 24.3 | - |
-| 26.1 | providers | docs/specs/tasks/task-26.1-provider-protocol-parity-closure.md | Ready | after task 25.1 | - |
+| 26.1 | providers | docs/specs/tasks/task-26.1-provider-protocol-parity-closure.md | Done | after task 25.1 | - |
 
 ## ADR 索引
 
