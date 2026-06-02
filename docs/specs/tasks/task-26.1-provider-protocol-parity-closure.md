@@ -1,6 +1,6 @@
 # Task 26.1 - provider-protocol-parity-closure
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 26
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
