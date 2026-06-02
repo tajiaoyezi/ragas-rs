@@ -1173,7 +1173,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use crate::{
-        MetricGoldenComparison, MetricGoldenOutcome, metric_catalog_parity_claims,
+        MetricGoldenComparison, MetricGoldenOutcome, docs_parity_claims, metric_catalog_parity_claims,
         release_blocking_claims,
     };
 
@@ -1543,11 +1543,22 @@ mod tests {
             ReleaseBlockerCategory::Metric,
             ReleaseBlockerCategory::Testset,
             ReleaseBlockerCategory::Optimizer,
-            ReleaseBlockerCategory::Docs,
             ReleaseBlockerCategory::Quality,
         ] {
             assert!(categories.contains(&category), "missing {category:?}");
         }
+
+        let docs_claims = docs_parity_claims();
+        assert!(
+            docs_claims
+                .iter()
+                .any(|claim| claim.feature == "docs::quickstart::experiments"
+                    && claim.status == ParityFeatureStatus::Complete)
+        );
+        assert!(
+            release_blocking_claims(&docs_claims).is_empty(),
+            "closed docs quickstarts should not keep Docs in blocker ledger"
+        );
     }
 
     #[test]

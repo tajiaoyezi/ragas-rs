@@ -57,6 +57,13 @@ pub fn public_workflow_examples() -> Vec<DocExample> {
             feature_flags: vec!["default".to_string(), "tokio".to_string()],
             known_parity_gaps: vec!["provider latency percentiles".to_string()],
         },
+        DocExample {
+            workflow: "experiment".to_string(),
+            example_path: "examples/experiment.rs".to_string(),
+            upstream_section: "Run experiments".to_string(),
+            feature_flags: vec!["default".to_string()],
+            known_parity_gaps: Vec::new(),
+        },
     ]
 }
 
@@ -82,9 +89,9 @@ pub fn quickstart_descriptors() -> Vec<QuickstartDescriptor> {
         ),
         quickstart_descriptor(
             "Run experiments",
+            Some("examples/experiment.rs"),
+            ParityFeatureStatus::Complete,
             None,
-            ParityFeatureStatus::KnownGap,
-            Some("no runnable Rust experiment quickstart example is available yet"),
         ),
     ]
 }
@@ -144,7 +151,7 @@ fn quickstart_descriptor(
 fn example_output_type(workflow: &str) -> ExampleOutputType {
     match workflow {
         "testset" => ExampleOutputType::Dataset,
-        "evaluate" | "benchmark" => ExampleOutputType::Json,
+        "evaluate" | "benchmark" | "experiment" => ExampleOutputType::Json,
         _ => ExampleOutputType::Text,
     }
 }
@@ -180,7 +187,9 @@ fn docs_fixture_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ReleaseBlockerCategory, build_release_blocker_ledger, release_blocking_claims};
+    use crate::{
+        ParityClaim, ReleaseBlockerCategory, build_release_blocker_ledger, release_blocking_claims,
+    };
     use std::{collections::BTreeSet, path::Path};
 
     #[test]
@@ -220,6 +229,7 @@ mod tests {
         assert!(sections.contains("Evaluate a RAG application"));
         assert!(sections.contains("Generate a testset"));
         assert!(sections.contains("Compare and monitor evaluation cost"));
+        assert!(sections.contains("Run experiments"));
     }
 
     #[test]
@@ -265,14 +275,12 @@ mod tests {
         let experiments = by_template
             .get("Run experiments")
             .expect("experiments quickstart");
-        assert_eq!(experiments.rust_example, None);
-        assert_eq!(experiments.parity_status, ParityFeatureStatus::KnownGap);
-        assert!(
-            experiments
-                .known_gap
-                .as_deref()
-                .is_some_and(|gap| gap.contains("example"))
+        assert_eq!(
+            experiments.rust_example.as_deref(),
+            Some("examples/experiment.rs")
         );
+        assert_eq!(experiments.parity_status, ParityFeatureStatus::Complete);
+        assert_eq!(experiments.known_gap, None);
     }
 
     #[test]
@@ -288,6 +296,7 @@ mod tests {
             "examples/evaluate.rs",
             "examples/testset.rs",
             "examples/benchmark.rs",
+            "examples/experiment.rs",
         ] {
             let example = by_path.get(expected).unwrap_or_else(|| {
                 panic!("missing runnable example metadata for {expected}")
@@ -309,23 +318,32 @@ mod tests {
             by_path["examples/benchmark.rs"].expected_output,
             ExampleOutputType::Json
         );
+        assert_eq!(
+            by_path["examples/experiment.rs"].expected_output,
+            ExampleOutputType::Json
+        );
     }
 
     #[test]
     fn test_21_3_3_missing_docs_examples_create_release_blocking_claims() {
         // SCEN-21.3.3 / AC3 / TEST-21.3.3
-        let claims = docs_parity_claims();
-        let blockers = release_blocking_claims(&claims);
+        let synthetic_missing = vec![ParityClaim {
+            feature: "docs::quickstart::missing".to_string(),
+            status: ParityFeatureStatus::KnownGap,
+            fixtures: Vec::new(),
+        }];
+        let blockers = release_blocking_claims(&synthetic_missing);
         let blocking_features = blockers
             .iter()
             .map(|claim| claim.feature.as_str())
             .collect::<BTreeSet<_>>();
 
         assert!(
-            blocking_features.contains("docs::quickstart::experiments"),
-            "missing experiments quickstart release blocker"
+            blocking_features.contains("docs::quickstart::missing"),
+            "missing quickstart release blocker"
         );
 
+        let claims = docs_parity_claims();
         let complete_features = claims
             .iter()
             .filter(|claim| claim.status == ParityFeatureStatus::Complete)
@@ -335,6 +353,7 @@ mod tests {
             "docs::quickstart::evaluate",
             "docs::quickstart::testset",
             "docs::quickstart::benchmark",
+            "docs::quickstart::experiments",
         ] {
             assert!(
                 complete_features.contains(expected),
