@@ -1,6 +1,6 @@
 # Phase 25 - backend-gdrive-parity-closure
 
-**Status**: Ready
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 **Depends On**: 24
 
@@ -26,7 +26,7 @@ Phase 24 release-blocker closures, task 18.3 backend registry contracts, task 24
 
 | Task | Spec | Status |
 |---|---|---|
-| 25.1 | docs/specs/tasks/task-25.1-gdrive-backend-parity-closure.md | Ready |
+| 25.1 | docs/specs/tasks/task-25.1-gdrive-backend-parity-closure.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 
