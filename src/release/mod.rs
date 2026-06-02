@@ -283,6 +283,49 @@ pub enum GapResolutionKind {
     Deferred,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FinalAuditEvidenceKind {
+    Build,
+    Check,
+    Unit,
+    Parity,
+    Examples,
+    Quality,
+    BlockerLedger,
+    BugLedger,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FinalAuditEvidence {
+    pub kind: FinalAuditEvidenceKind,
+    pub status: GateEvidenceStatus,
+    pub detail: String,
+}
+
+impl FinalAuditEvidence {
+    pub fn new(
+        kind: FinalAuditEvidenceKind,
+        status: GateEvidenceStatus,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind,
+            status,
+            detail: detail.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FinalBugZeroAudit {
+    pub missing_evidence: Vec<FinalAuditEvidenceKind>,
+    pub failed_evidence: Vec<FinalAuditEvidenceKind>,
+    pub blocker_summary: GapResolutionSummary,
+    pub unresolved_release_blocking_bugs: usize,
+    pub release_ready: bool,
+    pub statement: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseWaiver {
     pub blocker_id: String,
@@ -715,6 +758,37 @@ pub fn summarize_gap_resolutions(
 
     summary.release_ready = summary.still_blocking == 0;
     summary
+}
+
+pub fn required_final_audit_evidence() -> Vec<FinalAuditEvidenceKind> {
+    Vec::new()
+}
+
+pub fn evaluate_final_bug_zero_audit(
+    _evidence: &[FinalAuditEvidence],
+    _ledger: &ReleaseBlockerLedger,
+    _resolutions: &[GapResolutionRecord],
+    _bugs: &[BugLedgerEntry],
+    _as_of: &str,
+) -> FinalBugZeroAudit {
+    FinalBugZeroAudit {
+        missing_evidence: Vec::new(),
+        failed_evidence: Vec::new(),
+        blocker_summary: GapResolutionSummary {
+            fixed: 0,
+            waived: 0,
+            deferred: 0,
+            still_blocking: 0,
+            release_ready: true,
+        },
+        unresolved_release_blocking_bugs: 0,
+        release_ready: true,
+        statement: String::new(),
+    }
+}
+
+pub fn render_final_bug_zero_audit(audit: &FinalBugZeroAudit) -> String {
+    audit.statement.clone()
 }
 
 fn required_waiver_field(
@@ -1605,6 +1679,95 @@ mod tests {
         assert_eq!(summary.deferred, 0);
         assert_eq!(summary.still_blocking, 1);
         assert!(!summary.release_ready);
+    }
+
+    #[test]
+    fn test_23_3_1_final_audit_requires_all_evidence() {
+        // SCEN-23.3.1 / AC1 / TEST-23.3.1
+        let required: BTreeSet<_> = required_final_audit_evidence().into_iter().collect();
+
+        for kind in [
+            FinalAuditEvidenceKind::Build,
+            FinalAuditEvidenceKind::Check,
+            FinalAuditEvidenceKind::Unit,
+            FinalAuditEvidenceKind::Parity,
+            FinalAuditEvidenceKind::Examples,
+            FinalAuditEvidenceKind::Quality,
+            FinalAuditEvidenceKind::BlockerLedger,
+            FinalAuditEvidenceKind::BugLedger,
+        ] {
+            assert!(required.contains(&kind), "missing final evidence {kind:?}");
+        }
+
+        let checklist =
+            std::fs::read_to_string("docs/release-checklist.md").expect("release checklist");
+        assert!(checklist.contains("Final audit evidence"));
+        assert!(checklist.contains("blocker ledger"));
+        assert!(checklist.contains("bug ledger"));
+        assert!(checklist.contains("quality gate evidence"));
+    }
+
+    #[test]
+    fn test_23_3_2_final_audit_refuses_unresolved_blockers_or_high_bugs() {
+        // SCEN-23.3.2 / AC2 / TEST-23.3.2
+        let evidence = required_final_audit_evidence()
+            .into_iter()
+            .map(|kind| FinalAuditEvidence::new(kind, GateEvidenceStatus::Passed, "passed"))
+            .collect::<Vec<_>>();
+        let ledger = ReleaseBlockerLedger {
+            entries: vec![ReleaseBlockerEntry::new(
+                "RB-quality",
+                ReleaseBlockerCategory::Quality,
+                "quality::coverage::llvm-cov-summary",
+                BugSeverity::High,
+                "release::required_quality_evidence_blockers",
+                "coverage evidence missing",
+            )],
+        };
+        let bugs = vec![BugLedgerEntry::new(
+            "BUG-PARITY",
+            BugSeverity::High,
+            BugStatus::Open,
+            BugClass::Parity,
+            "metric::faithfulness",
+            "fixture drift remains unresolved",
+            "TEST-23.3.2",
+        )];
+
+        let audit = evaluate_final_bug_zero_audit(&evidence, &ledger, &[], &bugs, "2026-06-02");
+
+        assert_eq!(audit.blocker_summary.still_blocking, 1);
+        assert_eq!(audit.unresolved_release_blocking_bugs, 1);
+        assert!(!audit.release_ready);
+    }
+
+    #[test]
+    fn test_23_3_3_final_wording_states_scope_without_absolute_bug_free_claim() {
+        // SCEN-23.3.3 / AC3 / TEST-23.3.3
+        let audit = FinalBugZeroAudit {
+            missing_evidence: vec![FinalAuditEvidenceKind::Quality],
+            failed_evidence: Vec::new(),
+            blocker_summary: GapResolutionSummary {
+                fixed: 0,
+                waived: 0,
+                deferred: 0,
+                still_blocking: 1,
+                release_ready: false,
+            },
+            unresolved_release_blocking_bugs: 0,
+            release_ready: false,
+            statement: "Release refused within the verified scope: known unresolved blockers remain."
+                .to_string(),
+        };
+
+        let rendered = render_final_bug_zero_audit(&audit);
+        let lower = rendered.to_ascii_lowercase();
+
+        assert!(rendered.contains("verified scope"));
+        assert!(rendered.contains("known unresolved"));
+        assert!(!lower.contains("bug-free"));
+        assert!(!lower.contains("zero potential bugs"));
+        assert!(!lower.contains("no bugs"));
     }
 
     #[test]
