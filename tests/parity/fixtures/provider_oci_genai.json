@@ -1,0 +1,19 @@
+{
+  "feature": "provider::oci-genai",
+  "python_baseline": {
+    "upstream_modules": [
+      "src/ragas/llms/oci_genai_wrapper.py"
+    ],
+    "auth_env": "OCI_CONFIG_FILE",
+    "auth_scheme": "OCI request signing",
+    "llm_path": "/20231130/actions/generateText"
+  },
+  "rust_output": {
+    "contract": "ProviderProtocolDescriptor + ProviderRequestPlan",
+    "default_ci_mode": "deterministic request planning",
+    "auth_header": "Signature <redacted>",
+    "region_placeholder": "us-ashburn-1",
+    "live_network": "opt-in only"
+  },
+  "tolerance": null
+}

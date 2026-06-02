@@ -1,0 +1,22 @@
+{
+  "feature": "provider::litellm",
+  "python_baseline": {
+    "upstream_modules": [
+      "src/ragas/llms/litellm_llm.py",
+      "src/ragas/llms/adapters/litellm.py",
+      "src/ragas/embeddings/litellm_provider.py"
+    ],
+    "auth_env": "LITELLM_API_KEY",
+    "supports_llm": true,
+    "supports_embedding": true,
+    "supports_structured_output": true
+  },
+  "rust_output": {
+    "contract": "ProviderProtocolDescriptor + ProviderRequestPlan",
+    "default_ci_mode": "deterministic request planning",
+    "structured_schema_field": "response_model",
+    "auth_header": "Bearer <redacted>",
+    "live_network": "opt-in only"
+  },
+  "tolerance": null
+}

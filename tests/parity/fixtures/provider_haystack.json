@@ -1,0 +1,20 @@
+{
+  "feature": "provider::haystack",
+  "python_baseline": {
+    "upstream_modules": [
+      "src/ragas/llms/haystack_wrapper.py",
+      "src/ragas/embeddings/haystack_wrapper.py"
+    ],
+    "provider_boundary": "delegated wrapper",
+    "supports_llm": true,
+    "supports_embedding": true
+  },
+  "rust_output": {
+    "contract": "ProviderProtocolDescriptor + ProviderRequestPlan",
+    "default_ci_mode": "deterministic delegated-wrapper planning",
+    "protocol_mode": "DelegatedWrapper",
+    "auth": "delegated to caller-owned Haystack component",
+    "live_network": "opt-in only"
+  },
+  "tolerance": null
+}

@@ -104,8 +104,10 @@ pub use prompts::{
     PromptValueKind, PromptVariables, RenderedPrompt, RepairStrategy,
 };
 pub use providers::{
-    MockEmbeddingProvider, MockLlmProvider, ProviderDescriptor, ProviderFamily, ProviderKind,
-    ProviderMode, ProviderRegistry, StructuredLlmDescriptor, provider_parity_claims,
+    MockEmbeddingProvider, MockLlmProvider, ProviderAuthScheme, ProviderDescriptor, ProviderFamily,
+    ProviderKind, ProviderMode, ProviderProtocolDescriptor, ProviderProtocolInput,
+    ProviderProtocolMode, ProviderRegistry, ProviderRequestPlan, StructuredLlmDescriptor,
+    plan_provider_request, provider_parity_claims, provider_protocol_descriptors,
     record_provider_usage, structured_llm_descriptors, upstream_provider_descriptors,
 };
 pub use release::{

@@ -1,0 +1,20 @@
+{
+  "feature": "provider::google",
+  "python_baseline": {
+    "upstream_modules": [
+      "src/ragas/embeddings/google_provider.py"
+    ],
+    "auth_env": "GOOGLE_API_KEY",
+    "llm_method": "generateContent",
+    "embedding_method": "embedContent",
+    "response_text_path": "candidates[0].content.parts[0].text"
+  },
+  "rust_output": {
+    "contract": "ProviderProtocolDescriptor + ProviderRequestPlan",
+    "default_ci_mode": "deterministic request planning",
+    "auth_header": "x-goog-api-key: <redacted>",
+    "model_in_url": true,
+    "live_network": "opt-in only"
+  },
+  "tolerance": null
+}

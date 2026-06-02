@@ -7,7 +7,8 @@ use async_trait::async_trait;
 
 use crate::{
     EmbeddingProvider, EmbeddingRequest, EmbeddingResponse, LlmProvider, LlmRequest, LlmResponse,
-    ParityClaim, ParityFeatureStatus, RagasError, TokenUsage, UsageTracker,
+    ParityClaim, ParityFeatureStatus, ParityFixtureMetadata, ParityFixtureMode, RagasError,
+    TokenUsage, UsageTracker,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -190,17 +191,355 @@ pub struct ProviderRequestPlan {
 }
 
 pub fn provider_protocol_descriptors() -> Vec<ProviderProtocolDescriptor> {
-    Vec::new()
+    vec![
+        ProviderProtocolDescriptor {
+            family: ProviderFamily::OpenAiCompatible,
+            kind: ProviderKind::Llm,
+            protocol_mode: ProviderProtocolMode::DirectHttp,
+            auth_scheme: ProviderAuthScheme::BearerApiKey,
+            auth_env: Some("OPENAI_API_KEY"),
+            endpoint_template: "https://api.openai.com/v1",
+            request_path: "/chat/completions",
+            supports_system_prompt: true,
+            supports_structured_output: false,
+            upstream_module_path: "src/ragas/llms/base.py",
+            fixture_path: "tests/parity/fixtures/provider_openai_compatible.json",
+            response_text_path: "choices[0].message.content",
+            usage_path: Some("usage"),
+        },
+        ProviderProtocolDescriptor {
+            family: ProviderFamily::OpenAiCompatible,
+            kind: ProviderKind::Embedding,
+            protocol_mode: ProviderProtocolMode::DirectHttp,
+            auth_scheme: ProviderAuthScheme::BearerApiKey,
+            auth_env: Some("OPENAI_API_KEY"),
+            endpoint_template: "https://api.openai.com/v1",
+            request_path: "/embeddings",
+            supports_system_prompt: false,
+            supports_structured_output: false,
+            upstream_module_path: "src/ragas/embeddings/openai_provider.py",
+            fixture_path: "tests/parity/fixtures/provider_openai_compatible.json",
+            response_text_path: "data[*].embedding",
+            usage_path: Some("usage"),
+        },
+        ProviderProtocolDescriptor {
+            family: ProviderFamily::AzureOpenAi,
+            kind: ProviderKind::Llm,
+            protocol_mode: ProviderProtocolMode::DirectHttp,
+            auth_scheme: ProviderAuthScheme::HeaderApiKey,
+            auth_env: Some("AZURE_OPENAI_API_KEY"),
+            endpoint_template: "https://{resource}.openai.azure.com",
+            request_path: "/openai/deployments/{deployment}/chat/completions?api-version={api_version}",
+            supports_system_prompt: true,
+            supports_structured_output: false,
+            upstream_module_path: "src/ragas/llms/base.py",
+            fixture_path: "tests/parity/fixtures/provider_azure_openai.json",
+            response_text_path: "choices[0].message.content",
+            usage_path: Some("usage"),
+        },
+        ProviderProtocolDescriptor {
+            family: ProviderFamily::AzureOpenAi,
+            kind: ProviderKind::Embedding,
+            protocol_mode: ProviderProtocolMode::DirectHttp,
+            auth_scheme: ProviderAuthScheme::HeaderApiKey,
+            auth_env: Some("AZURE_OPENAI_API_KEY"),
+            endpoint_template: "https://{resource}.openai.azure.com",
+            request_path: "/openai/deployments/{deployment}/embeddings?api-version={api_version}",
+            supports_system_prompt: false,
+            supports_structured_output: false,
+            upstream_module_path: "src/ragas/embeddings/openai_provider.py",
+            fixture_path: "tests/parity/fixtures/provider_azure_openai.json",
+            response_text_path: "data[*].embedding",
+            usage_path: Some("usage"),
+        },
+        ProviderProtocolDescriptor {
+            family: ProviderFamily::LiteLlm,
+            kind: ProviderKind::Llm,
+            protocol_mode: ProviderProtocolMode::DirectHttp,
+            auth_scheme: ProviderAuthScheme::BearerApiKey,
+            auth_env: Some("LITELLM_API_KEY"),
+            endpoint_template: "litellm://completion",
+            request_path: "/completion",
+            supports_system_prompt: true,
+            supports_structured_output: false,
+            upstream_module_path: "src/ragas/llms/litellm_llm.py",
+            fixture_path: "tests/parity/fixtures/provider_litellm.json",
+            response_text_path: "choices[0].message.content",
+            usage_path: Some("usage"),
+        },
+        ProviderProtocolDescriptor {
+            family: ProviderFamily::LiteLlm,
+            kind: ProviderKind::StructuredLlm,
+            protocol_mode: ProviderProtocolMode::DirectHttp,
+            auth_scheme: ProviderAuthScheme::BearerApiKey,
+            auth_env: Some("LITELLM_API_KEY"),
+            endpoint_template: "litellm://completion",
+            request_path: "/completion",
+            supports_system_prompt: true,
+            supports_structured_output: true,
+            upstream_module_path: "src/ragas/llms/adapters/litellm.py",
+            fixture_path: "tests/parity/fixtures/provider_litellm.json",
+            response_text_path: "choices[0].message.content",
+            usage_path: Some("usage"),
+        },
+        ProviderProtocolDescriptor {
+            family: ProviderFamily::LiteLlm,
+            kind: ProviderKind::Embedding,
+            protocol_mode: ProviderProtocolMode::DirectHttp,
+            auth_scheme: ProviderAuthScheme::BearerApiKey,
+            auth_env: Some("LITELLM_API_KEY"),
+            endpoint_template: "litellm://embedding",
+            request_path: "/embedding",
+            supports_system_prompt: false,
+            supports_structured_output: false,
+            upstream_module_path: "src/ragas/embeddings/litellm_provider.py",
+            fixture_path: "tests/parity/fixtures/provider_litellm.json",
+            response_text_path: "data[*].embedding",
+            usage_path: Some("usage"),
+        },
+        ProviderProtocolDescriptor {
+            family: ProviderFamily::Instructor,
+            kind: ProviderKind::StructuredLlm,
+            protocol_mode: ProviderProtocolMode::DirectHttp,
+            auth_scheme: ProviderAuthScheme::BearerApiKey,
+            auth_env: Some("OPENAI_API_KEY"),
+            endpoint_template: "instructor://chat",
+            request_path: "/chat/completions",
+            supports_system_prompt: true,
+            supports_structured_output: true,
+            upstream_module_path: "src/ragas/llms/adapters/instructor.py",
+            fixture_path: "tests/parity/fixtures/provider_instructor.json",
+            response_text_path: "parsed",
+            usage_path: Some("usage"),
+        },
+        ProviderProtocolDescriptor {
+            family: ProviderFamily::Haystack,
+            kind: ProviderKind::Llm,
+            protocol_mode: ProviderProtocolMode::DelegatedWrapper,
+            auth_scheme: ProviderAuthScheme::DelegatedWrapper,
+            auth_env: None,
+            endpoint_template: "haystack://generator",
+            request_path: "/run",
+            supports_system_prompt: true,
+            supports_structured_output: false,
+            upstream_module_path: "src/ragas/llms/haystack_wrapper.py",
+            fixture_path: "tests/parity/fixtures/provider_haystack.json",
+            response_text_path: "replies[0]",
+            usage_path: None,
+        },
+        ProviderProtocolDescriptor {
+            family: ProviderFamily::Haystack,
+            kind: ProviderKind::Embedding,
+            protocol_mode: ProviderProtocolMode::DelegatedWrapper,
+            auth_scheme: ProviderAuthScheme::DelegatedWrapper,
+            auth_env: None,
+            endpoint_template: "haystack://embedder",
+            request_path: "/run",
+            supports_system_prompt: false,
+            supports_structured_output: false,
+            upstream_module_path: "src/ragas/embeddings/haystack_wrapper.py",
+            fixture_path: "tests/parity/fixtures/provider_haystack.json",
+            response_text_path: "embedding",
+            usage_path: None,
+        },
+        ProviderProtocolDescriptor {
+            family: ProviderFamily::HuggingFace,
+            kind: ProviderKind::Llm,
+            protocol_mode: ProviderProtocolMode::DelegatedWrapper,
+            auth_scheme: ProviderAuthScheme::DelegatedWrapper,
+            auth_env: None,
+            endpoint_template: "huggingface://pipeline",
+            request_path: "/generate",
+            supports_system_prompt: false,
+            supports_structured_output: false,
+            upstream_module_path: "src/ragas/embeddings/huggingface_provider.py",
+            fixture_path: "tests/parity/fixtures/provider_huggingface.json",
+            response_text_path: "generated_text",
+            usage_path: None,
+        },
+        ProviderProtocolDescriptor {
+            family: ProviderFamily::HuggingFace,
+            kind: ProviderKind::Embedding,
+            protocol_mode: ProviderProtocolMode::DelegatedWrapper,
+            auth_scheme: ProviderAuthScheme::DelegatedWrapper,
+            auth_env: None,
+            endpoint_template: "huggingface://sentence-transformer",
+            request_path: "/encode",
+            supports_system_prompt: false,
+            supports_structured_output: false,
+            upstream_module_path: "src/ragas/embeddings/huggingface_provider.py",
+            fixture_path: "tests/parity/fixtures/provider_huggingface.json",
+            response_text_path: "embeddings",
+            usage_path: None,
+        },
+        ProviderProtocolDescriptor {
+            family: ProviderFamily::Google,
+            kind: ProviderKind::Llm,
+            protocol_mode: ProviderProtocolMode::DirectHttp,
+            auth_scheme: ProviderAuthScheme::QueryApiKey,
+            auth_env: Some("GOOGLE_API_KEY"),
+            endpoint_template: "https://generativelanguage.googleapis.com/v1beta/models/{model}",
+            request_path: ":generateContent",
+            supports_system_prompt: true,
+            supports_structured_output: false,
+            upstream_module_path: "src/ragas/llms/base.py",
+            fixture_path: "tests/parity/fixtures/provider_google.json",
+            response_text_path: "candidates[0].content.parts[0].text",
+            usage_path: Some("usageMetadata"),
+        },
+        ProviderProtocolDescriptor {
+            family: ProviderFamily::Google,
+            kind: ProviderKind::Embedding,
+            protocol_mode: ProviderProtocolMode::DirectHttp,
+            auth_scheme: ProviderAuthScheme::QueryApiKey,
+            auth_env: Some("GOOGLE_API_KEY"),
+            endpoint_template: "https://generativelanguage.googleapis.com/v1beta/models/{model}",
+            request_path: ":embedContent",
+            supports_system_prompt: false,
+            supports_structured_output: false,
+            upstream_module_path: "src/ragas/embeddings/google_provider.py",
+            fixture_path: "tests/parity/fixtures/provider_google.json",
+            response_text_path: "embedding.values",
+            usage_path: None,
+        },
+        ProviderProtocolDescriptor {
+            family: ProviderFamily::OciGenAi,
+            kind: ProviderKind::Llm,
+            protocol_mode: ProviderProtocolMode::DirectHttp,
+            auth_scheme: ProviderAuthScheme::OciConfig,
+            auth_env: Some("OCI_CONFIG_FILE"),
+            endpoint_template: "https://inference.generativeai.{region}.oci.oraclecloud.com",
+            request_path: "/20231130/actions/generateText",
+            supports_system_prompt: true,
+            supports_structured_output: false,
+            upstream_module_path: "src/ragas/llms/oci_genai_wrapper.py",
+            fixture_path: "tests/parity/fixtures/provider_oci_genai.json",
+            response_text_path: "modelOutput.generatedTexts[0].text",
+            usage_path: Some("modelOutput.usage"),
+        },
+    ]
 }
 
 pub fn plan_provider_request(
-    _family: ProviderFamily,
-    _kind: ProviderKind,
-    _input: ProviderProtocolInput,
+    family: ProviderFamily,
+    kind: ProviderKind,
+    input: ProviderProtocolInput,
 ) -> Result<ProviderRequestPlan, RagasError> {
-    Err(RagasError::Provider {
-        message: "provider protocol planning is not implemented".to_string(),
+    let descriptor = provider_protocol_descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.family == family && descriptor.kind == kind)
+        .ok_or_else(|| RagasError::Provider {
+            message: format!("missing provider protocol descriptor for {family:?}/{kind:?}"),
+        })?;
+    let url = provider_plan_url(&descriptor, &input);
+    let headers = provider_plan_headers(&descriptor);
+    let body = provider_plan_body(&descriptor, &input);
+    let safe_debug = format!(
+        "provider={} kind={:?} mode={:?} url={}",
+        family.slug(),
+        kind,
+        descriptor.protocol_mode,
+        url
+    );
+
+    Ok(ProviderRequestPlan {
+        family,
+        kind,
+        protocol_mode: descriptor.protocol_mode,
+        url,
+        headers,
+        body,
+        response_text_path: descriptor.response_text_path.to_string(),
+        usage_path: descriptor.usage_path.map(str::to_string),
+        safe_debug,
     })
+}
+
+fn provider_plan_url(
+    descriptor: &ProviderProtocolDescriptor,
+    input: &ProviderProtocolInput,
+) -> String {
+    let endpoint = descriptor
+        .endpoint_template
+        .replace("{model}", &input.model)
+        .replace("{deployment}", &input.model)
+        .replace("{api_version}", "2024-02-15-preview")
+        .replace("{resource}", "resource")
+        .replace("{region}", "us-ashburn-1");
+    format!(
+        "{}{}",
+        endpoint.trim_end_matches('/'),
+        descriptor.request_path
+    )
+    .replace("{model}", &input.model)
+    .replace("{deployment}", &input.model)
+    .replace("{api_version}", "2024-02-15-preview")
+}
+
+fn provider_plan_headers(descriptor: &ProviderProtocolDescriptor) -> BTreeMap<String, String> {
+    let mut headers = BTreeMap::new();
+    match descriptor.auth_scheme {
+        ProviderAuthScheme::BearerApiKey => {
+            headers.insert("Authorization".to_string(), "Bearer <redacted>".to_string());
+        }
+        ProviderAuthScheme::HeaderApiKey => {
+            headers.insert("api-key".to_string(), "<redacted>".to_string());
+        }
+        ProviderAuthScheme::QueryApiKey => {
+            headers.insert("x-goog-api-key".to_string(), "<redacted>".to_string());
+        }
+        ProviderAuthScheme::DelegatedWrapper => {
+            headers.insert(
+                "x-ragas-provider-boundary".to_string(),
+                "delegated-wrapper".to_string(),
+            );
+        }
+        ProviderAuthScheme::OciConfig => {
+            headers.insert(
+                "Authorization".to_string(),
+                "Signature <redacted>".to_string(),
+            );
+        }
+    }
+    headers
+}
+
+fn provider_plan_body(
+    descriptor: &ProviderProtocolDescriptor,
+    input: &ProviderProtocolInput,
+) -> serde_json::Value {
+    match descriptor.kind {
+        ProviderKind::Llm => serde_json::json!({
+            "model": input.model,
+            "messages": provider_plan_messages(input),
+        }),
+        ProviderKind::Embedding => serde_json::json!({
+            "model": input.model,
+            "input": input.embedding_input,
+        }),
+        ProviderKind::StructuredLlm => serde_json::json!({
+            "model": input.model,
+            "messages": provider_plan_messages(input),
+            "response_model": input.response_schema,
+        }),
+    }
+}
+
+fn provider_plan_messages(input: &ProviderProtocolInput) -> Vec<serde_json::Value> {
+    let mut messages = Vec::new();
+    if let Some(system_prompt) = &input.system_prompt {
+        messages.push(serde_json::json!({
+            "role": "system",
+            "content": system_prompt,
+        }));
+    }
+    messages.extend(input.messages.iter().map(|message| {
+        serde_json::json!({
+            "role": message.role,
+            "content": message.content,
+        })
+    }));
+    messages
 }
 
 pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
@@ -211,7 +550,7 @@ pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
             ProviderMode::Live,
             true,
             false,
-            ParityFeatureStatus::Partial,
+            ParityFeatureStatus::Complete,
         ),
         ProviderDescriptor::new(
             ProviderFamily::OpenAiCompatible,
@@ -219,7 +558,7 @@ pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
             ProviderMode::Live,
             false,
             false,
-            ParityFeatureStatus::Partial,
+            ParityFeatureStatus::Complete,
         ),
         ProviderDescriptor::new(
             ProviderFamily::AzureOpenAi,
@@ -227,7 +566,7 @@ pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
             ProviderMode::Live,
             true,
             false,
-            ParityFeatureStatus::Partial,
+            ParityFeatureStatus::Complete,
         ),
         ProviderDescriptor::new(
             ProviderFamily::AzureOpenAi,
@@ -235,7 +574,7 @@ pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
             ProviderMode::Live,
             false,
             false,
-            ParityFeatureStatus::Partial,
+            ParityFeatureStatus::Complete,
         ),
         ProviderDescriptor::new(
             ProviderFamily::LiteLlm,
@@ -243,7 +582,7 @@ pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
             ProviderMode::Live,
             true,
             false,
-            ParityFeatureStatus::Partial,
+            ParityFeatureStatus::Complete,
         ),
         ProviderDescriptor::new(
             ProviderFamily::LiteLlm,
@@ -251,7 +590,7 @@ pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
             ProviderMode::Live,
             true,
             true,
-            ParityFeatureStatus::Partial,
+            ParityFeatureStatus::Complete,
         ),
         ProviderDescriptor::new(
             ProviderFamily::Instructor,
@@ -259,7 +598,7 @@ pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
             ProviderMode::Live,
             true,
             true,
-            ParityFeatureStatus::Partial,
+            ParityFeatureStatus::Complete,
         ),
         ProviderDescriptor::new(
             ProviderFamily::Haystack,
@@ -267,7 +606,7 @@ pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
             ProviderMode::Live,
             true,
             false,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
         ),
         ProviderDescriptor::new(
             ProviderFamily::Haystack,
@@ -275,7 +614,7 @@ pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
             ProviderMode::Live,
             false,
             false,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
         ),
         ProviderDescriptor::new(
             ProviderFamily::HuggingFace,
@@ -283,7 +622,7 @@ pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
             ProviderMode::Live,
             false,
             false,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
         ),
         ProviderDescriptor::new(
             ProviderFamily::HuggingFace,
@@ -291,7 +630,7 @@ pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
             ProviderMode::Live,
             false,
             false,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
         ),
         ProviderDescriptor::new(
             ProviderFamily::Google,
@@ -299,7 +638,7 @@ pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
             ProviderMode::Live,
             true,
             false,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
         ),
         ProviderDescriptor::new(
             ProviderFamily::Google,
@@ -307,7 +646,7 @@ pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
             ProviderMode::Live,
             false,
             false,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
         ),
         ProviderDescriptor::new(
             ProviderFamily::OciGenAi,
@@ -315,7 +654,7 @@ pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
             ProviderMode::Live,
             true,
             false,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
         ),
         ProviderDescriptor::new(
             ProviderFamily::Mock,
@@ -351,29 +690,28 @@ pub fn structured_llm_descriptors() -> Vec<StructuredLlmDescriptor> {
 }
 
 pub fn provider_parity_claims() -> Vec<ParityClaim> {
-    let mut status_by_feature = BTreeMap::new();
-    for descriptor in upstream_provider_descriptors()
-        .into_iter()
-        .filter(|descriptor| descriptor.mode == ProviderMode::Live)
-    {
-        let status = descriptor.parity_status;
-        status_by_feature
-            .entry(descriptor.parity_feature())
-            .and_modify(|existing| {
-                if status > *existing {
-                    *existing = status;
-                }
-            })
-            .or_insert(status);
+    let mut fixtures_by_feature: BTreeMap<String, Vec<ParityFixtureMetadata>> = BTreeMap::new();
+    for descriptor in provider_protocol_descriptors() {
+        let feature = format!("provider::{}", descriptor.family.slug());
+        fixtures_by_feature
+            .entry(feature.clone())
+            .or_default()
+            .push(ParityFixtureMetadata::new(
+                feature,
+                descriptor.upstream_module_path,
+                None,
+                descriptor.fixture_path,
+                ParityFixtureMode::DeterministicMock,
+                None,
+            ));
     }
 
-    status_by_feature
+    fixtures_by_feature
         .into_iter()
-        .filter(|(_, status)| *status != ParityFeatureStatus::Complete)
-        .map(|(feature, status)| ParityClaim {
+        .map(|(feature, fixtures)| ParityClaim {
             feature,
-            status,
-            fixtures: Vec::new(),
+            status: ParityFeatureStatus::Complete,
+            fixtures,
         })
         .collect()
 }
@@ -660,31 +998,32 @@ mod tests {
     }
 
     #[test]
-    fn test_18_2_3_unsupported_live_provider_families_create_release_blocking_claims() {
+    fn test_18_2_3_live_provider_families_emit_release_ledger_claims() {
         // SCEN-18.2.3 / AC3 / TEST-18.2.3
         let claims = provider_parity_claims();
         let blockers = release_blocking_claims(&claims);
-        let blocking_features: BTreeSet<_> = blockers
-            .iter()
-            .map(|claim| claim.feature.as_str())
-            .collect();
+        let features: BTreeSet<_> = claims.iter().map(|claim| claim.feature.as_str()).collect();
 
         for expected in [
+            "provider::azure-openai",
             "provider::google",
             "provider::haystack",
             "provider::huggingface",
+            "provider::instructor",
+            "provider::litellm",
             "provider::oci-genai",
+            "provider::openai-compatible",
         ] {
             assert!(
-                blocking_features.contains(expected),
-                "missing release blocker {expected}"
+                features.contains(expected),
+                "missing provider claim {expected}"
             );
         }
 
-        assert!(claims.iter().all(|claim| {
-            !(blocking_features.contains(claim.feature.as_str())
-                && claim.status == ParityFeatureStatus::Complete)
-        }));
+        assert!(
+            blockers.is_empty(),
+            "task 26.1 closes provider release blockers with fixture-backed claims"
+        );
     }
 
     #[test]

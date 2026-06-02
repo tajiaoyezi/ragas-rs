@@ -1,0 +1,20 @@
+{
+  "feature": "provider::instructor",
+  "python_baseline": {
+    "upstream_modules": [
+      "src/ragas/llms/adapters/instructor.py"
+    ],
+    "auth_env": "OPENAI_API_KEY",
+    "supports_structured_output": true,
+    "supports_system_prompt": true,
+    "response_model_argument": true
+  },
+  "rust_output": {
+    "contract": "ProviderProtocolDescriptor + ProviderRequestPlan",
+    "default_ci_mode": "deterministic request planning",
+    "structured_schema_field": "response_model",
+    "auth_header": "Bearer <redacted>",
+    "live_network": "opt-in only"
+  },
+  "tolerance": null
+}
