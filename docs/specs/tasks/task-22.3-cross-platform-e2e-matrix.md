@@ -1,6 +1,6 @@
 # Task 22.3 - cross-platform-e2e-matrix
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 22
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
