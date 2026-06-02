@@ -45,9 +45,9 @@ RED tests own final signatures.
 
 ## 6. Acceptance Criteria
 
-- **AC1**: Platform matrix includes Linux x64, macOS arm64, and Windows x64 with required evidence status.
-- **AC2**: E2E workflow matrix includes evaluate, provider mock, dataset IO, CLI, and docs examples.
-- **AC3**: Missing required platform or E2E evidence blocks release.
+- [ ] **AC1**: Platform matrix includes Linux x64, macOS arm64, and Windows x64 with required evidence status.
+- [ ] **AC2**: E2E workflow matrix includes evaluate, provider mock, dataset IO, CLI, and docs examples.
+- [ ] **AC3**: Missing required platform or E2E evidence blocks release.
 
 ## 7. Traceability
 
@@ -64,10 +64,10 @@ RED tests own final signatures.
 
 ## 9. Verification Plan
 
-- install
-- typecheck
-- unit-test
-- build
+- Install
+- Typecheck
+- Unit Test
+- Build
 
 ## 10. Completion Notes
 
