@@ -1,6 +1,6 @@
 # Task 29.1 - testset-contract-parity-closure
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 29
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -60,9 +60,9 @@ RED tests own final signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-29.1.1 | TEST-29.1.1 | Spec Ready |
-| AC2 | SCEN-29.1.2 | TEST-29.1.2 | Spec Ready |
-| AC3 | SCEN-29.1.3 | TEST-29.1.3 | Spec Ready |
+| AC1 | SCEN-29.1.1 | TEST-29.1.1 | Done |
+| AC2 | SCEN-29.1.2 | TEST-29.1.2 | Done |
+| AC3 | SCEN-29.1.3 | TEST-29.1.3 | Done |
 
 ## 8. Risks
 
@@ -82,10 +82,21 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施后回填
-- **改动文件**：待实施后回填
-- **commit 列表**：待实施后回填
-- **RED 结果**：待实施后回填
-- **§9 Verification 结果**：待实施后回填
-- **剩余风险 / 未做项**：待实施后回填
-- **下游 task 影响**：待实施后回填
+- **完成日期**：2026-06-02
+- **改动文件**：`src/testset/mod.rs`; `src/lib.rs`; `src/metrics/registry.rs`; `src/release/mod.rs`; `tests/parity/fixtures/testset_*.json`; `docs/specs/tasks/task-29.1-testset-contract-parity-closure.md`
+- **commit 列表**：
+  - `450b480 docs(spec): add task-29.1 testset contract parity closure`
+  - `6f3940b docs(spec): task-29.1 进入实施`
+  - `ee97daf test(testset): 加 task-29.1 RED 测试`
+  - `e66f6f4 feat(testset): 实现 task-29.1 testset contract parity closure`
+- **RED 结果**：`cargo test test_29_1` failed as expected with 3 tests discovered, 0 passed, 3 failed. The failures showed graph clusters/advanced query, transform LLM extractor/filter, and pre-chunked synthesizer descriptors were still KnownGap and Testset blockers remained in the release ledger.
+- **§9 Verification 结果**：
+  - Install: `cargo build` passed.
+  - Typecheck: `cargo check` passed.
+  - Unit Test: `cargo test` passed with 214 passed, 0 failed.
+  - Build: `cargo build` passed.
+  - Testset Test: `cargo test testset::` passed with 21 passed, 0 failed.
+  - Parity Test: `cargo test parity::` passed with 12 passed, 0 failed.
+  - Examples Build: `cargo build --examples` passed.
+- **剩余风险 / 未做项**：Testset default CI now proves deterministic graph clustering/query, captured LLM extractor parsing, graph filtering, and pre-chunked synthesis contracts at upstream baseline `298b68274234c060deacab3cf5fb52aa3a20e885`; it still does not claim live LLM generation quality or external graph database execution.
+- **下游 task 影响**：Testset release blockers dropped from 5 to 0; consolidated ledger moved from 20 to 15 non-waived blockers and now contains only Optimizer and Quality categories.
