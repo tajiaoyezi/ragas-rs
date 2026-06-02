@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::{Path, PathBuf},
+};
 
 use crate::{
     EvaluationDataset, EvaluationSample, ParityClaim, ParityFeatureStatus, RagasError,
@@ -155,11 +158,29 @@ pub fn backend_parity_claims() -> Vec<ParityClaim> {
 #[derive(Debug, Clone, Default)]
 pub struct DiskCacheCompatibility {
     entries: BTreeMap<String, Vec<u8>>,
+    directory: Option<PathBuf>,
 }
 
 impl DiskCacheCompatibility {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn open(cache_dir: impl AsRef<Path>) -> Result<Self, RagasError> {
+        Ok(Self {
+            entries: BTreeMap::new(),
+            directory: Some(cache_dir.as_ref().to_path_buf()),
+        })
+    }
+
+    pub fn set(&mut self, key: impl Into<String>, value: Vec<u8>) -> Result<(), RagasError> {
+        let _ = (key.into(), value, &self.directory);
+        Ok(())
+    }
+
+    pub fn has_key(&self, key: &str) -> bool {
+        let _ = (&self.directory, key);
+        false
     }
 
     pub fn put(&mut self, key: impl Into<String>, value: Vec<u8>) {
@@ -516,5 +537,92 @@ mod tests {
         assert!(claims.iter().all(|claim| {
             !(claim.feature == "backend::gdrive" && claim.status == ParityFeatureStatus::Complete)
         }));
+    }
+
+    fn temp_cache_dir(name: &str) -> std::path::PathBuf {
+        let unique = format!(
+            "ragas-rs-{name}-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        );
+        let path = std::env::temp_dir().join(unique);
+        let _ = std::fs::remove_dir_all(&path);
+        path
+    }
+
+    #[test]
+    fn test_24_2_1_disk_cache_supports_upstream_key_value_semantics() {
+        // SCEN-24.2.1 / AC1 / TEST-24.2.1
+        let dir = temp_cache_dir("disk-cache-semantics");
+        let mut cache = DiskCacheCompatibility::open(&dir).expect("open disk cache");
+
+        cache
+            .set("alpha", br#"{"score":0.8}"#.to_vec())
+            .expect("set alpha");
+        cache.set("beta", b"second".to_vec()).expect("set beta");
+
+        assert!(cache.has_key("alpha"));
+        assert_eq!(cache.get("alpha"), Some(br#"{"score":0.8}"#.to_vec()));
+        assert_eq!(cache.keys(), vec!["alpha".to_string(), "beta".to_string()]);
+
+        cache
+            .set("alpha", br#"{"score":0.9}"#.to_vec())
+            .expect("overwrite alpha");
+        assert_eq!(cache.get("alpha"), Some(br#"{"score":0.9}"#.to_vec()));
+        assert!(cache.delete("beta"));
+        assert!(!cache.has_key("beta"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_24_2_2_disk_cache_persists_across_instances() {
+        // SCEN-24.2.2 / AC2 / TEST-24.2.2
+        let dir = temp_cache_dir("disk-cache-persistence");
+        {
+            let mut first = DiskCacheCompatibility::open(&dir).expect("open first cache");
+            first
+                .set("stable-key", br#"{"cached":true}"#.to_vec())
+                .expect("set stable-key");
+            assert!(first.has_key("stable-key"));
+        }
+
+        let reopened = DiskCacheCompatibility::open(&dir).expect("reopen cache");
+        assert!(reopened.has_key("stable-key"));
+        assert_eq!(
+            reopened.get("stable-key"),
+            Some(br#"{"cached":true}"#.to_vec())
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_24_2_3_disk_cache_complete_claim_is_fixture_backed_and_not_blocking() {
+        // SCEN-24.2.3 / AC3 / TEST-24.2.3
+        let disk_descriptor = backend_descriptors()
+            .into_iter()
+            .find(|descriptor| descriptor.family == BackendFamily::DiskCache)
+            .expect("disk-cache descriptor");
+        assert_eq!(disk_descriptor.parity_status, ParityFeatureStatus::Complete);
+
+        let claims = backend_parity_claims();
+        let disk_claim = claims
+            .iter()
+            .find(|claim| claim.feature == "backend::disk-cache")
+            .expect("disk-cache parity claim");
+        assert_eq!(disk_claim.status, ParityFeatureStatus::Complete);
+        assert!(!disk_claim.fixtures.is_empty());
+
+        let blockers = release_blocking_claims(&claims);
+        let blocking_features: BTreeSet<_> = blockers
+            .iter()
+            .map(|claim| claim.feature.as_str())
+            .collect();
+        assert!(!blocking_features.contains("backend::disk-cache"));
+        assert!(blocking_features.contains("backend::gdrive"));
     }
 }
