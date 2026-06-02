@@ -22,8 +22,10 @@ pub mod validation;
 
 pub use backends::{
     BackendCapability, BackendDescriptor, BackendFamily, BackendMode, BackendRegistry,
-    CsvDatasetBackend, DatasetBackend, DiskCacheCompatibility, InMemoryDatasetBackend,
-    JsonlDatasetBackend, backend_descriptors, backend_parity_claims,
+    CsvDatasetBackend, DatasetBackend, DiskCacheCompatibility, GDriveAuthMode,
+    GDriveBackendConfig, GDriveSheetTransport, GoogleDriveDatasetBackend,
+    InMemoryDatasetBackend, InMemoryGoogleSheetTransport, JsonlDatasetBackend,
+    backend_descriptors, backend_parity_claims,
 };
 pub use benchmarks::{
     BenchmarkMeasurement, BenchmarkPrompt, BenchmarkProvider, BenchmarkReport, CostRates,

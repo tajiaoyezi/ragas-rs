@@ -77,6 +77,41 @@ impl BackendDescriptor {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum GDriveAuthMode {
+    ServiceAccount,
+    OAuth,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GDriveBackendConfig {
+    pub folder_id: String,
+    pub credentials_env: String,
+    pub service_account_env: String,
+    pub token_env: String,
+    pub token_default: String,
+    pub scopes: Vec<String>,
+    pub auth_modes: Vec<GDriveAuthMode>,
+    pub datasets_folder_name: String,
+    pub experiments_folder_name: String,
+}
+
+impl GDriveBackendConfig {
+    pub fn new(folder_id: impl Into<String>) -> Self {
+        Self {
+            folder_id: folder_id.into(),
+            credentials_env: "GDRIVE_CREDENTIALS".to_string(),
+            service_account_env: "GDRIVE_SERVICE_ACCOUNT".to_string(),
+            token_env: "GDRIVE_TOKEN".to_string(),
+            token_default: String::new(),
+            scopes: Vec::new(),
+            auth_modes: Vec::new(),
+            datasets_folder_name: String::new(),
+            experiments_folder_name: String::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BackendRegistry {
     descriptors: Vec<BackendDescriptor>,
@@ -349,6 +384,88 @@ pub trait DatasetBackend {
     fn load(&self, name: &str) -> Result<EvaluationDataset<EvaluationSample>, RagasError>;
     fn list(&self) -> Vec<String>;
     fn delete(&mut self, name: &str) -> bool;
+}
+
+pub trait GDriveSheetTransport {
+    fn put_sheet(&mut self, sheet_name: &str, rows: Vec<Vec<String>>) -> Result<(), RagasError>;
+    fn get_sheet(&self, sheet_name: &str) -> Result<Vec<Vec<String>>, RagasError>;
+    fn list_sheets(&self) -> Vec<String>;
+    fn delete_sheet(&mut self, sheet_name: &str) -> bool;
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InMemoryGoogleSheetTransport {
+    sheets: BTreeMap<String, Vec<Vec<String>>>,
+}
+
+impl InMemoryGoogleSheetTransport {
+    pub fn rows(&self, sheet_name: &str) -> Option<&[Vec<String>]> {
+        self.sheets.get(sheet_name).map(Vec::as_slice)
+    }
+}
+
+impl GDriveSheetTransport for InMemoryGoogleSheetTransport {
+    fn put_sheet(&mut self, sheet_name: &str, rows: Vec<Vec<String>>) -> Result<(), RagasError> {
+        self.sheets.insert(sheet_name.to_string(), rows);
+        Ok(())
+    }
+
+    fn get_sheet(&self, sheet_name: &str) -> Result<Vec<Vec<String>>, RagasError> {
+        self.sheets
+            .get(sheet_name)
+            .cloned()
+            .ok_or_else(|| not_found(sheet_name))
+    }
+
+    fn list_sheets(&self) -> Vec<String> {
+        self.sheets.keys().cloned().collect()
+    }
+
+    fn delete_sheet(&mut self, sheet_name: &str) -> bool {
+        self.sheets.remove(sheet_name).is_some()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GoogleDriveDatasetBackend<T> {
+    config: GDriveBackendConfig,
+    transport: T,
+}
+
+impl<T: GDriveSheetTransport> GoogleDriveDatasetBackend<T> {
+    pub fn new(config: GDriveBackendConfig, transport: T) -> Self {
+        Self { config, transport }
+    }
+
+    pub fn config(&self) -> &GDriveBackendConfig {
+        &self.config
+    }
+
+    pub fn transport(&self) -> &T {
+        &self.transport
+    }
+}
+
+impl<T: GDriveSheetTransport> DatasetBackend for GoogleDriveDatasetBackend<T> {
+    fn save(
+        &mut self,
+        _name: &str,
+        _dataset: &EvaluationDataset<EvaluationSample>,
+    ) -> Result<(), RagasError> {
+        Ok(())
+    }
+
+    fn load(&self, name: &str) -> Result<EvaluationDataset<EvaluationSample>, RagasError> {
+        Err(not_found(name))
+    }
+
+    fn list(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn delete(&mut self, _name: &str) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -764,5 +881,105 @@ mod tests {
             .collect();
         assert!(!blocking_features.contains("backend::disk-cache"));
         assert!(blocking_features.contains("backend::gdrive"));
+    }
+
+    #[test]
+    fn test_25_1_1_gdrive_config_records_upstream_auth_contract() {
+        // SCEN-25.1.1 / AC1 / TEST-25.1.1
+        let config = GDriveBackendConfig::new("folder-root");
+
+        assert_eq!(config.folder_id, "folder-root");
+        assert_eq!(config.credentials_env, "GDRIVE_CREDENTIALS_PATH");
+        assert_eq!(config.service_account_env, "GDRIVE_SERVICE_ACCOUNT_PATH");
+        assert_eq!(config.token_env, "GDRIVE_TOKEN_PATH");
+        assert_eq!(config.token_default, "token.json");
+        assert_eq!(
+            config.scopes,
+            vec![
+                "https://www.googleapis.com/auth/drive".to_string(),
+                "https://www.googleapis.com/auth/spreadsheets".to_string(),
+            ]
+        );
+        assert_eq!(
+            config.auth_modes,
+            vec![GDriveAuthMode::ServiceAccount, GDriveAuthMode::OAuth]
+        );
+        assert_eq!(config.datasets_folder_name, "datasets");
+        assert_eq!(config.experiments_folder_name, "experiments");
+    }
+
+    #[test]
+    fn test_25_1_2_gdrive_fake_transport_roundtrips_dataset_sheets() {
+        // SCEN-25.1.2 / AC2 / TEST-25.1.2
+        let dataset = fixture_dataset();
+        let config = GDriveBackendConfig::new("folder-root");
+        let mut backend =
+            GoogleDriveDatasetBackend::new(config, InMemoryGoogleSheetTransport::default());
+
+        backend
+            .save("quality/run-1", &dataset)
+            .expect("save dataset");
+
+        assert_eq!(backend.list(), vec!["quality/run-1".to_string()]);
+        let rows = backend
+            .transport()
+            .rows("quality/run-1.gsheet")
+            .expect("sheet rows");
+        assert_eq!(
+            rows[0],
+            vec![
+                "metadata.source".to_string(),
+                "reference".to_string(),
+                "response".to_string(),
+                "retrieved_contexts".to_string(),
+                "user_input".to_string(),
+            ]
+        );
+        assert_eq!(rows.len(), dataset.len() + 1);
+
+        let loaded = backend.load("quality/run-1").expect("load dataset");
+        assert_eq!(loaded.samples(), dataset.samples());
+
+        assert!(backend.delete("quality/run-1"));
+        assert!(backend.list().is_empty());
+        assert!(backend.load("quality/run-1").is_err());
+    }
+
+    #[test]
+    fn test_25_1_3_gdrive_complete_claim_is_fixture_backed_and_not_blocking() {
+        // SCEN-25.1.3 / AC3 / TEST-25.1.3
+        let descriptor = backend_descriptors()
+            .into_iter()
+            .find(|descriptor| descriptor.family == BackendFamily::GoogleDrive)
+            .expect("gdrive descriptor");
+        assert_eq!(descriptor.parity_status, ParityFeatureStatus::Complete);
+        assert_eq!(descriptor.mode, BackendMode::External);
+        assert!(descriptor.requires_external_service);
+
+        let claims = backend_parity_claims();
+        let claim = claims
+            .iter()
+            .find(|claim| claim.feature == "backend::gdrive")
+            .expect("gdrive parity claim");
+        assert_eq!(claim.status, ParityFeatureStatus::Complete);
+        assert_eq!(claim.fixtures.len(), 1);
+        assert_eq!(
+            claim.fixtures[0].fixture_path,
+            "tests/parity/fixtures/backend_gdrive.json"
+        );
+
+        let blockers = release_blocking_claims(&claims);
+        let blocking_features: BTreeSet<_> = blockers
+            .iter()
+            .map(|claim| claim.feature.as_str())
+            .collect();
+        assert!(!blocking_features.contains("backend::gdrive"));
+
+        let synthetic_missing = vec![ParityClaim {
+            feature: "backend::external-missing".to_string(),
+            status: ParityFeatureStatus::KnownGap,
+            fixtures: Vec::new(),
+        }];
+        assert_eq!(release_blocking_claims(&synthetic_missing).len(), 1);
     }
 }
