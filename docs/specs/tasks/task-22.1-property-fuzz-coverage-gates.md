@@ -45,9 +45,9 @@ RED tests own final signatures.
 
 ## 6. Acceptance Criteria
 
-- **AC1**: Property, fuzz, and coverage gates declare command, scope, and required/optional mode.
-- **AC2**: Missing required quality evidence creates release-blocking findings.
-- **AC3**: Optional long-running gates are represented without blocking deterministic default CI.
+- [ ] **AC1**: Property, fuzz, and coverage gates declare command, scope, and required/optional mode.
+- [ ] **AC2**: Missing required quality evidence creates release-blocking findings.
+- [ ] **AC3**: Optional long-running gates are represented without blocking deterministic default CI.
 
 ## 7. Traceability
 
@@ -64,10 +64,10 @@ RED tests own final signatures.
 
 ## 9. Verification Plan
 
-- install
-- typecheck
-- unit-test
-- build
+- Install
+- Typecheck
+- Unit Test
+- Build
 
 ## 10. Completion Notes
 
