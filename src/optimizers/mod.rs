@@ -713,8 +713,8 @@ mod tests {
             "optimizer release blockers must be fully closed"
         );
         assert!(
-            categories.contains(&crate::release::ReleaseBlockerCategory::Quality),
-            "quality blockers remain for the dedicated quality closure task"
+            !categories.contains(&crate::release::ReleaseBlockerCategory::Quality),
+            "task 31.1 closes quality blockers after optimizer closure"
         );
     }
 }

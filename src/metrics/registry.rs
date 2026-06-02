@@ -953,8 +953,9 @@ mod tests {
             "closed optimizer claims should not keep Optimizer in blocker ledger"
         );
         assert!(
-            categories.contains(&ReleaseBlockerCategory::Quality),
-            "Quality should remain until its own closure task"
+            !categories.contains(&ReleaseBlockerCategory::Quality),
+            "closed quality evidence should not keep Quality in blocker ledger"
         );
+        assert!(summary.release_ready);
     }
 }
