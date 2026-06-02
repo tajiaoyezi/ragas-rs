@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::parity::{
     MetricGoldenComparison, MetricGoldenOutcome, ParityClaim, ParityFeatureStatus,
     validate_parity_claim,
@@ -217,6 +219,63 @@ pub enum BugClass {
     Performance,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ReleaseBlockerCategory {
+    Provider,
+    Backend,
+    Integration,
+    Metric,
+    Testset,
+    Optimizer,
+    Docs,
+    Quality,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseBlockerEntry {
+    pub id: String,
+    pub category: ReleaseBlockerCategory,
+    pub feature: String,
+    pub severity: BugSeverity,
+    pub source: String,
+    pub impact: String,
+    pub waived: bool,
+}
+
+impl ReleaseBlockerEntry {
+    pub fn new(
+        id: impl Into<String>,
+        category: ReleaseBlockerCategory,
+        feature: impl Into<String>,
+        severity: BugSeverity,
+        source: impl Into<String>,
+        impact: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            category,
+            feature: feature.into(),
+            severity,
+            source: source.into(),
+            impact: impact.into(),
+            waived: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseBlockerLedger {
+    pub entries: Vec<ReleaseBlockerEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseBlockerSummary {
+    pub total: usize,
+    pub non_waived: usize,
+    pub by_category: BTreeMap<ReleaseBlockerCategory, usize>,
+    pub release_ready: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BugLedgerEntry {
     pub id: String,
@@ -341,6 +400,29 @@ pub fn summarize_metric_release_blockers(
             .map(|blocker| blocker.feature.clone())
             .collect(),
         release_ready: blockers.is_empty(),
+    }
+}
+
+pub fn build_release_blocker_ledger() -> ReleaseBlockerLedger {
+    ReleaseBlockerLedger {
+        entries: Vec::new(),
+    }
+}
+
+pub fn summarize_release_blocker_ledger(
+    ledger: &ReleaseBlockerLedger,
+) -> ReleaseBlockerSummary {
+    let mut by_category = BTreeMap::new();
+    for entry in &ledger.entries {
+        *by_category.entry(entry.category).or_insert(0) += 1;
+    }
+    let non_waived = ledger.entries.iter().filter(|entry| !entry.waived).count();
+
+    ReleaseBlockerSummary {
+        total: ledger.entries.len(),
+        non_waived,
+        by_category,
+        release_ready: non_waived == 0,
     }
 }
 
@@ -1033,6 +1115,69 @@ mod tests {
                 && finding.command == "cargo test cli::"
                 && finding.release_blocking
         }));
+    }
+
+    #[test]
+    fn test_23_1_1_ledger_aggregates_release_blocker_sources() {
+        // SCEN-23.1.1 / AC1 / TEST-23.1.1
+        let ledger = build_release_blocker_ledger();
+        let categories: BTreeSet<_> = ledger.entries.iter().map(|entry| entry.category).collect();
+
+        for category in [
+            ReleaseBlockerCategory::Provider,
+            ReleaseBlockerCategory::Backend,
+            ReleaseBlockerCategory::Integration,
+            ReleaseBlockerCategory::Metric,
+            ReleaseBlockerCategory::Testset,
+            ReleaseBlockerCategory::Optimizer,
+            ReleaseBlockerCategory::Docs,
+            ReleaseBlockerCategory::Quality,
+        ] {
+            assert!(categories.contains(&category), "missing {category:?}");
+        }
+    }
+
+    #[test]
+    fn test_23_1_2_blockers_have_release_metadata() {
+        // SCEN-23.1.2 / AC2 / TEST-23.1.2
+        let blocker = ReleaseBlockerEntry::new(
+            "RB-provider-litellm",
+            ReleaseBlockerCategory::Provider,
+            "provider::litellm",
+            BugSeverity::High,
+            "providers::provider_parity_claims",
+            "Blocks current-upstream provider parity",
+        );
+
+        assert_eq!(blocker.category, ReleaseBlockerCategory::Provider);
+        assert_eq!(blocker.feature, "provider::litellm");
+        assert_eq!(blocker.severity, BugSeverity::High);
+        assert_eq!(blocker.source, "providers::provider_parity_claims");
+        assert!(blocker.impact.contains("provider parity"));
+        assert!(!blocker.id.is_empty());
+        assert!(!blocker.waived);
+    }
+
+    #[test]
+    fn test_23_1_3_non_waived_blocker_prevents_release() {
+        // SCEN-23.1.3 / AC3 / TEST-23.1.3
+        let ledger = ReleaseBlockerLedger {
+            entries: vec![ReleaseBlockerEntry::new(
+                "RB-quality-linux",
+                ReleaseBlockerCategory::Quality,
+                "quality::platform::linux-x64",
+                BugSeverity::High,
+                "release::required_quality_evidence_blockers",
+                "Missing Linux x64 release evidence",
+            )],
+        };
+
+        let summary = summarize_release_blocker_ledger(&ledger);
+
+        assert_eq!(summary.total, 1);
+        assert_eq!(summary.non_waived, 1);
+        assert_eq!(summary.by_category[&ReleaseBlockerCategory::Quality], 1);
+        assert!(!summary.release_ready);
     }
 
     #[test]
