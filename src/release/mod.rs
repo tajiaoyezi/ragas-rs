@@ -653,23 +653,78 @@ fn sanitize_id_component(value: &str) -> String {
 }
 
 pub fn validate_release_waiver(
-    _waiver: &ReleaseWaiver,
-    _as_of: &str,
+    waiver: &ReleaseWaiver,
+    as_of: &str,
 ) -> Result<(), WaiverValidationError> {
+    required_waiver_field(&waiver.blocker_id, "blocker_id")?;
+    required_waiver_field(&waiver.scope, "scope")?;
+    required_waiver_field(&waiver.rationale, "rationale")?;
+    required_waiver_field(&waiver.owner, "owner")?;
+    required_waiver_field(&waiver.expires_on, "expiry")?;
+    required_waiver_field(&waiver.risk, "risk")?;
+    required_waiver_field(&waiver.rollback_impact, "rollback_impact")?;
+    if waiver.expires_on.as_str() < as_of {
+        return Err(WaiverValidationError::Expired);
+    }
     Ok(())
 }
 
 pub fn summarize_gap_resolutions(
-    _ledger: &ReleaseBlockerLedger,
-    _resolutions: &[GapResolutionRecord],
-    _as_of: &str,
+    ledger: &ReleaseBlockerLedger,
+    resolutions: &[GapResolutionRecord],
+    as_of: &str,
 ) -> GapResolutionSummary {
-    GapResolutionSummary {
+    let mut summary = GapResolutionSummary {
         fixed: 0,
         waived: 0,
         deferred: 0,
         still_blocking: 0,
-        release_ready: true,
+        release_ready: false,
+    };
+
+    for entry in &ledger.entries {
+        let resolution = resolutions
+            .iter()
+            .find(|resolution| resolution.blocker_id == entry.id);
+
+        match resolution {
+            Some(resolution)
+                if resolution.kind == GapResolutionKind::Fixed
+                    && !resolution.evidence.trim().is_empty() =>
+            {
+                summary.fixed += 1;
+            }
+            Some(resolution) if resolution.kind == GapResolutionKind::Waived => {
+                if let Some(waiver) = &resolution.waiver {
+                    if validate_release_waiver(waiver, as_of).is_ok() {
+                        summary.waived += 1;
+                    } else {
+                        summary.still_blocking += 1;
+                    }
+                } else {
+                    summary.still_blocking += 1;
+                }
+            }
+            Some(resolution) if resolution.kind == GapResolutionKind::Deferred => {
+                summary.deferred += 1;
+                summary.still_blocking += 1;
+            }
+            _ => summary.still_blocking += 1,
+        }
+    }
+
+    summary.release_ready = summary.still_blocking == 0;
+    summary
+}
+
+fn required_waiver_field(
+    value: &str,
+    field: &'static str,
+) -> Result<(), WaiverValidationError> {
+    if value.trim().is_empty() {
+        Err(WaiverValidationError::MissingField(field))
+    } else {
+        Ok(())
     }
 }
 
