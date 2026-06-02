@@ -37,7 +37,11 @@ pub use cli::{
 pub use dataset::{
     EvaluationDataset, EvaluationDatasetBuilder, EvaluationSample, SingleTurnSample,
 };
-pub use docs_examples::{DocExample, public_workflow_examples};
+pub use docs_examples::{
+    DocExample, ExampleOutputType, QuickstartDescriptor, RunnableExampleMetadata,
+    docs_parity_claims, public_workflow_examples, quickstart_descriptors,
+    runnable_example_metadata,
+};
 pub use error::RagasError;
 pub use eval::{EvaluationOptions, EvaluationReport, SampleEvaluation, evaluate};
 pub use experiments::{

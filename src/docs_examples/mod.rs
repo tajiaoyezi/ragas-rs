@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::{ParityClaim, ParityFeatureStatus};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocExample {
     pub workflow: String,
@@ -7,6 +9,29 @@ pub struct DocExample {
     pub upstream_section: String,
     pub feature_flags: Vec<String>,
     pub known_parity_gaps: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ExampleOutputType {
+    Json,
+    Dataset,
+    Text,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuickstartDescriptor {
+    pub upstream_template: String,
+    pub rust_example: Option<String>,
+    pub parity_status: ParityFeatureStatus,
+    pub known_gap: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunnableExampleMetadata {
+    pub example_path: String,
+    pub command: String,
+    pub expected_output: ExampleOutputType,
+    pub feature_flags: Vec<String>,
 }
 
 pub fn public_workflow_examples() -> Vec<DocExample> {
@@ -35,9 +60,22 @@ pub fn public_workflow_examples() -> Vec<DocExample> {
     ]
 }
 
+pub fn quickstart_descriptors() -> Vec<QuickstartDescriptor> {
+    Vec::new()
+}
+
+pub fn runnable_example_metadata() -> Vec<RunnableExampleMetadata> {
+    Vec::new()
+}
+
+pub fn docs_parity_claims() -> Vec<ParityClaim> {
+    Vec::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::release_blocking_claims;
     use std::{collections::BTreeSet, path::Path};
 
     #[test]
@@ -93,5 +131,110 @@ mod tests {
                 .iter()
                 .any(|example| example.feature_flags.contains(&"default".to_string()))
         );
+    }
+
+    #[test]
+    fn test_21_3_1_quickstart_registry_maps_upstream_templates() {
+        // SCEN-21.3.1 / AC1 / TEST-21.3.1
+        let descriptors = quickstart_descriptors();
+        let by_template = descriptors
+            .iter()
+            .map(|descriptor| (descriptor.upstream_template.as_str(), descriptor))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        for expected in [
+            "Evaluate a RAG application",
+            "Generate a testset",
+            "Compare and monitor evaluation cost",
+            "Run experiments",
+        ] {
+            assert!(by_template.contains_key(expected), "missing {expected}");
+        }
+
+        let evaluate = by_template
+            .get("Evaluate a RAG application")
+            .expect("evaluate quickstart");
+        assert_eq!(evaluate.rust_example.as_deref(), Some("examples/evaluate.rs"));
+        assert_eq!(evaluate.parity_status, ParityFeatureStatus::Complete);
+
+        let experiments = by_template
+            .get("Run experiments")
+            .expect("experiments quickstart");
+        assert_eq!(experiments.rust_example, None);
+        assert_eq!(experiments.parity_status, ParityFeatureStatus::KnownGap);
+        assert!(
+            experiments
+                .known_gap
+                .as_deref()
+                .is_some_and(|gap| gap.contains("example"))
+        );
+    }
+
+    #[test]
+    fn test_21_3_2_runnable_example_metadata_includes_command_output_and_flags() {
+        // SCEN-21.3.2 / AC2 / TEST-21.3.2
+        let metadata = runnable_example_metadata();
+        let by_path = metadata
+            .iter()
+            .map(|example| (example.example_path.as_str(), example))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        for expected in [
+            "examples/evaluate.rs",
+            "examples/testset.rs",
+            "examples/benchmark.rs",
+        ] {
+            let example = by_path.get(expected).unwrap_or_else(|| {
+                panic!("missing runnable example metadata for {expected}")
+            });
+            assert!(Path::new(&example.example_path).exists());
+            assert!(example.command.starts_with("cargo run --example "));
+            assert!(example.feature_flags.contains(&"default".to_string()));
+        }
+
+        assert_eq!(
+            by_path["examples/evaluate.rs"].expected_output,
+            ExampleOutputType::Json
+        );
+        assert_eq!(
+            by_path["examples/testset.rs"].expected_output,
+            ExampleOutputType::Dataset
+        );
+        assert_eq!(
+            by_path["examples/benchmark.rs"].expected_output,
+            ExampleOutputType::Json
+        );
+    }
+
+    #[test]
+    fn test_21_3_3_missing_docs_examples_create_release_blocking_claims() {
+        // SCEN-21.3.3 / AC3 / TEST-21.3.3
+        let claims = docs_parity_claims();
+        let blockers = release_blocking_claims(&claims);
+        let blocking_features = blockers
+            .iter()
+            .map(|claim| claim.feature.as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert!(
+            blocking_features.contains("docs::quickstart::experiments"),
+            "missing experiments quickstart release blocker"
+        );
+
+        let complete_features = claims
+            .iter()
+            .filter(|claim| claim.status == ParityFeatureStatus::Complete)
+            .map(|claim| claim.feature.as_str())
+            .collect::<BTreeSet<_>>();
+        for expected in [
+            "docs::quickstart::evaluate",
+            "docs::quickstart::testset",
+            "docs::quickstart::benchmark",
+        ] {
+            assert!(
+                complete_features.contains(expected),
+                "missing complete docs claim {expected}"
+            );
+        }
     }
 }
