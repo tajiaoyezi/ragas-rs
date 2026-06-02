@@ -844,6 +844,18 @@ pub fn release_gate_files() -> Vec<&'static str> {
     ]
 }
 
+pub fn required_quality_evidence_descriptors() -> Vec<QualityGateDescriptor> {
+    Vec::new()
+}
+
+pub fn release_quality_evidence() -> Vec<QualityCommandEvidence> {
+    Vec::new()
+}
+
+pub fn final_release_audit_evidence() -> Vec<FinalAuditEvidence> {
+    Vec::new()
+}
+
 pub fn required_quality_gates() -> Vec<QualityGateKind> {
     vec![
         QualityGateKind::Build,
@@ -1843,6 +1855,67 @@ mod tests {
 
         assert!(rendered.contains("verified scope"));
         assert!(rendered.contains("known unresolved"));
+        assert!(!lower.contains("bug-free"));
+        assert!(!lower.contains("zero potential bugs"));
+        assert!(!lower.contains("no bugs"));
+    }
+
+    #[test]
+    fn test_31_1_1_release_quality_evidence_covers_required_gate_ids() {
+        // SCEN-31.1.1 / AC1 / TEST-31.1.1
+        let descriptors = required_quality_evidence_descriptors();
+        let required_ids = descriptors
+            .iter()
+            .filter(|descriptor| descriptor.mode.is_required())
+            .map(|descriptor| descriptor.gate_id)
+            .collect::<BTreeSet<_>>();
+        let evidence = release_quality_evidence();
+        let evidence_ids = evidence
+            .iter()
+            .map(|record| record.gate_id.as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(required_ids.len(), 13);
+        assert!(required_ids.contains("quality::coverage::llvm-cov-summary"));
+        assert!(required_ids.contains("quality::mutation::release-threshold"));
+        assert!(!required_ids.contains("quality::fuzz::long-running-campaign"));
+        assert_eq!(evidence_ids, required_ids);
+        assert!(evidence.iter().all(|record| {
+            record.status == GateEvidenceStatus::Passed && !record.detail.trim().is_empty()
+        }));
+        assert!(required_quality_evidence_blockers(&descriptors, &evidence).is_empty());
+    }
+
+    #[test]
+    fn test_31_1_2_release_blocker_ledger_is_empty_after_quality_evidence() {
+        // SCEN-31.1.2 / AC2 / TEST-31.1.2
+        let ledger = build_release_blocker_ledger();
+        let summary = summarize_release_blocker_ledger(&ledger);
+
+        assert!(ledger.entries.is_empty(), "remaining entries: {:?}", ledger.entries);
+        assert_eq!(summary.total, 0);
+        assert_eq!(summary.non_waived, 0);
+        assert!(summary.by_category.is_empty());
+        assert!(summary.release_ready);
+    }
+
+    #[test]
+    fn test_31_1_3_final_audit_ready_with_scoped_wording() {
+        // SCEN-31.1.3 / AC3 / TEST-31.1.3
+        let evidence = final_release_audit_evidence();
+        let ledger = build_release_blocker_ledger();
+        let audit = evaluate_final_bug_zero_audit(&evidence, &ledger, &[], &[], "2026-06-02");
+
+        assert!(audit.release_ready);
+        assert!(audit.missing_evidence.is_empty());
+        assert!(audit.failed_evidence.is_empty());
+        assert_eq!(audit.unresolved_release_blocking_bugs, 0);
+        assert_eq!(audit.blocker_summary.still_blocking, 0);
+
+        let rendered = render_final_bug_zero_audit(&audit);
+        let lower = rendered.to_ascii_lowercase();
+        assert!(rendered.contains("verified scope"));
+        assert!(rendered.contains("no known unresolved release-blocking bugs"));
         assert!(!lower.contains("bug-free"));
         assert!(!lower.contains("zero potential bugs"));
         assert!(!lower.contains("no bugs"));
