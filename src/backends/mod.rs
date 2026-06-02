@@ -100,14 +100,17 @@ impl GDriveBackendConfig {
     pub fn new(folder_id: impl Into<String>) -> Self {
         Self {
             folder_id: folder_id.into(),
-            credentials_env: "GDRIVE_CREDENTIALS".to_string(),
-            service_account_env: "GDRIVE_SERVICE_ACCOUNT".to_string(),
-            token_env: "GDRIVE_TOKEN".to_string(),
-            token_default: String::new(),
-            scopes: Vec::new(),
-            auth_modes: Vec::new(),
-            datasets_folder_name: String::new(),
-            experiments_folder_name: String::new(),
+            credentials_env: "GDRIVE_CREDENTIALS_PATH".to_string(),
+            service_account_env: "GDRIVE_SERVICE_ACCOUNT_PATH".to_string(),
+            token_env: "GDRIVE_TOKEN_PATH".to_string(),
+            token_default: "token.json".to_string(),
+            scopes: vec![
+                "https://www.googleapis.com/auth/drive".to_string(),
+                "https://www.googleapis.com/auth/spreadsheets".to_string(),
+            ],
+            auth_modes: vec![GDriveAuthMode::ServiceAccount, GDriveAuthMode::OAuth],
+            datasets_folder_name: "datasets".to_string(),
+            experiments_folder_name: "experiments".to_string(),
         }
     }
 }
@@ -175,7 +178,7 @@ pub fn backend_descriptors() -> Vec<BackendDescriptor> {
             BackendCapability::DatasetStorage,
             false,
             true,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
         ),
     ]
 }
@@ -194,6 +197,18 @@ pub fn backend_parity_claims() -> Vec<ParityClaim> {
                         "src/ragas/cache.py",
                         Some("tests/unit/test_cache.py"),
                         "tests/parity/fixtures/backend_disk_cache.json",
+                    )],
+                });
+            }
+            if descriptor.family == BackendFamily::GoogleDrive {
+                return Some(ParityClaim {
+                    feature,
+                    status: descriptor.parity_status,
+                    fixtures: vec![backend_fixture_metadata(
+                        "backend::gdrive",
+                        "src/ragas/backends/gdrive_backend.py",
+                        None,
+                        "tests/parity/fixtures/backend_gdrive.json",
                     )],
                 });
             }
@@ -449,22 +464,27 @@ impl<T: GDriveSheetTransport> GoogleDriveDatasetBackend<T> {
 impl<T: GDriveSheetTransport> DatasetBackend for GoogleDriveDatasetBackend<T> {
     fn save(
         &mut self,
-        _name: &str,
-        _dataset: &EvaluationDataset<EvaluationSample>,
+        name: &str,
+        dataset: &EvaluationDataset<EvaluationSample>,
     ) -> Result<(), RagasError> {
-        Ok(())
+        self.transport
+            .put_sheet(&gdrive_sheet_name(name), dataset_to_gdrive_rows(dataset)?)
     }
 
     fn load(&self, name: &str) -> Result<EvaluationDataset<EvaluationSample>, RagasError> {
-        Err(not_found(name))
+        gdrive_rows_to_dataset(self.transport.get_sheet(&gdrive_sheet_name(name))?)
     }
 
     fn list(&self) -> Vec<String> {
-        Vec::new()
+        self.transport
+            .list_sheets()
+            .into_iter()
+            .filter_map(|sheet| sheet.strip_suffix(".gsheet").map(str::to_string))
+            .collect()
     }
 
-    fn delete(&mut self, _name: &str) -> bool {
-        false
+    fn delete(&mut self, name: &str) -> bool {
+        self.transport.delete_sheet(&gdrive_sheet_name(name))
     }
 }
 
@@ -583,6 +603,101 @@ impl DatasetBackend for CsvDatasetBackend {
     fn delete(&mut self, name: &str) -> bool {
         self.documents.remove(name).is_some()
     }
+}
+
+fn gdrive_sheet_name(name: &str) -> String {
+    format!("{name}.gsheet")
+}
+
+fn dataset_to_gdrive_rows(
+    dataset: &EvaluationDataset<EvaluationSample>,
+) -> Result<Vec<Vec<String>>, RagasError> {
+    let mut row_maps = Vec::with_capacity(dataset.len());
+    let mut headers = BTreeSet::new();
+
+    for sample in dataset.samples() {
+        let EvaluationSample::SingleTurn(sample) = sample else {
+            return Err(dataset_io_error(
+                "GDrive backend only supports single-turn samples",
+            ));
+        };
+        let mut row = BTreeMap::new();
+        row.insert("user_input".to_string(), sample.user_input.clone());
+        row.insert("response".to_string(), sample.response.clone());
+        row.insert(
+            "retrieved_contexts".to_string(),
+            serde_json::to_string(&sample.retrieved_contexts).map_err(|error| {
+                dataset_io_error(format!("retrieved_contexts JSON encode failed: {error}"))
+            })?,
+        );
+        row.insert(
+            "reference".to_string(),
+            sample.reference.clone().unwrap_or_default(),
+        );
+        for (key, value) in &sample.metadata {
+            row.insert(format!("metadata.{key}"), value.clone());
+        }
+        headers.extend(row.keys().cloned());
+        row_maps.push(row);
+    }
+
+    let header_row: Vec<String> = headers.into_iter().collect();
+    let mut rows = Vec::with_capacity(row_maps.len() + 1);
+    rows.push(header_row.clone());
+    for row in row_maps {
+        rows.push(
+            header_row
+                .iter()
+                .map(|header| row.get(header).cloned().unwrap_or_default())
+                .collect(),
+        );
+    }
+    Ok(rows)
+}
+
+fn gdrive_rows_to_dataset(
+    rows: Vec<Vec<String>>,
+) -> Result<EvaluationDataset<EvaluationSample>, RagasError> {
+    let headers = rows.first().cloned().unwrap_or_else(Vec::new);
+    if headers.is_empty() {
+        return EvaluationDataset::<EvaluationSample>::from_samples(Vec::new());
+    }
+
+    let mut samples = Vec::new();
+    for row in rows.into_iter().skip(1) {
+        let value_for = |name: &str| -> Option<&str> {
+            headers
+                .iter()
+                .position(|header| header == name)
+                .and_then(|index| row.get(index))
+                .map(String::as_str)
+        };
+
+        let user_input = value_for("user_input").unwrap_or_default().to_string();
+        let response = value_for("response").unwrap_or_default().to_string();
+        let retrieved_contexts = value_for("retrieved_contexts")
+            .filter(|value| !value.is_empty())
+            .map(serde_json::from_str::<Vec<String>>)
+            .transpose()
+            .map_err(|error| {
+                dataset_io_error(format!("retrieved_contexts JSON parse failed: {error}"))
+            })?
+            .unwrap_or_default();
+        let mut sample = SingleTurnSample::new(user_input, response, retrieved_contexts);
+        if let Some(reference) = value_for("reference").filter(|value| !value.is_empty()) {
+            sample = sample.with_reference(reference);
+        }
+        for (index, header) in headers.iter().enumerate() {
+            if let Some(key) = header.strip_prefix("metadata.") {
+                if let Some(value) = row.get(index).filter(|value| !value.is_empty()) {
+                    sample = sample.with_metadata(key, value);
+                }
+            }
+        }
+        samples.push(EvaluationSample::SingleTurn(sample));
+    }
+
+    EvaluationDataset::<EvaluationSample>::from_samples(samples)
 }
 
 fn not_found(name: &str) -> RagasError {
@@ -761,7 +876,7 @@ mod tests {
             .expect("gdrive descriptor");
         assert_eq!(gdrive.mode, BackendMode::External);
         assert!(gdrive.requires_external_service);
-        assert_ne!(gdrive.parity_status, ParityFeatureStatus::Complete);
+        assert_eq!(gdrive.parity_status, ParityFeatureStatus::Complete);
     }
 
     #[test]
@@ -783,17 +898,18 @@ mod tests {
     #[test]
     fn test_18_3_3_unsupported_external_backend_blocks_release() {
         // SCEN-18.3.3 / AC3 / TEST-18.3.3
-        let claims = backend_parity_claims();
-        let blockers = release_blocking_claims(&claims);
+        let synthetic_missing = vec![ParityClaim {
+            feature: "backend::external-missing".to_string(),
+            status: ParityFeatureStatus::KnownGap,
+            fixtures: Vec::new(),
+        }];
+        let blockers = release_blocking_claims(&synthetic_missing);
         let blocking_features: BTreeSet<_> = blockers
             .iter()
             .map(|claim| claim.feature.as_str())
             .collect();
 
-        assert!(blocking_features.contains("backend::gdrive"));
-        assert!(claims.iter().all(|claim| {
-            !(claim.feature == "backend::gdrive" && claim.status == ParityFeatureStatus::Complete)
-        }));
+        assert!(blocking_features.contains("backend::external-missing"));
     }
 
     fn temp_cache_dir(name: &str) -> std::path::PathBuf {
@@ -880,7 +996,7 @@ mod tests {
             .map(|claim| claim.feature.as_str())
             .collect();
         assert!(!blocking_features.contains("backend::disk-cache"));
-        assert!(blocking_features.contains("backend::gdrive"));
+        assert!(!blocking_features.contains("backend::gdrive"));
     }
 
     #[test]

@@ -1170,7 +1170,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use crate::{
-        MetricGoldenComparison, MetricGoldenOutcome, docs_parity_claims,
+        MetricGoldenComparison, MetricGoldenOutcome, backend_parity_claims, docs_parity_claims,
         metric_catalog_parity_claims, release_blocking_claims,
     };
 
@@ -1543,7 +1543,6 @@ mod tests {
 
         for category in [
             ReleaseBlockerCategory::Provider,
-            ReleaseBlockerCategory::Backend,
             ReleaseBlockerCategory::Integration,
             ReleaseBlockerCategory::Metric,
             ReleaseBlockerCategory::Testset,
@@ -1563,6 +1562,12 @@ mod tests {
         assert!(
             release_blocking_claims(&docs_claims).is_empty(),
             "closed docs quickstarts should not keep Docs in blocker ledger"
+        );
+
+        let backend_claims = backend_parity_claims();
+        assert!(
+            release_blocking_claims(&backend_claims).is_empty(),
+            "closed backend claims should not keep Backend in blocker ledger"
         );
     }
 
