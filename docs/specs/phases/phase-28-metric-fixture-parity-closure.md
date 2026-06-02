@@ -1,6 +1,6 @@
 # Phase 28 - metric-fixture-parity-closure
 
-**Status**: Ready
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 **Depends On**: 27
 
@@ -26,7 +26,7 @@ Phase 19 metric catalog and golden fixture runner, Phase 23 release blocker ledg
 
 | Task | Spec | Status |
 |---|---|---|
-| 28.1 | docs/specs/tasks/task-28.1-metric-fixture-parity-closure.md | Ready |
+| 28.1 | docs/specs/tasks/task-28.1-metric-fixture-parity-closure.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 

@@ -79,7 +79,7 @@ Out of scope:
 | 25 | backend-gdrive-parity-closure | Close the remaining backend release blocker by implementing Google Drive / Sheets backend contracts through a deterministic Rust transport abstraction and fixture-backed parity evidence. | Done |
 | 26 | provider-protocol-parity-closure | Close provider release blockers with deterministic provider protocol contracts and fixture-backed parity claims for every tracked upstream family. | Done |
 | 27 | integration-contract-parity-closure | Close integration release blockers with deterministic integration contracts and fixture-backed parity claims for every tracked upstream family. | Done |
-| 28 | metric-fixture-parity-closure | Close metric release blockers by attaching deterministic golden fixture evidence and complete parity claims to every tracked upstream metric family. | Ready |
+| 28 | metric-fixture-parity-closure | Close metric release blockers by attaching deterministic golden fixture evidence and complete parity claims to every tracked upstream metric family. | Done |
 
 ## 7. First Delta Task Matrix
 
