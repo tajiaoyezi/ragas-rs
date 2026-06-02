@@ -177,7 +177,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 22.2 | quality | docs/specs/tasks/task-22.2-panic-mutation-safety-gates.md | Done | after task 22.1 | - |
 | 22.3 | quality | docs/specs/tasks/task-22.3-cross-platform-e2e-matrix.md | Done | after task 22.2 | - |
 | 23.1 | release | docs/specs/tasks/task-23.1-release-blocker-ledger.md | Done | after task 22.3 | - |
-| 23.2 | release | docs/specs/tasks/task-23.2-gap-resolution-and-waiver-policy.md | Ready | after task 23.1 | - |
+| 23.2 | release | docs/specs/tasks/task-23.2-gap-resolution-and-waiver-policy.md | Done | after task 23.1 | - |
 | 23.3 | release | docs/specs/tasks/task-23.3-final-bug-zero-release-audit.md | Ready | after task 23.2 | - |
 
 ## ADR 索引
