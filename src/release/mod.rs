@@ -761,29 +761,66 @@ pub fn summarize_gap_resolutions(
 }
 
 pub fn required_final_audit_evidence() -> Vec<FinalAuditEvidenceKind> {
-    Vec::new()
+    vec![
+        FinalAuditEvidenceKind::Build,
+        FinalAuditEvidenceKind::Check,
+        FinalAuditEvidenceKind::Unit,
+        FinalAuditEvidenceKind::Parity,
+        FinalAuditEvidenceKind::Examples,
+        FinalAuditEvidenceKind::Quality,
+        FinalAuditEvidenceKind::BlockerLedger,
+        FinalAuditEvidenceKind::BugLedger,
+    ]
 }
 
 pub fn evaluate_final_bug_zero_audit(
-    _evidence: &[FinalAuditEvidence],
-    _ledger: &ReleaseBlockerLedger,
-    _resolutions: &[GapResolutionRecord],
-    _bugs: &[BugLedgerEntry],
-    _as_of: &str,
+    evidence: &[FinalAuditEvidence],
+    ledger: &ReleaseBlockerLedger,
+    resolutions: &[GapResolutionRecord],
+    bugs: &[BugLedgerEntry],
+    as_of: &str,
 ) -> FinalBugZeroAudit {
+    let mut missing_evidence = Vec::new();
+    let mut failed_evidence = Vec::new();
+
+    for required in required_final_audit_evidence() {
+        match evidence.iter().find(|entry| entry.kind == required) {
+            Some(entry) => match entry.status {
+                GateEvidenceStatus::Passed => {}
+                GateEvidenceStatus::Failed => failed_evidence.push(required),
+                GateEvidenceStatus::Missing | GateEvidenceStatus::SkippedWithJustification => {
+                    missing_evidence.push(required)
+                }
+            },
+            None => missing_evidence.push(required),
+        }
+    }
+
+    let blocker_summary = summarize_gap_resolutions(ledger, resolutions, as_of);
+    let unresolved_release_blocking_bugs = release_blocking_bugs(bugs).len();
+    let release_ready = missing_evidence.is_empty()
+        && failed_evidence.is_empty()
+        && blocker_summary.release_ready
+        && unresolved_release_blocking_bugs == 0;
+    let statement = if release_ready {
+        "Within the verified scope, no known unresolved release-blocking bugs or unwaived blockers remain.".to_string()
+    } else {
+        format!(
+            "Release refused within the verified scope: known unresolved evidence gaps={}, failed evidence={}, blockers={}, high-severity bugs={} remain.",
+            missing_evidence.len(),
+            failed_evidence.len(),
+            blocker_summary.still_blocking,
+            unresolved_release_blocking_bugs
+        )
+    };
+
     FinalBugZeroAudit {
-        missing_evidence: Vec::new(),
-        failed_evidence: Vec::new(),
-        blocker_summary: GapResolutionSummary {
-            fixed: 0,
-            waived: 0,
-            deferred: 0,
-            still_blocking: 0,
-            release_ready: true,
-        },
-        unresolved_release_blocking_bugs: 0,
-        release_ready: true,
-        statement: String::new(),
+        missing_evidence,
+        failed_evidence,
+        blocker_summary,
+        unresolved_release_blocking_bugs,
+        release_ready,
+        statement,
     }
 }
 
