@@ -45,9 +45,9 @@ RED tests own final signatures.
 
 ## 6. Acceptance Criteria
 
-- **AC1**: Waiver records require scope, rationale, owner, expiry, risk, and rollback impact.
-- **AC2**: Expired or incomplete waivers do not unblock release.
-- **AC3**: Release summaries show fixed, waived, and still-blocking gaps separately.
+- [ ] **AC1**: Waiver records require scope, rationale, owner, expiry, risk, and rollback impact.
+- [ ] **AC2**: Expired or incomplete waivers do not unblock release.
+- [ ] **AC3**: Release summaries show fixed, waived, and still-blocking gaps separately.
 
 ## 7. Traceability
 
@@ -64,10 +64,10 @@ RED tests own final signatures.
 
 ## 9. Verification Plan
 
-- install
-- typecheck
-- unit-test
-- build
+- Install
+- Typecheck
+- Unit Test
+- Build
 
 ## 10. Completion Notes
 
