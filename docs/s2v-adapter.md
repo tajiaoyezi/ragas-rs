@@ -173,7 +173,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 21.1 | optimizers | docs/specs/tasks/task-21.1-dspy-mipro-cache-contracts.md | Done | after task 20.3 | - |
 | 21.2 | cli | docs/specs/tasks/task-21.2-experiment-sdk-cli-contracts.md | Done | after task 21.1 | - |
 | 21.3 | docs | docs/specs/tasks/task-21.3-quickstart-docs-parity.md | Done | after task 21.2 | - |
-| 22.1 | quality | docs/specs/tasks/task-22.1-property-fuzz-coverage-gates.md | Ready | after task 21.3 | - |
+| 22.1 | quality | docs/specs/tasks/task-22.1-property-fuzz-coverage-gates.md | Done | after task 21.3 | - |
 | 22.2 | quality | docs/specs/tasks/task-22.2-panic-mutation-safety-gates.md | Ready | after task 22.1 | - |
 | 22.3 | quality | docs/specs/tasks/task-22.3-cross-platform-e2e-matrix.md | Ready | after task 22.2 | - |
 | 23.1 | release | docs/specs/tasks/task-23.1-release-blocker-ledger.md | Ready | after task 22.3 | - |
