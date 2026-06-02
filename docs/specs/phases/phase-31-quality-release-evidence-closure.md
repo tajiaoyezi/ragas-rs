@@ -1,6 +1,6 @@
 # Phase 31 - quality-release-evidence-closure
 
-**Status**: Ready
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 **Depends On**: 30
 
@@ -26,7 +26,7 @@ Phase 17 quality gate model, Phase 22 quality descriptors, Phase 23 final audit 
 
 | Task | Spec | Status |
 |---|---|---|
-| 31.1 | docs/specs/tasks/task-31.1-quality-release-evidence-closure.md | Ready |
+| 31.1 | docs/specs/tasks/task-31.1-quality-release-evidence-closure.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 

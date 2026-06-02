@@ -82,7 +82,7 @@ Out of scope:
 | 28 | metric-fixture-parity-closure | Close metric release blockers by attaching deterministic golden fixture evidence and complete parity claims to every tracked upstream metric family. | Done |
 | 29 | testset-contract-parity-closure | Close testset release blockers with deterministic graph, transform, and pre-chunked synthesizer contracts plus fixture-backed complete claims. | Done |
 | 30 | optimizer-contract-parity-closure | Close optimizer release blockers with deterministic DSPy/MIPROv2 contract planning, cache evidence, and fixture-backed complete claims. | Done |
-| 31 | quality-release-evidence-closure | Close final Quality release blockers with complete release evidence records and final audit readiness tests. | Ready |
+| 31 | quality-release-evidence-closure | Close final Quality release blockers with complete release evidence records and final audit readiness tests. | Done |
 
 ## 7. First Delta Task Matrix
 
