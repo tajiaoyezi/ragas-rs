@@ -269,7 +269,10 @@ mod tests {
         let evaluate = by_template
             .get("Evaluate a RAG application")
             .expect("evaluate quickstart");
-        assert_eq!(evaluate.rust_example.as_deref(), Some("examples/evaluate.rs"));
+        assert_eq!(
+            evaluate.rust_example.as_deref(),
+            Some("examples/evaluate.rs")
+        );
         assert_eq!(evaluate.parity_status, ParityFeatureStatus::Complete);
 
         let experiments = by_template
@@ -298,9 +301,9 @@ mod tests {
             "examples/benchmark.rs",
             "examples/experiment.rs",
         ] {
-            let example = by_path.get(expected).unwrap_or_else(|| {
-                panic!("missing runnable example metadata for {expected}")
-            });
+            let example = by_path
+                .get(expected)
+                .unwrap_or_else(|| panic!("missing runnable example metadata for {expected}"));
             assert!(Path::new(&example.example_path).exists());
             assert!(example.command.starts_with("cargo run --example "));
             assert!(example.feature_flags.contains(&"default".to_string()));
@@ -383,9 +386,16 @@ mod tests {
             .iter()
             .find(|example| example.example_path == "examples/experiment.rs")
             .expect("experiment quickstart runnable metadata");
-        assert_eq!(experiment_metadata.command, "cargo run --example experiment");
+        assert_eq!(
+            experiment_metadata.command,
+            "cargo run --example experiment"
+        );
         assert_eq!(experiment_metadata.expected_output, ExampleOutputType::Json);
-        assert!(experiment_metadata.feature_flags.contains(&"default".to_string()));
+        assert!(
+            experiment_metadata
+                .feature_flags
+                .contains(&"default".to_string())
+        );
     }
 
     #[test]

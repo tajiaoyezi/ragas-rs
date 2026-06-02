@@ -592,29 +592,27 @@ pub fn build_release_blocker_ledger() -> ReleaseBlockerLedger {
     let mut quality_descriptors = property_fuzz_coverage_gate_descriptors();
     quality_descriptors.extend(panic_mutation_quality_gate_descriptors());
     quality_descriptors.extend(platform_e2e_quality_gate_descriptors());
-    entries.extend(required_quality_evidence_blockers(&quality_descriptors, &[]).into_iter().map(
-        |finding| ReleaseBlockerEntry {
-            id: format!("RB-quality-{}", sanitize_id_component(&finding.gate_id)),
-            category: ReleaseBlockerCategory::Quality,
-            feature: finding.gate_id,
-            severity: BugSeverity::High,
-            source: "release::required_quality_evidence_blockers".to_string(),
-            impact: format!(
-                "{}; command `{}` must produce release evidence",
-                finding.detail, finding.command
-            ),
-            waived: false,
-        },
-    ));
+    entries.extend(
+        required_quality_evidence_blockers(&quality_descriptors, &[])
+            .into_iter()
+            .map(|finding| ReleaseBlockerEntry {
+                id: format!("RB-quality-{}", sanitize_id_component(&finding.gate_id)),
+                category: ReleaseBlockerCategory::Quality,
+                feature: finding.gate_id,
+                severity: BugSeverity::High,
+                source: "release::required_quality_evidence_blockers".to_string(),
+                impact: format!(
+                    "{}; command `{}` must produce release evidence",
+                    finding.detail, finding.command
+                ),
+                waived: false,
+            }),
+    );
 
-    ReleaseBlockerLedger {
-        entries,
-    }
+    ReleaseBlockerLedger { entries }
 }
 
-pub fn summarize_release_blocker_ledger(
-    ledger: &ReleaseBlockerLedger,
-) -> ReleaseBlockerSummary {
+pub fn summarize_release_blocker_ledger(ledger: &ReleaseBlockerLedger) -> ReleaseBlockerSummary {
     let mut by_category = BTreeMap::new();
     for entry in &ledger.entries {
         *by_category.entry(entry.category).or_insert(0) += 1;
@@ -635,24 +633,26 @@ fn append_parity_blockers(
     source: &'static str,
     claims: Vec<ParityClaim>,
 ) {
-    entries.extend(release_blocking_claims(&claims).into_iter().map(|claim| {
-        ReleaseBlockerEntry {
-            id: format!(
-                "RB-{}-{}",
-                category_slug(category),
-                sanitize_id_component(&claim.feature)
-            ),
-            category,
-            feature: claim.feature.clone(),
-            severity: severity_for_parity_status(claim.status),
-            source: source.to_string(),
-            impact: format!(
-                "Blocks current-upstream parity because {} is {:?}",
-                claim.feature, claim.status
-            ),
-            waived: false,
-        }
-    }));
+    entries.extend(
+        release_blocking_claims(&claims)
+            .into_iter()
+            .map(|claim| ReleaseBlockerEntry {
+                id: format!(
+                    "RB-{}-{}",
+                    category_slug(category),
+                    sanitize_id_component(&claim.feature)
+                ),
+                category,
+                feature: claim.feature.clone(),
+                severity: severity_for_parity_status(claim.status),
+                source: source.to_string(),
+                impact: format!(
+                    "Blocks current-upstream parity because {} is {:?}",
+                    claim.feature, claim.status
+                ),
+                waived: false,
+            }),
+    );
 }
 
 fn severity_for_parity_status(status: ParityFeatureStatus) -> BugSeverity {
@@ -828,10 +828,7 @@ pub fn render_final_bug_zero_audit(audit: &FinalBugZeroAudit) -> String {
     audit.statement.clone()
 }
 
-fn required_waiver_field(
-    value: &str,
-    field: &'static str,
-) -> Result<(), WaiverValidationError> {
+fn required_waiver_field(value: &str, field: &'static str) -> Result<(), WaiverValidationError> {
     if value.trim().is_empty() {
         Err(WaiverValidationError::MissingField(field))
     } else {
@@ -1173,8 +1170,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use crate::{
-        MetricGoldenComparison, MetricGoldenOutcome, docs_parity_claims, metric_catalog_parity_claims,
-        release_blocking_claims,
+        MetricGoldenComparison, MetricGoldenOutcome, docs_parity_claims,
+        metric_catalog_parity_claims, release_blocking_claims,
     };
 
     #[test]
@@ -1399,13 +1396,21 @@ mod tests {
         assert!(descriptors.iter().all(|gate| !gate.gate_id.is_empty()));
         assert!(descriptors.iter().all(|gate| !gate.command.is_empty()));
         assert!(descriptors.iter().all(|gate| !gate.scope.is_empty()));
-        assert!(descriptors.iter().all(|gate| !gate.failure_classes.is_empty()));
+        assert!(
+            descriptors
+                .iter()
+                .all(|gate| !gate.failure_classes.is_empty())
+        );
         assert!(descriptors.iter().any(|gate| {
             gate.gate_id == "quality::panic::unwind-boundaries"
                 && gate.command == "cargo test panic_safety::"
                 && gate.scope == "src/"
-                && gate.failure_classes.contains(&SafetyFailureClass::UnwindBoundary)
-                && gate.failure_classes.contains(&SafetyFailureClass::AsyncTaskPanic)
+                && gate
+                    .failure_classes
+                    .contains(&SafetyFailureClass::UnwindBoundary)
+                && gate
+                    .failure_classes
+                    .contains(&SafetyFailureClass::AsyncTaskPanic)
                 && gate.mode == QualityGateMode::RequiredDefaultCi
         }));
     }
@@ -1667,8 +1672,11 @@ mod tests {
             validate_release_waiver(&expired, "2026-06-02"),
             Err(WaiverValidationError::Expired)
         );
-        let summary =
-            summarize_gap_resolutions(&ledger, &[GapResolutionRecord::waived(expired)], "2026-06-02");
+        let summary = summarize_gap_resolutions(
+            &ledger,
+            &[GapResolutionRecord::waived(expired)],
+            "2026-06-02",
+        );
 
         assert_eq!(summary.waived, 0);
         assert_eq!(summary.still_blocking, 1);
@@ -1804,8 +1812,9 @@ mod tests {
             },
             unresolved_release_blocking_bugs: 0,
             release_ready: false,
-            statement: "Release refused within the verified scope: known unresolved blockers remain."
-                .to_string(),
+            statement:
+                "Release refused within the verified scope: known unresolved blockers remain."
+                    .to_string(),
         };
 
         let rendered = render_final_bug_zero_audit(&audit);

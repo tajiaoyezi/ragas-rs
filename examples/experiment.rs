@@ -25,11 +25,7 @@ fn sample(index: usize, faithfulness: f64, answer_relevancy: f64) -> SampleEvalu
     }
 }
 
-fn experiment_record(
-    run_id: &str,
-    faithfulness: f64,
-    answer_relevancy: f64,
-) -> ExperimentRecord {
+fn experiment_record(run_id: &str, faithfulness: f64, answer_relevancy: f64) -> ExperimentRecord {
     ExperimentRecord::new(
         run_id,
         "quickstart-dataset",

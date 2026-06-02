@@ -347,9 +347,10 @@ pub fn render_synthesizer_prompt_snapshot(
 ) -> Result<RenderedSynthesizerPromptSnapshot, RagasError> {
     let mut rendered_messages = Vec::with_capacity(snapshot.messages.len());
     for message in &snapshot.messages {
-        let mut content = message
-            .template
-            .replace("{{strategy}}", synthesizer_strategy_label(snapshot.strategy));
+        let mut content = message.template.replace(
+            "{{strategy}}",
+            synthesizer_strategy_label(snapshot.strategy),
+        );
         for (name, value) in &snapshot.variables {
             content = content.replace(&format!("{{{{{name}}}}}"), value);
         }
@@ -1452,8 +1453,8 @@ mod tests {
             ],
         };
 
-        let rendered =
-            render_synthesizer_prompt_snapshot(&snapshot).expect("snapshot renders deterministically");
+        let rendered = render_synthesizer_prompt_snapshot(&snapshot)
+            .expect("snapshot renders deterministically");
 
         assert_eq!(rendered.strategy, SynthesizerStrategy::SingleHop);
         assert_eq!(rendered.variables, snapshot.variables);
@@ -1481,7 +1482,11 @@ mod tests {
             synthesize_single_hop_sample(&graph, "chunk-1", &persona).expect("actual sample");
         let comparison = compare_synthesized_sample_fixture(&expected, &actual);
 
-        assert!(comparison.matches, "sample fixture drift: {:?}", comparison.drift);
+        assert!(
+            comparison.matches,
+            "sample fixture drift: {:?}",
+            comparison.drift
+        );
         assert_eq!(comparison.drift, None);
     }
 

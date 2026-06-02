@@ -406,7 +406,7 @@ mod tests {
             result
                 .history
                 .iter()
-            .all(|step| !step.candidate_id.is_empty())
+                .all(|step| !step.candidate_id.is_empty())
         );
     }
 
@@ -461,7 +461,10 @@ mod tests {
         let right_contract = dspy_cache_contract(&right);
 
         assert_eq!(left_contract.cache_key.namespace, "optimizer.dspy");
-        assert_eq!(left_contract.cache_key.digest, right_contract.cache_key.digest);
+        assert_eq!(
+            left_contract.cache_key.digest,
+            right_contract.cache_key.digest
+        );
         assert!(left_contract.deterministic_keys);
         assert_eq!(left_contract.value_format, "json");
         assert!(!left_contract.python_runtime_supported);

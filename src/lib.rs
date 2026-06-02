@@ -108,10 +108,10 @@ pub use providers::{
     record_provider_usage, structured_llm_descriptors, upstream_provider_descriptors,
 };
 pub use release::{
-    BugClass, BugLedgerEntry, BugSeverity, BugStatus, BugZeroAudit, GateEvidenceStatus,
+    BugClass, BugLedgerEntry, BugSeverity, BugStatus, BugZeroAudit, E2eWorkflow,
+    E2eWorkflowDescriptor, FinalAuditEvidence, FinalAuditEvidenceKind, FinalBugZeroAudit,
+    GapResolutionKind, GapResolutionRecord, GapResolutionSummary, GateEvidenceStatus,
     MetricReleaseBlocker, MetricReleaseBlockerSource, MetricReleaseBlockerSummary,
-    E2eWorkflow, E2eWorkflowDescriptor, FinalAuditEvidence, FinalAuditEvidenceKind,
-    FinalBugZeroAudit, GapResolutionKind, GapResolutionRecord, GapResolutionSummary,
     MutationGateDescriptor, PanicSafetyGateDescriptor, PlatformEvidenceDescriptor, PlatformTarget,
     QualityCommandEvidence, QualityEvidenceFinding, QualityEvidenceKind, QualityGateDescriptor,
     QualityGateEvidence, QualityGateKind, QualityGateMode, QualityGateSummary,
@@ -142,10 +142,10 @@ pub use testset::{
     SynthesizerSampleComparison, SynthesizerStrategy, TextChunk, TransformStageDescriptor,
     TransformStageFamily, TransformStageMode, attach_extractions, build_chunk_relationships,
     compare_synthesized_sample_fixture, graph_parity_claims, graph_query_descriptors,
-    normalize_extraction_properties, parse_graph_parity_fixture, render_synthesizer_prompt_snapshot,
-    serialize_graph_parity_fixture, split_text_into_chunks, synthesize_multi_hop_sample,
-    synthesize_single_hop_sample, synthesizer_descriptors, synthesizer_parity_claims,
-    transform_parity_claims, transform_stage_descriptors,
+    normalize_extraction_properties, parse_graph_parity_fixture,
+    render_synthesizer_prompt_snapshot, serialize_graph_parity_fixture, split_text_into_chunks,
+    synthesize_multi_hop_sample, synthesize_single_hop_sample, synthesizer_descriptors,
+    synthesizer_parity_claims, transform_parity_claims, transform_stage_descriptors,
 };
 pub use validation::{
     MetricRequirements, SampleField, ValidationIssue, ValidationReport, validate_before_evaluate,

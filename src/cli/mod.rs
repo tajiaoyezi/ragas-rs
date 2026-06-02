@@ -183,7 +183,11 @@ pub fn cli_error_snapshot(error: &RagasError) -> Result<CliErrorSnapshot, RagasE
     Ok(CliErrorSnapshot {
         status: "error".to_string(),
         error_kind: cli_error_kind(error).to_string(),
-        stderr_keys: vec!["error".to_string(), "kind".to_string(), "status".to_string()],
+        stderr_keys: vec![
+            "error".to_string(),
+            "kind".to_string(),
+            "status".to_string(),
+        ],
         exit_code: 1,
     })
 }
@@ -375,10 +379,10 @@ fn cli_error_kind(error: &RagasError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DatasetBackend, EvaluationDataset, EvaluationSample, SingleTurnSample};
     use crate::release_blocking_claims;
-    use std::collections::BTreeSet;
+    use crate::{DatasetBackend, EvaluationDataset, EvaluationSample, SingleTurnSample};
     use serde_json::Value;
+    use std::collections::BTreeSet;
 
     fn fixture_dataset() -> EvaluationDataset<EvaluationSample> {
         EvaluationDataset::from_samples(vec![EvaluationSample::SingleTurn(
