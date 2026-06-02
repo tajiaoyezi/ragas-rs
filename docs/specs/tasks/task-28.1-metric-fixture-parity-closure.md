@@ -1,6 +1,6 @@
 # Task 28.1 - metric-fixture-parity-closure
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 28
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -60,9 +60,9 @@ RED tests own final signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-28.1.1 | TEST-28.1.1 | Spec Ready |
-| AC2 | SCEN-28.1.2 | TEST-28.1.2 | Spec Ready |
-| AC3 | SCEN-28.1.3 | TEST-28.1.3 | Spec Ready |
+| AC1 | SCEN-28.1.1 | TEST-28.1.1 | Done |
+| AC2 | SCEN-28.1.2 | TEST-28.1.2 | Done |
+| AC3 | SCEN-28.1.3 | TEST-28.1.3 | Done |
 
 ## 8. Risks
 
@@ -82,10 +82,21 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施后回填
-- **改动文件**：待实施后回填
-- **commit 列表**：待实施后回填
-- **RED 结果**：待实施后回填
-- **§9 Verification 结果**：待实施后回填
-- **剩余风险 / 未做项**：待实施后回填
-- **下游 task 影响**：待实施后回填
+- **完成日期**：2026-06-02
+- **改动文件**：`src/metrics/registry.rs`; `src/metrics/mod.rs`; `src/lib.rs`; `src/release/mod.rs`; `tests/parity/fixtures/metric_*.json`; `docs/specs/tasks/task-28.1-metric-fixture-parity-closure.md`
+- **commit 列表**：
+  - `cbaf77a docs(spec): add task-28.1 metric fixture parity closure`
+  - `80909f1 docs(spec): task-28.1 进入实施`
+  - `c9f3080 test(metrics): 加 task-28.1 RED 测试`
+  - `4f141c6 feat(metrics): 实现 task-28.1 metric fixture parity closure`
+- **RED 结果**：`cargo test test_28_1` failed as expected with 3 tests discovered, 0 passed, 3 failed. The failures proved fixture metadata was empty, metric fixture validation covered 0 of 26 descriptors, and the release ledger still contained Metric blockers.
+- **§9 Verification 结果**：
+  - Install: `cargo build` passed.
+  - Typecheck: `cargo check` passed.
+  - Unit Test: `cargo test` passed with 211 passed, 0 failed.
+  - Build: `cargo build` passed.
+  - Metrics Test: `cargo test metrics::` passed with 42 passed, 0 failed.
+  - Parity Test: `cargo test parity::` passed with 12 passed, 0 failed.
+  - Examples Build: `cargo build --examples` passed.
+- **剩余风险 / 未做项**：Metric default CI now proves deterministic golden fixture contracts for all tracked metric families at upstream baseline `298b68274234c060deacab3cf5fb52aa3a20e885`; it still does not claim live LLM, embedding, SQL engine, or multimodal provider execution against external services.
+- **下游 task 影响**：Metric release blockers dropped from 25 to 0; consolidated ledger moved from 45 to 20 non-waived blockers and now contains only Testset, Optimizer, and Quality categories.
