@@ -71,12 +71,13 @@ Out of scope:
 | 17 | latest-baseline-and-quality-gates | Freeze current upstream baseline, replace informal gaps with a machine-readable parity inventory, and define release-blocking quality gates. | Done |
 | 18 | provider-backend-runtime-parity | Complete provider, backend, cache, tokenizer, cost, callback, and integration-facing parity. | Done |
 | 19 | metric-catalog-golden-parity | Drive every upstream metric to fixture-backed parity or block release. | Done |
-| 20 | testset-generation-full-parity | Complete graph, transforms, synthesizers, personas, and pre-chunked generation parity. | Ready |
-| 21 | optimizer-experiment-cli-docs-parity | Complete DSPy/MIPROv2, experiment, SDK, CLI, quickstart, and docs parity. | Ready |
-| 22 | exhaustive-test-engineering | Add coverage, fuzz/property, mutation, E2E, and cross-platform evidence gates. | Ready |
-| 23 | release-candidate-bug-zero-audit | Resolve every open gap/bug and produce final release evidence. | Ready |
-| 24 | release-blocker-closure | Resolve concrete release blockers produced by the final audit ledger, starting with quickstart/example parity gaps that can be closed with deterministic Rust evidence. | Ready |
-| 25 | backend-gdrive-parity-closure | Close the remaining backend release blocker by implementing Google Drive / Sheets backend contracts through a deterministic Rust transport abstraction and fixture-backed parity evidence. | Ready |
+| 20 | testset-generation-full-parity | Complete graph, transforms, synthesizers, personas, and pre-chunked generation parity. | Done |
+| 21 | optimizer-experiment-cli-docs-parity | Complete DSPy/MIPROv2, experiment, SDK, CLI, quickstart, and docs parity. | Done |
+| 22 | exhaustive-test-engineering | Add coverage, fuzz/property, mutation, E2E, and cross-platform evidence gates. | Done |
+| 23 | release-candidate-bug-zero-audit | Resolve every open gap/bug and produce final release evidence. | Done |
+| 24 | release-blocker-closure | Resolve concrete release blockers produced by the final audit ledger, starting with quickstart/example parity gaps that can be closed with deterministic Rust evidence. | Done |
+| 25 | backend-gdrive-parity-closure | Close the remaining backend release blocker by implementing Google Drive / Sheets backend contracts through a deterministic Rust transport abstraction and fixture-backed parity evidence. | Done |
+| 26 | provider-protocol-parity-closure | Close provider release blockers with deterministic provider protocol contracts and fixture-backed parity claims for every tracked upstream family. | Ready |
 
 ## 7. First Delta Task Matrix
 
@@ -109,6 +110,7 @@ Out of scope:
 | 24.2 | 24 | backends | Close the `backend::disk-cache` release blocker with a deterministic persistent Rust disk cache and fixture-backed parity claim. |
 | 24.3 | 24 | cli/sdk | Close the `workflow::sdk_facing` release blocker by recording that current upstream `src/ragas/sdk.py` is an empty module and mapping the Rust SDK surface to fixture-backed complete parity. |
 | 25.1 | 25 | backends | Close the `backend::gdrive` release blocker with a deterministic Google Sheets-compatible backend transport, row roundtrip tests, and fixture-backed parity claim. |
+| 26.1 | 26 | providers | Close the provider release-blocker category with deterministic provider protocol contracts, request-plan tests, and fixture-backed complete parity claims. |
 
 ## 8. Decisions
 
