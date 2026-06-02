@@ -109,7 +109,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 19 | metric-catalog-golden-parity | docs/specs/phases/phase-19-metric-catalog-golden-parity.md | Done | 3 | - |
 | 20 | testset-generation-full-parity | docs/specs/phases/phase-20-testset-generation-full-parity.md | Done | 3 | - |
 | 21 | optimizer-experiment-cli-docs-parity | docs/specs/phases/phase-21-optimizer-experiment-cli-docs-parity.md | Done | 3 | - |
-| 22 | exhaustive-test-engineering | docs/specs/phases/phase-22-exhaustive-test-engineering.md | Ready | 3 | - |
+| 22 | exhaustive-test-engineering | docs/specs/phases/phase-22-exhaustive-test-engineering.md | Done | 3 | - |
 | 23 | release-candidate-bug-zero-audit | docs/specs/phases/phase-23-release-candidate-bug-zero-audit.md | Ready | 3 | - |
 
 ## Task 总索引
@@ -175,7 +175,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 21.3 | docs | docs/specs/tasks/task-21.3-quickstart-docs-parity.md | Done | after task 21.2 | - |
 | 22.1 | quality | docs/specs/tasks/task-22.1-property-fuzz-coverage-gates.md | Done | after task 21.3 | - |
 | 22.2 | quality | docs/specs/tasks/task-22.2-panic-mutation-safety-gates.md | Done | after task 22.1 | - |
-| 22.3 | quality | docs/specs/tasks/task-22.3-cross-platform-e2e-matrix.md | Ready | after task 22.2 | - |
+| 22.3 | quality | docs/specs/tasks/task-22.3-cross-platform-e2e-matrix.md | Done | after task 22.2 | - |
 | 23.1 | release | docs/specs/tasks/task-23.1-release-blocker-ledger.md | Ready | after task 22.3 | - |
 | 23.2 | release | docs/specs/tasks/task-23.2-gap-resolution-and-waiver-policy.md | Ready | after task 23.1 | - |
 | 23.3 | release | docs/specs/tasks/task-23.3-final-bug-zero-release-audit.md | Ready | after task 23.2 | - |
