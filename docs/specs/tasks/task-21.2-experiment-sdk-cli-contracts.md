@@ -46,9 +46,9 @@ RED tests own final signatures.
 
 ## 6. Acceptance Criteria
 
-- **AC1**: Workflow registry lists evaluate, testset, benchmark, experiment, and SDK-facing flows.
-- **AC2**: CLI contract tests preserve stable machine-readable outputs and errors.
-- **AC3**: Missing upstream CLI/SDK workflows create release-blocking claims.
+- [ ] **AC1**: Workflow registry lists evaluate, testset, benchmark, experiment, and SDK-facing flows.
+- [ ] **AC2**: CLI contract tests preserve stable machine-readable outputs and errors.
+- [ ] **AC3**: Missing upstream CLI/SDK workflows create release-blocking claims.
 
 ## 7. Traceability
 
@@ -65,10 +65,10 @@ RED tests own final signatures.
 
 ## 9. Verification Plan
 
-- install
-- typecheck
-- unit-test
-- build
+- Install
+- Typecheck
+- Unit Test
+- Build
 
 ## 10. Completion Notes
 
