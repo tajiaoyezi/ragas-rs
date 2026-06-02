@@ -1,6 +1,6 @@
 # Task 28.1 - metric-fixture-parity-closure
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 28
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
