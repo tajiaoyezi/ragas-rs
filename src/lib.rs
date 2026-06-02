@@ -29,7 +29,11 @@ pub use benchmarks::{
     BenchmarkMeasurement, BenchmarkPrompt, BenchmarkProvider, BenchmarkReport, CostRates,
     CostSummary, run_provider_benchmark,
 };
-pub use cli::{CliCommand, CliOutput, CliRuntime, run_cli_command};
+pub use cli::{
+    CliCommand, CliContractSnapshot, CliErrorSnapshot, CliOutput, CliRuntime, WorkflowDescriptor,
+    WorkflowFamily, WorkflowSurface, cli_contract_snapshot, cli_error_snapshot, run_cli_command,
+    workflow_descriptors, workflow_parity_claims,
+};
 pub use dataset::{
     EvaluationDataset, EvaluationDatasetBuilder, EvaluationSample, SingleTurnSample,
 };

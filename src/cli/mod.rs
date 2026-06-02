@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
     DatasetBackend, EvaluationDataset, EvaluationSample, ExtractionBundle, GraphNode,
-    InMemoryDatasetBackend, KnowledgeGraph, PersonaGenerator, RagasError, attach_extractions,
-    build_chunk_relationships, split_text_into_chunks, synthesize_single_hop_sample,
+    InMemoryDatasetBackend, KnowledgeGraph, ParityClaim, ParityFeatureStatus, PersonaGenerator,
+    RagasError, attach_extractions, build_chunk_relationships, split_text_into_chunks,
+    synthesize_single_hop_sample,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +30,48 @@ pub enum CliCommand {
 pub struct CliOutput {
     pub stdout: String,
     pub stderr: String,
+    pub exit_code: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum WorkflowFamily {
+    Evaluate,
+    Testset,
+    Benchmark,
+    Experiment,
+    SdkFacing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum WorkflowSurface {
+    Cli,
+    Library,
+    Sdk,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowDescriptor {
+    pub family: WorkflowFamily,
+    pub surface: WorkflowSurface,
+    pub parity_status: ParityFeatureStatus,
+    pub command: Option<String>,
+    pub machine_readable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CliContractSnapshot {
+    pub command: String,
+    pub status: String,
+    pub stdout_keys: Vec<String>,
+    pub stderr_empty: bool,
+    pub exit_code: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CliErrorSnapshot {
+    pub status: String,
+    pub error_kind: String,
+    pub stderr_keys: Vec<String>,
     pub exit_code: i32,
 }
 
@@ -68,6 +112,33 @@ pub fn run_cli_command(
         } => run_testset(runtime, source_id, text, output),
         CliCommand::Benchmark { runs } => run_benchmark(runs),
     }
+}
+
+pub fn workflow_descriptors() -> Vec<WorkflowDescriptor> {
+    Vec::new()
+}
+
+pub fn cli_contract_snapshot(_output: &CliOutput) -> Result<CliContractSnapshot, RagasError> {
+    Ok(CliContractSnapshot {
+        command: String::new(),
+        status: String::new(),
+        stdout_keys: Vec::new(),
+        stderr_empty: false,
+        exit_code: -1,
+    })
+}
+
+pub fn cli_error_snapshot(_error: &RagasError) -> Result<CliErrorSnapshot, RagasError> {
+    Ok(CliErrorSnapshot {
+        status: String::new(),
+        error_kind: String::new(),
+        stderr_keys: Vec::new(),
+        exit_code: 0,
+    })
+}
+
+pub fn workflow_parity_claims() -> Vec<ParityClaim> {
+    Vec::new()
 }
 
 fn run_evaluate(
@@ -181,6 +252,8 @@ fn dataset_io_error(message: impl Into<String>) -> RagasError {
 mod tests {
     use super::*;
     use crate::{DatasetBackend, EvaluationDataset, EvaluationSample, SingleTurnSample};
+    use crate::release_blocking_claims;
+    use std::collections::BTreeSet;
     use serde_json::Value;
 
     fn fixture_dataset() -> EvaluationDataset<EvaluationSample> {
@@ -281,5 +354,116 @@ mod tests {
                 > 0.0
         );
         assert_eq!(stdout_json["format"], "json");
+    }
+
+    #[test]
+    fn test_21_2_1_workflow_registry_lists_upstream_flows() {
+        // SCEN-21.2.1 / AC1 / TEST-21.2.1
+        let descriptors = workflow_descriptors();
+        let by_family: BTreeMap<_, _> = descriptors
+            .iter()
+            .map(|descriptor| (descriptor.family, descriptor))
+            .collect();
+
+        for expected in [
+            WorkflowFamily::Evaluate,
+            WorkflowFamily::Testset,
+            WorkflowFamily::Benchmark,
+            WorkflowFamily::Experiment,
+            WorkflowFamily::SdkFacing,
+        ] {
+            assert!(by_family.contains_key(&expected), "missing {expected:?}");
+        }
+
+        let evaluate = by_family
+            .get(&WorkflowFamily::Evaluate)
+            .expect("evaluate workflow");
+        assert_eq!(evaluate.surface, WorkflowSurface::Cli);
+        assert_eq!(evaluate.parity_status, ParityFeatureStatus::Complete);
+        assert_eq!(evaluate.command.as_deref(), Some("evaluate"));
+        assert!(evaluate.machine_readable);
+
+        let sdk = by_family
+            .get(&WorkflowFamily::SdkFacing)
+            .expect("SDK-facing workflow");
+        assert_eq!(sdk.surface, WorkflowSurface::Sdk);
+        assert_eq!(sdk.parity_status, ParityFeatureStatus::KnownGap);
+    }
+
+    #[test]
+    fn test_21_2_2_cli_contract_snapshots_preserve_outputs_and_errors() {
+        // SCEN-21.2.2 / AC2 / TEST-21.2.2
+        let mut runtime = CliRuntime::new();
+        runtime
+            .datasets_mut()
+            .save("datasets/fixture", &fixture_dataset())
+            .expect("save fixture dataset");
+
+        let output = run_cli_command(
+            &mut runtime,
+            CliCommand::Evaluate {
+                input: "datasets/fixture".to_string(),
+                report: "reports/run-21-2".to_string(),
+            },
+        )
+        .expect("evaluate command");
+        let snapshot = cli_contract_snapshot(&output).expect("CLI snapshot");
+
+        assert_eq!(snapshot.command, "evaluate");
+        assert_eq!(snapshot.status, "ok");
+        assert_eq!(
+            snapshot.stdout_keys,
+            vec!["command", "report", "sample_count", "status"]
+        );
+        assert!(snapshot.stderr_empty);
+        assert_eq!(snapshot.exit_code, 0);
+
+        let error = run_cli_command(
+            &mut runtime,
+            CliCommand::Evaluate {
+                input: "datasets/missing".to_string(),
+                report: "reports/missing".to_string(),
+            },
+        )
+        .expect_err("missing dataset should fail");
+        let error_snapshot = cli_error_snapshot(&error).expect("error snapshot");
+
+        assert_eq!(error_snapshot.status, "error");
+        assert_eq!(error_snapshot.error_kind, "dataset_io");
+        assert_eq!(error_snapshot.stderr_keys, vec!["error", "kind", "status"]);
+        assert_eq!(error_snapshot.exit_code, 1);
+    }
+
+    #[test]
+    fn test_21_2_3_missing_cli_or_sdk_workflows_create_release_blocking_claims() {
+        // SCEN-21.2.3 / AC3 / TEST-21.2.3
+        let claims = workflow_parity_claims();
+        let blockers = release_blocking_claims(&claims);
+        let blocking_features: BTreeSet<_> = blockers
+            .iter()
+            .map(|claim| claim.feature.as_str())
+            .collect();
+
+        assert!(
+            blocking_features.contains("workflow::sdk_facing"),
+            "missing SDK-facing workflow release blocker"
+        );
+
+        let complete_features: BTreeSet<_> = claims
+            .iter()
+            .filter(|claim| claim.status == ParityFeatureStatus::Complete)
+            .map(|claim| claim.feature.as_str())
+            .collect();
+        for expected in [
+            "workflow::evaluate",
+            "workflow::testset",
+            "workflow::benchmark",
+            "workflow::experiment",
+        ] {
+            assert!(
+                complete_features.contains(expected),
+                "missing complete workflow claim {expected}"
+            );
+        }
     }
 }
