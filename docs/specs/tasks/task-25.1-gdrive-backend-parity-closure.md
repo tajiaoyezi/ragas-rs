@@ -1,6 +1,6 @@
 # Task 25.1 - gdrive-backend-parity-closure
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 25
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
