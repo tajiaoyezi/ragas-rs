@@ -1,6 +1,6 @@
 # Task 21.2 - experiment-sdk-cli-contracts
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 21
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -46,17 +46,17 @@ RED tests own final signatures.
 
 ## 6. Acceptance Criteria
 
-- [ ] **AC1**: Workflow registry lists evaluate, testset, benchmark, experiment, and SDK-facing flows.
-- [ ] **AC2**: CLI contract tests preserve stable machine-readable outputs and errors.
-- [ ] **AC3**: Missing upstream CLI/SDK workflows create release-blocking claims.
+- [x] **AC1**: Workflow registry lists evaluate, testset, benchmark, experiment, and SDK-facing flows.
+- [x] **AC2**: CLI contract tests preserve stable machine-readable outputs and errors.
+- [x] **AC3**: Missing upstream CLI/SDK workflows create release-blocking claims.
 
 ## 7. Traceability
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-21.2.1 | TEST-21.2.1 | Not Started |
-| AC2 | SCEN-21.2.2 | TEST-21.2.2 | Not Started |
-| AC3 | SCEN-21.2.3 | TEST-21.2.3 | Not Started |
+| AC1 | SCEN-21.2.1 | TEST-21.2.1 | Done |
+| AC2 | SCEN-21.2.2 | TEST-21.2.2 | Done |
+| AC3 | SCEN-21.2.3 | TEST-21.2.3 | Done |
 
 ## 8. Risks
 
@@ -72,9 +72,18 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：<TBD-after-impl>
-- **改动文件**：<TBD-after-impl>
-- **commit 列表**：<TBD-after-impl>
-- **§9 Verification 结果**：<TBD-after-impl>
-- **剩余风险 / 未做项**：<TBD-after-impl>
-- **下游 task 影响**：<TBD-after-impl>
+- **完成日期**：2026-06-02
+- **改动文件**：src/cli/mod.rs; src/lib.rs; docs/specs/tasks/task-21.2-experiment-sdk-cli-contracts.md
+- **commit 列表**：
+  - 34cf0b4 docs(spec): task-21.2 Ready gate format
+  - d008c86 docs(spec): task-21.2 进入实施
+  - 6bb0398 test(cli): 加 task-21.2 RED 测试
+  - 5116740 feat(cli): 实现 task-21.2 workflow contracts
+- **RED 结果**：`cargo test test_21_2` failed as expected with 3 failing 21.2 tests because workflow descriptors, CLI contract snapshots, and workflow release blockers were empty.
+- **§9 Verification 结果**：
+  - Install: `cargo build` passed
+  - Typecheck: `cargo check` passed
+  - Unit Test: `cargo test` passed, 169 passed / 0 failed
+  - Build: `cargo build` passed
+- **剩余风险 / 未做项**：无 ADR 触发；SDK-facing hosted/remote workflow remains a KnownGap release blocker outside the local embeddable Rust workflow surface.
+- **下游 task 影响**：task 21.3 can use workflow descriptors and CLI contract snapshots when indexing quickstart and docs parity.
