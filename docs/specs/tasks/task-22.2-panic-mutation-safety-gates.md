@@ -45,9 +45,9 @@ RED tests own final signatures.
 
 ## 6. Acceptance Criteria
 
-- **AC1**: Panic-safety gates declare scope, command, and failure classes.
-- **AC2**: Mutation gates declare tool, threshold, and optional/required status.
-- **AC3**: Missing required panic or mutation evidence creates release blockers.
+- [ ] **AC1**: Panic-safety gates declare scope, command, and failure classes.
+- [ ] **AC2**: Mutation gates declare tool, threshold, and optional/required status.
+- [ ] **AC3**: Missing required panic or mutation evidence creates release blockers.
 
 ## 7. Traceability
 
@@ -64,10 +64,10 @@ RED tests own final signatures.
 
 ## 9. Verification Plan
 
-- install
-- typecheck
-- unit-test
-- build
+- Install
+- Typecheck
+- Unit Test
+- Build
 
 ## 10. Completion Notes
 
