@@ -80,6 +80,7 @@ Out of scope:
 | 26 | provider-protocol-parity-closure | Close provider release blockers with deterministic provider protocol contracts and fixture-backed parity claims for every tracked upstream family. | Done |
 | 27 | integration-contract-parity-closure | Close integration release blockers with deterministic integration contracts and fixture-backed parity claims for every tracked upstream family. | Done |
 | 28 | metric-fixture-parity-closure | Close metric release blockers by attaching deterministic golden fixture evidence and complete parity claims to every tracked upstream metric family. | Done |
+| 29 | testset-contract-parity-closure | Close testset release blockers with deterministic graph, transform, and pre-chunked synthesizer contracts plus fixture-backed complete claims. | Ready |
 
 ## 7. First Delta Task Matrix
 
@@ -115,6 +116,7 @@ Out of scope:
 | 26.1 | 26 | providers | Close the provider release-blocker category with deterministic provider protocol contracts, request-plan tests, and fixture-backed complete parity claims. |
 | 27.1 | 27 | integrations | Close the integration release-blocker category with deterministic integration contracts, export-plan tests, and fixture-backed complete parity claims. |
 | 28.1 | 28 | metrics | Close the metric release-blocker category with deterministic golden fixtures and fixture-backed complete parity claims for all tracked upstream metric families. |
+| 29.1 | 29 | testset | Close the testset release-blocker category with graph cluster/query, transform extractor/filter, and pre-chunked synthesizer fixture-backed contracts. |
 
 ## 8. Decisions
 
