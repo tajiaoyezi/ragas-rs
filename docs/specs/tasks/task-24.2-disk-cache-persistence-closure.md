@@ -1,6 +1,6 @@
 # Task 24.2 - disk-cache-persistence-closure
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 24
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -58,9 +58,9 @@ RED tests own final signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-24.2.1 | TEST-24.2.1 | Spec Ready |
-| AC2 | SCEN-24.2.2 | TEST-24.2.2 | Spec Ready |
-| AC3 | SCEN-24.2.3 | TEST-24.2.3 | Spec Ready |
+| AC1 | SCEN-24.2.1 | TEST-24.2.1 | Done |
+| AC2 | SCEN-24.2.2 | TEST-24.2.2 | Done |
+| AC3 | SCEN-24.2.3 | TEST-24.2.3 | Done |
 
 ## 8. Risks
 
@@ -77,9 +77,20 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施后回填
-- **改动文件**：待实施后回填
-- **commit 列表**：待实施后回填
-- **§9 Verification 结果**：待实施后回填
-- **剩余风险 / 未做项**：待实施后回填
-- **下游 task 影响**：待实施后回填
+- **完成日期**：2026-06-02
+- **改动文件**：
+  - `src/backends/mod.rs`（新增持久化 `DiskCacheCompatibility::open/set/has_key`、安全 key-to-path 映射、fixture-backed disk-cache parity claim 与 TEST-24.2.1~24.2.3）
+  - `tests/parity/fixtures/backend_disk_cache.json`（新增上游 disk cache parity fixture evidence）
+  - `examples/experiment.rs`, `src/cli/mod.rs`, `src/docs_examples/mod.rs`, `src/lib.rs`, `src/optimizers/mod.rs`, `src/release/mod.rs`, `src/testset/mod.rs`（cargo fmt 纯格式化）
+- **commit 列表**：
+  - `c0dda8c` docs(spec): task-24.2 进入实施
+  - `bd8dfa7` test(backends): 加 task-24.2 RED 测试
+  - `bd6b180` feat(backends): 实现 task-24.2 disk cache persistence
+  - `0dffb64` refactor(style): cargo fmt existing Rust modules
+- **§9 Verification 结果**：
+  - Install: passed (`cargo build`)
+  - Typecheck: passed (`cargo check`)
+  - Unit Test: passed, 196 passed / 0 failed (`cargo test`)
+  - Build: passed (`cargo build`)
+- **剩余风险 / 未做项**：This closes only the `backend::disk-cache` backend blocker; `backend::gdrive` remains release-blocking until implemented with deterministic fixtures or validly waived.
+- **下游 task 影响**：Phase 24 can continue with remaining release-blocker closure tasks; final audit must still refuse release until all non-waived blockers and required quality evidence are resolved.
