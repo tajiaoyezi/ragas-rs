@@ -1,6 +1,6 @@
 # Task 31.1 - quality-release-evidence-closure
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 31
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
