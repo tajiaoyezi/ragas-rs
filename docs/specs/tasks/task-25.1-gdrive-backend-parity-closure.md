@@ -1,6 +1,6 @@
 # Task 25.1 - gdrive-backend-parity-closure
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 25
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -59,9 +59,9 @@ RED tests own final signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-25.1.1 | TEST-25.1.1 | Spec Ready |
-| AC2 | SCEN-25.1.2 | TEST-25.1.2 | Spec Ready |
-| AC3 | SCEN-25.1.3 | TEST-25.1.3 | Spec Ready |
+| AC1 | SCEN-25.1.1 | TEST-25.1.1 | Done |
+| AC2 | SCEN-25.1.2 | TEST-25.1.2 | Done |
+| AC3 | SCEN-25.1.3 | TEST-25.1.3 | Done |
 
 ## 8. Risks
 
@@ -78,9 +78,18 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施后回填
-- **改动文件**：待实施后回填
-- **commit 列表**：待实施后回填
-- **§9 Verification 结果**：待实施后回填
-- **剩余风险 / 未做项**：待实施后回填
-- **下游 task 影响**：待实施后回填
+- **完成日期**：2026-06-02
+- **改动文件**：`src/backends/mod.rs`; `src/lib.rs`; `src/release/mod.rs`; `tests/parity/fixtures/backend_gdrive.json`; `docs/specs/tasks/task-25.1-gdrive-backend-parity-closure.md`
+- **commit 列表**：
+  - `c49159e docs(spec): add task-25.1 gdrive backend closure`
+  - `bec1267 docs(spec): task-25.1 进入实施`
+  - `a5a4972 test(backends): 加 task-25.1 RED 测试`
+  - `78b9057 feat(backends): 实现 task-25.1 gdrive backend closure`
+- **RED 结果**：`cargo test` failed as expected with 202 tests discovered, 199 passed, 3 failed. The failures were `TEST-25.1.1`, `TEST-25.1.2`, and `TEST-25.1.3`, covering missing gdrive config metadata, missing deterministic sheet transport roundtrip behavior, and the stale `backend::gdrive` `KnownGap` parity descriptor.
+- **§9 Verification 结果**：
+  - Install: `cargo build` passed.
+  - Typecheck: `cargo check` passed.
+  - Unit Test: `cargo test` passed with 202 passed, 0 failed.
+  - Build: `cargo build` passed.
+- **剩余风险 / 未做项**：Default CI proves deterministic Google Sheets row semantics through an in-memory transport; live Google API credentials, OAuth token refresh, quota handling, and network error behavior still require an opt-in external-service transport before broader live-service release claims.
+- **下游 task 影响**：`backend::gdrive` is no longer a backend release blocker; remaining release-blocker work should continue in provider, integration, metric, testset, optimizer, and quality categories.
