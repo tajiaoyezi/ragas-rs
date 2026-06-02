@@ -111,7 +111,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 21 | optimizer-experiment-cli-docs-parity | docs/specs/phases/phase-21-optimizer-experiment-cli-docs-parity.md | Done | 3 | - |
 | 22 | exhaustive-test-engineering | docs/specs/phases/phase-22-exhaustive-test-engineering.md | Done | 3 | - |
 | 23 | release-candidate-bug-zero-audit | docs/specs/phases/phase-23-release-candidate-bug-zero-audit.md | Done | 3 | - |
-| 24 | release-blocker-closure | docs/specs/phases/phase-24-release-blocker-closure.md | Ready | 3 | - |
+| 24 | release-blocker-closure | docs/specs/phases/phase-24-release-blocker-closure.md | Done | 3 | - |
 
 ## Task 总索引
 
@@ -182,7 +182,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 23.3 | release | docs/specs/tasks/task-23.3-final-bug-zero-release-audit.md | Done | after task 23.2 | - |
 | 24.1 | docs/examples | docs/specs/tasks/task-24.1-experiment-quickstart-closure.md | Done | after task 23.3 | - |
 | 24.2 | backends | docs/specs/tasks/task-24.2-disk-cache-persistence-closure.md | Done | after task 24.1 | - |
-| 24.3 | cli/sdk | docs/specs/tasks/task-24.3-sdk-empty-module-closure.md | Ready | after task 24.2 | - |
+| 24.3 | cli/sdk | docs/specs/tasks/task-24.3-sdk-empty-module-closure.md | Done | after task 24.2 | - |
 
 ## ADR 索引
 

@@ -1,6 +1,6 @@
 # Phase 24 - release-blocker-closure
 
-**Status**: Ready
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 **Depends On**: 23
 
@@ -28,7 +28,7 @@ Phase 23 release blocker ledger, gap resolution policy, final audit, and the mod
 |---|---|---|
 | 24.1 | docs/specs/tasks/task-24.1-experiment-quickstart-closure.md | Done |
 | 24.2 | docs/specs/tasks/task-24.2-disk-cache-persistence-closure.md | Done |
-| 24.3 | docs/specs/tasks/task-24.3-sdk-empty-module-closure.md | Ready |
+| 24.3 | docs/specs/tasks/task-24.3-sdk-empty-module-closure.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 
