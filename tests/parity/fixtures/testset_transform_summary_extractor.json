@@ -1,0 +1,1 @@
+{"feature":"testset::transform::summary_extractor","upstream_commit":"298b68274234c060deacab3cf5fb52aa3a20e885","python_baseline":{"operation":"summary_extractor","summary":"RAG evaluation in Rust"},"rust_output":{"operation":"summary_extractor","summary":"RAG evaluation in Rust"},"tolerance":null,"known_gap":null}

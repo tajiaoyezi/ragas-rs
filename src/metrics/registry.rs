@@ -879,8 +879,12 @@ mod tests {
         }
 
         assert!(metadata.iter().all(|fixture| {
-            fixture.upstream_module_path.starts_with("src/ragas/metrics/")
-                && fixture.fixture_path.starts_with("tests/parity/fixtures/metric_")
+            fixture
+                .upstream_module_path
+                .starts_with("src/ragas/metrics/")
+                && fixture
+                    .fixture_path
+                    .starts_with("tests/parity/fixtures/metric_")
         }));
     }
 
@@ -933,16 +937,24 @@ mod tests {
             !categories.contains(&ReleaseBlockerCategory::Metric),
             "metric release blockers must be fully closed"
         );
-        assert!(!summary.by_category.contains_key(&ReleaseBlockerCategory::Metric));
+        assert!(
+            !summary
+                .by_category
+                .contains_key(&ReleaseBlockerCategory::Metric)
+        );
+
+        assert!(
+            !categories.contains(&ReleaseBlockerCategory::Testset),
+            "closed testset claims should not keep Testset in blocker ledger"
+        );
 
         for expected in [
-            ReleaseBlockerCategory::Testset,
             ReleaseBlockerCategory::Optimizer,
             ReleaseBlockerCategory::Quality,
         ] {
             assert!(
                 categories.contains(&expected),
-                "non-metric category {expected:?} should remain until its own closure task"
+                "category {expected:?} should remain until its own closure task"
             );
         }
     }

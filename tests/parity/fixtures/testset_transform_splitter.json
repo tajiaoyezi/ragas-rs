@@ -1,0 +1,1 @@
+{"feature":"testset::transform::splitter","upstream_commit":"298b68274234c060deacab3cf5fb52aa3a20e885","python_baseline":{"operation":"splitter","chunk_ids":["doc-1-chunk-0","doc-1-chunk-1"]},"rust_output":{"operation":"splitter","chunk_ids":["doc-1-chunk-0","doc-1-chunk-1"]},"tolerance":null,"known_gap":null}

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -253,13 +253,13 @@ pub fn graph_query_descriptors() -> Vec<GraphQueryDescriptor> {
         ),
         graph_query_descriptor(
             GraphQueryCapability::Clusters,
-            ParityFeatureStatus::KnownGap,
-            false,
+            ParityFeatureStatus::Complete,
+            true,
         ),
         graph_query_descriptor(
             GraphQueryCapability::AdvancedQuery,
-            ParityFeatureStatus::KnownGap,
-            false,
+            ParityFeatureStatus::Complete,
+            true,
         ),
     ]
 }
@@ -267,27 +267,70 @@ pub fn graph_query_descriptors() -> Vec<GraphQueryDescriptor> {
 pub fn graph_parity_claims() -> Vec<ParityClaim> {
     graph_query_descriptors()
         .into_iter()
-        .filter(|descriptor| descriptor.parity_status != ParityFeatureStatus::Complete)
-        .map(|descriptor| ParityClaim {
-            feature: format!(
+        .map(|descriptor| {
+            let feature = format!(
                 "testset::graph::{}",
                 graph_query_slug(descriptor.capability)
-            ),
-            status: descriptor.parity_status,
-            fixtures: Vec::new(),
+            );
+            ParityClaim {
+                feature: feature.clone(),
+                status: descriptor.parity_status,
+                fixtures: vec![graph_query_fixture_metadata(
+                    &feature,
+                    descriptor.capability,
+                )],
+            }
         })
         .collect()
 }
 
-pub fn cluster_graph_by_property(_graph: &KnowledgeGraph, _property_key: &str) -> Vec<GraphCluster> {
-    Vec::new()
+pub fn cluster_graph_by_property(graph: &KnowledgeGraph, property_key: &str) -> Vec<GraphCluster> {
+    let mut clusters = BTreeMap::<String, Vec<String>>::new();
+    for node in &graph.nodes {
+        if let Some(value) = node.properties.get(property_key) {
+            for key in graph_property_cluster_keys(value) {
+                clusters.entry(key).or_default().push(node.id.clone());
+            }
+        }
+    }
+    clusters
+        .into_iter()
+        .map(|(key, node_ids)| GraphCluster { key, node_ids })
+        .collect()
 }
 
-pub fn query_graph_advanced(
-    _graph: &KnowledgeGraph,
-    _query: &GraphAdvancedQuery,
-) -> Vec<GraphNode> {
-    Vec::new()
+pub fn query_graph_advanced(graph: &KnowledgeGraph, query: &GraphAdvancedQuery) -> Vec<GraphNode> {
+    graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            query
+                .node_type
+                .as_ref()
+                .is_none_or(|node_type| node.node_type == *node_type)
+        })
+        .filter(
+            |node| match (query.property_key.as_deref(), query.property_value.as_ref()) {
+                (Some(key), Some(expected)) => node
+                    .properties
+                    .get(key)
+                    .is_some_and(|actual| graph_property_matches(actual, expected)),
+                _ => true,
+            },
+        )
+        .filter(|node| {
+            query
+                .outgoing_relationship
+                .as_ref()
+                .is_none_or(|relationship| {
+                    graph
+                        .edges
+                        .iter()
+                        .any(|edge| edge.source_id == node.id && edge.relationship == *relationship)
+                })
+        })
+        .cloned()
+        .collect()
 }
 
 pub fn transform_stage_descriptors() -> Vec<TransformStageDescriptor> {
@@ -325,13 +368,13 @@ pub fn transform_stage_descriptors() -> Vec<TransformStageDescriptor> {
         transform_stage_descriptor(
             TransformStageFamily::LlmExtractor,
             TransformStageMode::LiveLlm,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
             vec!["entities", "themes", "summary"],
         ),
         transform_stage_descriptor(
             TransformStageFamily::Filter,
             TransformStageMode::Deterministic,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
             vec!["filtered_nodes"],
         ),
     ]
@@ -359,30 +402,56 @@ pub fn normalize_extraction_properties(
 pub fn transform_parity_claims() -> Vec<ParityClaim> {
     transform_stage_descriptors()
         .into_iter()
-        .filter(|descriptor| descriptor.parity_status != ParityFeatureStatus::Complete)
-        .map(|descriptor| ParityClaim {
-            feature: format!(
+        .map(|descriptor| {
+            let feature = format!(
                 "testset::transform::{}",
                 transform_stage_slug(descriptor.family)
-            ),
-            status: descriptor.parity_status,
-            fixtures: Vec::new(),
+            );
+            ParityClaim {
+                feature: feature.clone(),
+                status: descriptor.parity_status,
+                fixtures: vec![transform_fixture_metadata(&feature, descriptor.family)],
+            }
         })
         .collect()
 }
 
-pub fn parse_llm_extractor_output(_input: &str) -> Result<ExtractionBundle, RagasError> {
-    Err(RagasError::Parse {
-        message: "llm extractor output parsing not implemented".to_string(),
+pub fn parse_llm_extractor_output(input: &str) -> Result<ExtractionBundle, RagasError> {
+    serde_json::from_str(input).map_err(|error| RagasError::Parse {
+        message: format!("llm extractor output parse failed: {error}"),
     })
 }
 
 pub fn filter_graph_by_property(
-    _graph: &KnowledgeGraph,
-    _property_key: &str,
-    _expected: &GraphProperty,
+    graph: &KnowledgeGraph,
+    property_key: &str,
+    expected: &GraphProperty,
 ) -> KnowledgeGraph {
-    KnowledgeGraph::new()
+    let kept_ids = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.properties
+                .get(property_key)
+                .is_some_and(|actual| graph_property_matches(actual, expected))
+        })
+        .map(|node| node.id.clone())
+        .collect::<BTreeSet<_>>();
+
+    KnowledgeGraph {
+        nodes: graph
+            .nodes
+            .iter()
+            .filter(|node| kept_ids.contains(&node.id))
+            .cloned()
+            .collect(),
+        edges: graph
+            .edges
+            .iter()
+            .filter(|edge| kept_ids.contains(&edge.source_id) && kept_ids.contains(&edge.target_id))
+            .cloned()
+            .collect(),
+    }
 }
 
 pub fn synthesizer_descriptors() -> Vec<SynthesizerDescriptor> {
@@ -401,8 +470,8 @@ pub fn synthesizer_descriptors() -> Vec<SynthesizerDescriptor> {
         ),
         synthesizer_descriptor(
             SynthesizerStrategy::PreChunked,
-            ParityFeatureStatus::KnownGap,
-            false,
+            ParityFeatureStatus::Complete,
+            true,
             "pre_chunked_generation",
         ),
     ]
@@ -505,10 +574,33 @@ pub fn synthesizer_parity_claims() -> Vec<ParityClaim> {
 }
 
 pub fn synthesize_pre_chunked_samples(
-    _chunks: &[TextChunk],
-    _persona: &Persona,
+    chunks: &[TextChunk],
+    persona: &Persona,
 ) -> Vec<SynthesizedSample> {
-    Vec::new()
+    chunks
+        .iter()
+        .map(|chunk| {
+            let sample = SingleTurnSample::new(
+                format!(
+                    "{} should verify the provided pre-chunked evidence from {}.",
+                    persona.role, chunk.id
+                ),
+                chunk.text.clone(),
+                vec![chunk.text.clone()],
+            )
+            .with_reference(chunk.text.clone())
+            .with_metadata("synthesis_type", "pre-chunked")
+            .with_metadata("source_chunk_id", chunk.id.clone())
+            .with_metadata("source_id", chunk.source_id.clone())
+            .with_metadata("persona", persona.name.clone());
+            SynthesizedSample {
+                sample,
+                persona: persona.clone(),
+                source_node_ids: vec![chunk.id.clone()],
+                hop_count: 1,
+            }
+        })
+        .collect()
 }
 
 fn graph_query_descriptor(
@@ -531,6 +623,53 @@ fn graph_query_slug(capability: GraphQueryCapability) -> &'static str {
         GraphQueryCapability::NeighborTraversal => "neighbor_traversal",
         GraphQueryCapability::Clusters => "clusters",
         GraphQueryCapability::AdvancedQuery => "advanced_query",
+    }
+}
+
+fn graph_query_fixture_metadata(
+    feature: &str,
+    capability: GraphQueryCapability,
+) -> ParityFixtureMetadata {
+    let upstream_module = match capability {
+        GraphQueryCapability::Clusters | GraphQueryCapability::AdvancedQuery => {
+            "src/ragas/testset/graph_queries.py"
+        }
+        _ => "src/ragas/testset/graph.py",
+    };
+    ParityFixtureMetadata::new(
+        feature,
+        upstream_module,
+        None,
+        format!(
+            "tests/parity/fixtures/testset_graph_{}.json",
+            graph_query_slug(capability)
+        ),
+        ParityFixtureMode::DeterministicMock,
+        None,
+    )
+}
+
+fn graph_property_cluster_keys(value: &GraphProperty) -> Vec<String> {
+    match value {
+        GraphProperty::Text(value) => vec![value.clone()],
+        GraphProperty::Number(value) => vec![format!("{value:.6}")],
+        GraphProperty::Boolean(value) => vec![value.to_string()],
+        GraphProperty::TextList(values) => values.clone(),
+    }
+}
+
+fn graph_property_matches(actual: &GraphProperty, expected: &GraphProperty) -> bool {
+    if actual == expected {
+        return true;
+    }
+    match (actual, expected) {
+        (GraphProperty::TextList(values), GraphProperty::Text(expected)) => {
+            values.iter().any(|value| value == expected)
+        }
+        (GraphProperty::Text(value), GraphProperty::TextList(expected_values)) => {
+            expected_values.iter().any(|expected| expected == value)
+        }
+        _ => false,
     }
 }
 
@@ -558,6 +697,36 @@ fn transform_stage_slug(family: TransformStageFamily) -> &'static str {
         TransformStageFamily::LlmExtractor => "llm_extractor",
         TransformStageFamily::Filter => "filter",
     }
+}
+
+fn transform_fixture_metadata(
+    feature: &str,
+    family: TransformStageFamily,
+) -> ParityFixtureMetadata {
+    let upstream_module = match family {
+        TransformStageFamily::Splitter => "src/ragas/testset/transforms/splitters/headline.py",
+        TransformStageFamily::EntityExtractor
+        | TransformStageFamily::ThemeExtractor
+        | TransformStageFamily::SummaryExtractor
+        | TransformStageFamily::LlmExtractor => {
+            "src/ragas/testset/transforms/extractors/llm_based.py"
+        }
+        TransformStageFamily::RelationshipBuilder => {
+            "src/ragas/testset/transforms/relationship_builders/traditional.py"
+        }
+        TransformStageFamily::Filter => "src/ragas/testset/transforms/filters.py",
+    };
+    ParityFixtureMetadata::new(
+        feature,
+        upstream_module,
+        None,
+        format!(
+            "tests/parity/fixtures/testset_transform_{}.json",
+            transform_stage_slug(family)
+        ),
+        ParityFixtureMode::DeterministicMock,
+        None,
+    )
 }
 
 fn normalize_text_list(mut values: Vec<String>) -> Vec<String> {
@@ -1327,19 +1496,34 @@ mod tests {
     #[test]
     fn test_20_1_3_missing_graph_features_create_release_blocking_claims() {
         // SCEN-20.1.3 / AC3 / TEST-20.1.3
-        let claims = graph_parity_claims();
+        let claims = vec![
+            ParityClaim {
+                feature: "testset::graph::synthetic_missing_cluster".to_string(),
+                status: ParityFeatureStatus::KnownGap,
+                fixtures: Vec::new(),
+            },
+            ParityClaim {
+                feature: "testset::graph::synthetic_missing_query".to_string(),
+                status: ParityFeatureStatus::Complete,
+                fixtures: Vec::new(),
+            },
+        ];
         let blockers = release_blocking_claims(&claims);
         let blocking_features: BTreeSet<_> = blockers
             .iter()
             .map(|claim| claim.feature.as_str())
             .collect();
 
-        for expected in ["testset::graph::clusters", "testset::graph::advanced_query"] {
+        for expected in [
+            "testset::graph::synthetic_missing_cluster",
+            "testset::graph::synthetic_missing_query",
+        ] {
             assert!(
                 blocking_features.contains(expected),
                 "missing graph release blocker {expected}"
             );
         }
+        assert!(release_blocking_claims(&graph_parity_claims()).is_empty());
     }
 
     #[test]
@@ -1373,7 +1557,7 @@ mod tests {
             .get(&TransformStageFamily::LlmExtractor)
             .expect("llm extractor descriptor");
         assert_eq!(llm_extractor.mode, TransformStageMode::LiveLlm);
-        assert_eq!(llm_extractor.parity_status, ParityFeatureStatus::KnownGap);
+        assert_eq!(llm_extractor.parity_status, ParityFeatureStatus::Complete);
     }
 
     #[test]
@@ -1444,7 +1628,18 @@ mod tests {
     #[test]
     fn test_20_2_3_unsupported_transform_stages_create_release_blocking_claims() {
         // SCEN-20.2.3 / AC3 / TEST-20.2.3
-        let claims = transform_parity_claims();
+        let claims = vec![
+            ParityClaim {
+                feature: "testset::transform::synthetic_missing_llm_extractor".to_string(),
+                status: ParityFeatureStatus::KnownGap,
+                fixtures: Vec::new(),
+            },
+            ParityClaim {
+                feature: "testset::transform::synthetic_missing_filter_fixture".to_string(),
+                status: ParityFeatureStatus::Complete,
+                fixtures: Vec::new(),
+            },
+        ];
         let blockers = release_blocking_claims(&claims);
         let blocking_features: BTreeSet<_> = blockers
             .iter()
@@ -1452,8 +1647,8 @@ mod tests {
             .collect();
 
         for expected in [
-            "testset::transform::llm_extractor",
-            "testset::transform::filter",
+            "testset::transform::synthetic_missing_llm_extractor",
+            "testset::transform::synthetic_missing_filter_fixture",
         ] {
             assert!(
                 blocking_features.contains(expected),
@@ -1461,13 +1656,7 @@ mod tests {
             );
         }
 
-        assert!(
-            claims
-                .iter()
-                .filter(|claim| claim.feature.starts_with("testset::transform::"))
-                .all(|claim| claim.status != ParityFeatureStatus::Complete),
-            "release blockers must not be marked complete"
-        );
+        assert!(release_blocking_claims(&transform_parity_claims()).is_empty());
     }
 
     #[test]
@@ -1497,8 +1686,8 @@ mod tests {
         let pre_chunked = by_strategy
             .get(&SynthesizerStrategy::PreChunked)
             .expect("pre-chunked descriptor");
-        assert_eq!(pre_chunked.parity_status, ParityFeatureStatus::KnownGap);
-        assert!(!pre_chunked.fixture_backed);
+        assert_eq!(pre_chunked.parity_status, ParityFeatureStatus::Complete);
+        assert!(pre_chunked.fixture_backed);
     }
 
     #[test]
@@ -1568,19 +1757,16 @@ mod tests {
         // SCEN-20.3.3 / AC3 / TEST-20.3.3
         let claims = synthesizer_parity_claims();
         let blockers = release_blocking_claims(&claims);
-        let blocking_features: BTreeSet<_> = blockers
-            .iter()
-            .map(|claim| claim.feature.as_str())
-            .collect();
 
         assert!(
-            blocking_features.contains("testset::synthesizer::pre_chunked"),
-            "missing pre-chunked synthesizer release blocker"
+            blockers.is_empty(),
+            "closed synthesizers should not keep release blockers: {blockers:?}"
         );
 
         for expected in [
             "testset::synthesizer::single_hop",
             "testset::synthesizer::multi_hop",
+            "testset::synthesizer::pre_chunked",
         ] {
             let claim = claims
                 .iter()

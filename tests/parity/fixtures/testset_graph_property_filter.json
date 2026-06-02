@@ -1,0 +1,1 @@
+{"feature":"testset::graph::property_filter","upstream_commit":"298b68274234c060deacab3cf5fb52aa3a20e885","python_baseline":{"operation":"property_filter","node_ids":["doc-1"]},"rust_output":{"operation":"property_filter","node_ids":["doc-1"]},"tolerance":null,"known_gap":null}

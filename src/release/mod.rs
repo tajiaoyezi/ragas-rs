@@ -1543,7 +1543,6 @@ mod tests {
         let categories: BTreeSet<_> = ledger.entries.iter().map(|entry| entry.category).collect();
 
         for category in [
-            ReleaseBlockerCategory::Testset,
             ReleaseBlockerCategory::Optimizer,
             ReleaseBlockerCategory::Quality,
         ] {
@@ -1552,6 +1551,10 @@ mod tests {
         assert!(
             !categories.contains(&ReleaseBlockerCategory::Metric),
             "closed metric claims should not keep Metric in blocker ledger"
+        );
+        assert!(
+            !categories.contains(&ReleaseBlockerCategory::Testset),
+            "closed testset claims should not keep Testset in blocker ledger"
         );
 
         let docs_claims = docs_parity_claims();

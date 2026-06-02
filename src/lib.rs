@@ -84,8 +84,8 @@ pub use metrics::{
     normalize_score, quoted_citation_coverage, quoted_span_overlap, response_groundedness,
     rouge_l_recall, score_aspect_critic, semantic_similarity_batch,
     semantic_similarity_from_vectors, sql_semantic_equivalence, string_distance_similarity,
-    summarization_score_from_judge_output,
-    threshold_semantic_similarity, tool_call_accuracy, tool_call_f1, topic_adherence,
+    summarization_score_from_judge_output, threshold_semantic_similarity, tool_call_accuracy,
+    tool_call_f1, topic_adherence,
 };
 pub use optimizers::{
     CandidateGenerator, DspyCacheContract, GeneticOptimizer, GeneticOptimizerConfig,
@@ -141,17 +141,19 @@ pub use runtime::{
 };
 pub use schema::{Message, MessageRole, MultiTurnSample, Rubric, ToolCall};
 pub use testset::{
-    ExtractionBundle, GraphEdge, GraphNode, GraphParityFixture, GraphProperty,
-    GraphQueryCapability, GraphQueryDescriptor, KnowledgeGraph, Persona, PersonaGenerator,
-    RenderedSynthesizerPromptMessage, RenderedSynthesizerPromptSnapshot, SynthesizedSample,
-    SynthesizerDescriptor, SynthesizerPromptMessage, SynthesizerPromptSnapshot,
+    ExtractionBundle, GraphAdvancedQuery, GraphCluster, GraphEdge, GraphNode, GraphParityFixture,
+    GraphProperty, GraphQueryCapability, GraphQueryDescriptor, KnowledgeGraph, Persona,
+    PersonaGenerator, RenderedSynthesizerPromptMessage, RenderedSynthesizerPromptSnapshot,
+    SynthesizedSample, SynthesizerDescriptor, SynthesizerPromptMessage, SynthesizerPromptSnapshot,
     SynthesizerSampleComparison, SynthesizerStrategy, TextChunk, TransformStageDescriptor,
     TransformStageFamily, TransformStageMode, attach_extractions, build_chunk_relationships,
-    compare_synthesized_sample_fixture, graph_parity_claims, graph_query_descriptors,
-    normalize_extraction_properties, parse_graph_parity_fixture,
+    cluster_graph_by_property, compare_synthesized_sample_fixture, filter_graph_by_property,
+    graph_parity_claims, graph_query_descriptors, normalize_extraction_properties,
+    parse_graph_parity_fixture, parse_llm_extractor_output, query_graph_advanced,
     render_synthesizer_prompt_snapshot, serialize_graph_parity_fixture, split_text_into_chunks,
-    synthesize_multi_hop_sample, synthesize_single_hop_sample, synthesizer_descriptors,
-    synthesizer_parity_claims, transform_parity_claims, transform_stage_descriptors,
+    synthesize_multi_hop_sample, synthesize_pre_chunked_samples, synthesize_single_hop_sample,
+    synthesizer_descriptors, synthesizer_parity_claims, transform_parity_claims,
+    transform_stage_descriptors,
 };
 pub use validation::{
     MetricRequirements, SampleField, ValidationIssue, ValidationReport, validate_before_evaluate,

@@ -1,0 +1,1 @@
+{"feature":"testset::graph::node_type_filter","upstream_commit":"298b68274234c060deacab3cf5fb52aa3a20e885","python_baseline":{"operation":"node_type_filter","node_ids":["chunk-1","chunk-2"]},"rust_output":{"operation":"node_type_filter","node_ids":["chunk-1","chunk-2"]},"tolerance":null,"known_gap":null}
