@@ -1,6 +1,6 @@
 # Task 27.1 - integration-contract-parity-closure
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 27
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -70,9 +70,9 @@ RED tests own final signatures.
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-27.1.1 | TEST-27.1.1 | Spec Ready |
-| AC2 | SCEN-27.1.2 | TEST-27.1.2 | Spec Ready |
-| AC3 | SCEN-27.1.3 | TEST-27.1.3 | Spec Ready |
+| AC1 | SCEN-27.1.1 | TEST-27.1.1 | Done |
+| AC2 | SCEN-27.1.2 | TEST-27.1.2 | Done |
+| AC3 | SCEN-27.1.3 | TEST-27.1.3 | Done |
 
 ## 8. Risks
 
@@ -91,9 +91,20 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：待实施后回填
-- **改动文件**：待实施后回填
-- **commit 列表**：待实施后回填
-- **§9 Verification 结果**：待实施后回填
-- **剩余风险 / 未做项**：待实施后回填
-- **下游 task 影响**：待实施后回填
+- **完成日期**：2026-06-02
+- **改动文件**：`src/integrations/mod.rs`; `src/lib.rs`; `src/release/mod.rs`; `tests/parity/fixtures/integration_langchain.json`; `tests/parity/fixtures/integration_langgraph.json`; `tests/parity/fixtures/integration_langsmith.json`; `tests/parity/fixtures/integration_llamaindex.json`; `tests/parity/fixtures/integration_ag_ui.json`; `tests/parity/fixtures/integration_bedrock.json`; `tests/parity/fixtures/integration_griptape.json`; `tests/parity/fixtures/integration_helicone.json`; `tests/parity/fixtures/integration_langfuse.json`; `tests/parity/fixtures/integration_opik.json`; `tests/parity/fixtures/integration_r2r.json`; `tests/parity/fixtures/integration_swarm.json`; `docs/specs/tasks/task-27.1-integration-contract-parity-closure.md`
+- **commit 列表**：
+  - `65048c8 docs(spec): add task-27.1 integration contract parity closure`
+  - `9d66649 docs(spec): task-27.1 进入实施`
+  - `2090c5a test(integrations): 加 task-27.1 RED 测试`
+  - `433ac1b feat(integrations): 实现 task-27.1 integration contract parity closure`
+- **RED 结果**：`cargo test test_27_1` failed as expected with 3 tests discovered, 0 passed, 3 failed. The failures were `TEST-27.1.1`, `TEST-27.1.2`, and `TEST-27.1.3`, covering missing integration contract descriptors, unimplemented export planning, and stale integration release blockers.
+- **§9 Verification 结果**：
+  - Install: `cargo build` passed.
+  - Typecheck: `cargo check` passed.
+  - Unit Test: `cargo test` passed with 208 passed, 0 failed.
+  - Build: `cargo build` passed.
+  - Integrations Test: `cargo test integrations::` passed with 9 passed, 0 failed.
+  - Parity Test: `cargo test parity::` passed with 12 passed, 0 failed.
+- **剩余风险 / 未做项**：Default CI now proves integration contract descriptors, lifecycle export planning, credential redaction, fixture metadata, and release-ledger closure; live vendor SDK imports, hosted service authentication, quota behavior, and framework-specific runtime execution remain opt-in live-service evidence and are not claimed as default CI coverage.
+- **下游 task 影响**：Integration release blockers dropped from 12 to 0; consolidated ledger moved from 57 to 45 non-waived blockers and now starts with Metric, Testset, Optimizer, and Quality categories.
