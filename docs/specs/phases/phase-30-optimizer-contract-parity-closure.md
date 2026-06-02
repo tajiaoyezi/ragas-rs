@@ -1,6 +1,6 @@
 # Phase 30 - optimizer-contract-parity-closure
 
-**Status**: Ready
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 **Depends On**: 29
 
@@ -26,7 +26,7 @@ Phase 21 optimizer descriptors, Phase 23 release blocker ledger, Phase 29 testse
 
 | Task | Spec | Status |
 |---|---|---|
-| 30.1 | docs/specs/tasks/task-30.1-optimizer-contract-parity-closure.md | Ready |
+| 30.1 | docs/specs/tasks/task-30.1-optimizer-contract-parity-closure.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 
