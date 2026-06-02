@@ -76,6 +76,7 @@ Out of scope:
 | 22 | exhaustive-test-engineering | Add coverage, fuzz/property, mutation, E2E, and cross-platform evidence gates. | Ready |
 | 23 | release-candidate-bug-zero-audit | Resolve every open gap/bug and produce final release evidence. | Ready |
 | 24 | release-blocker-closure | Resolve concrete release blockers produced by the final audit ledger, starting with quickstart/example parity gaps that can be closed with deterministic Rust evidence. | Ready |
+| 25 | backend-gdrive-parity-closure | Close the remaining backend release blocker by implementing Google Drive / Sheets backend contracts through a deterministic Rust transport abstraction and fixture-backed parity evidence. | Ready |
 
 ## 7. First Delta Task Matrix
 
@@ -107,6 +108,7 @@ Out of scope:
 | 24.1 | 24 | docs/examples | Close the `docs::quickstart::experiments` release blocker with a runnable Rust experiment example and fixture-backed parity claim. |
 | 24.2 | 24 | backends | Close the `backend::disk-cache` release blocker with a deterministic persistent Rust disk cache and fixture-backed parity claim. |
 | 24.3 | 24 | cli/sdk | Close the `workflow::sdk_facing` release blocker by recording that current upstream `src/ragas/sdk.py` is an empty module and mapping the Rust SDK surface to fixture-backed complete parity. |
+| 25.1 | 25 | backends | Close the `backend::gdrive` release blocker with a deterministic Google Sheets-compatible backend transport, row roundtrip tests, and fixture-backed parity claim. |
 
 ## 8. Decisions
 
