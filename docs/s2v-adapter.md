@@ -118,6 +118,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 28 | metric-fixture-parity-closure | docs/specs/phases/phase-28-metric-fixture-parity-closure.md | Done | 1 | - |
 | 29 | testset-contract-parity-closure | docs/specs/phases/phase-29-testset-contract-parity-closure.md | Done | 1 | - |
 | 30 | optimizer-contract-parity-closure | docs/specs/phases/phase-30-optimizer-contract-parity-closure.md | Done | 1 | - |
+| 31 | quality-release-evidence-closure | docs/specs/phases/phase-31-quality-release-evidence-closure.md | Ready | 1 | - |
 
 ## Task 总索引
 
@@ -195,6 +196,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 28.1 | metrics | docs/specs/tasks/task-28.1-metric-fixture-parity-closure.md | Done | after task 27.1 | - |
 | 29.1 | testset | docs/specs/tasks/task-29.1-testset-contract-parity-closure.md | Done | after task 28.1 | - |
 | 30.1 | optimizers | docs/specs/tasks/task-30.1-optimizer-contract-parity-closure.md | Done | after task 29.1 | - |
+| 31.1 | release | docs/specs/tasks/task-31.1-quality-release-evidence-closure.md | Ready | after task 30.1 | - |
 
 ## ADR 索引
 
@@ -282,3 +284,4 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 28.1 | test/features/metric-fixture-parity-closure.feature |
 | 29.1 | test/features/testset-contract-parity-closure.feature |
 | 30.1 | test/features/optimizer-contract-parity-closure.feature |
+| 31.1 | test/features/quality-release-evidence-closure.feature |
