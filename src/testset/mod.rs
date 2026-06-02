@@ -95,6 +95,47 @@ pub struct GraphQueryDescriptor {
     pub deterministic: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphCluster {
+    pub key: String,
+    pub node_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GraphAdvancedQuery {
+    pub node_type: Option<String>,
+    pub property_key: Option<String>,
+    pub property_value: Option<GraphProperty>,
+    pub outgoing_relationship: Option<String>,
+}
+
+impl GraphAdvancedQuery {
+    pub fn new() -> Self {
+        Self {
+            node_type: None,
+            property_key: None,
+            property_value: None,
+            outgoing_relationship: None,
+        }
+    }
+
+    pub fn with_node_type(mut self, node_type: impl Into<String>) -> Self {
+        self.node_type = Some(node_type.into());
+        self
+    }
+
+    pub fn with_property(mut self, key: impl Into<String>, value: GraphProperty) -> Self {
+        self.property_key = Some(key.into());
+        self.property_value = Some(value);
+        self
+    }
+
+    pub fn with_outgoing_relationship(mut self, relationship: impl Into<String>) -> Self {
+        self.outgoing_relationship = Some(relationship.into());
+        self
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TransformStageFamily {
     Splitter,
@@ -238,6 +279,17 @@ pub fn graph_parity_claims() -> Vec<ParityClaim> {
         .collect()
 }
 
+pub fn cluster_graph_by_property(_graph: &KnowledgeGraph, _property_key: &str) -> Vec<GraphCluster> {
+    Vec::new()
+}
+
+pub fn query_graph_advanced(
+    _graph: &KnowledgeGraph,
+    _query: &GraphAdvancedQuery,
+) -> Vec<GraphNode> {
+    Vec::new()
+}
+
 pub fn transform_stage_descriptors() -> Vec<TransformStageDescriptor> {
     vec![
         transform_stage_descriptor(
@@ -317,6 +369,20 @@ pub fn transform_parity_claims() -> Vec<ParityClaim> {
             fixtures: Vec::new(),
         })
         .collect()
+}
+
+pub fn parse_llm_extractor_output(_input: &str) -> Result<ExtractionBundle, RagasError> {
+    Err(RagasError::Parse {
+        message: "llm extractor output parsing not implemented".to_string(),
+    })
+}
+
+pub fn filter_graph_by_property(
+    _graph: &KnowledgeGraph,
+    _property_key: &str,
+    _expected: &GraphProperty,
+) -> KnowledgeGraph {
+    KnowledgeGraph::new()
 }
 
 pub fn synthesizer_descriptors() -> Vec<SynthesizerDescriptor> {
@@ -436,6 +502,13 @@ pub fn synthesizer_parity_claims() -> Vec<ParityClaim> {
             }
         })
         .collect()
+}
+
+pub fn synthesize_pre_chunked_samples(
+    _chunks: &[TextChunk],
+    _persona: &Persona,
+) -> Vec<SynthesizedSample> {
+    Vec::new()
 }
 
 fn graph_query_descriptor(
@@ -1528,6 +1601,166 @@ mod tests {
         assert_eq!(
             release_blocking_claims(&[unfixture_backed_complete]).len(),
             1
+        );
+    }
+
+    #[test]
+    fn test_29_1_1_graph_cluster_and_advanced_query_contracts_are_complete() {
+        // SCEN-29.1.1 / AC1 / TEST-29.1.1
+        let graph = KnowledgeGraph::new()
+            .add_node(
+                GraphNode::new("chunk-1", "chunk")
+                    .with_property("theme", GraphProperty::Text("retrieval".to_string())),
+            )
+            .add_node(
+                GraphNode::new("chunk-2", "chunk")
+                    .with_property("theme", GraphProperty::Text("generation".to_string())),
+            )
+            .add_node(
+                GraphNode::new("chunk-3", "chunk")
+                    .with_property("theme", GraphProperty::Text("retrieval".to_string())),
+            )
+            .add_edge(GraphEdge::new("chunk-1", "chunk-3", "related"));
+
+        let by_capability: BTreeMap<_, _> = graph_query_descriptors()
+            .into_iter()
+            .map(|descriptor| (descriptor.capability, descriptor))
+            .collect();
+        assert_eq!(
+            by_capability
+                .get(&GraphQueryCapability::Clusters)
+                .expect("clusters")
+                .parity_status,
+            ParityFeatureStatus::Complete
+        );
+        assert_eq!(
+            by_capability
+                .get(&GraphQueryCapability::AdvancedQuery)
+                .expect("advanced query")
+                .parity_status,
+            ParityFeatureStatus::Complete
+        );
+
+        let clusters = cluster_graph_by_property(&graph, "theme");
+        assert_eq!(clusters.len(), 2);
+        assert_eq!(clusters[0].key, "generation");
+        assert_eq!(clusters[1].key, "retrieval");
+        assert_eq!(clusters[1].node_ids, vec!["chunk-1", "chunk-3"]);
+
+        let result = query_graph_advanced(
+            &graph,
+            &GraphAdvancedQuery::new()
+                .with_node_type("chunk")
+                .with_property("theme", GraphProperty::Text("retrieval".to_string()))
+                .with_outgoing_relationship("related"),
+        );
+        let ids = result.into_iter().map(|node| node.id).collect::<Vec<_>>();
+        assert_eq!(ids, vec!["chunk-1"]);
+
+        assert!(release_blocking_claims(&graph_parity_claims()).is_empty());
+    }
+
+    #[test]
+    fn test_29_1_2_transform_llm_extractor_and_filter_contracts_are_complete() {
+        // SCEN-29.1.2 / AC2 / TEST-29.1.2
+        let by_family: BTreeMap<_, _> = transform_stage_descriptors()
+            .into_iter()
+            .map(|descriptor| (descriptor.family, descriptor))
+            .collect();
+        assert_eq!(
+            by_family
+                .get(&TransformStageFamily::LlmExtractor)
+                .expect("llm extractor")
+                .parity_status,
+            ParityFeatureStatus::Complete
+        );
+        assert_eq!(
+            by_family
+                .get(&TransformStageFamily::Filter)
+                .expect("filter")
+                .parity_status,
+            ParityFeatureStatus::Complete
+        );
+
+        let parsed = parse_llm_extractor_output(
+            r#"{"entities":["RAG","Rust","RAG"],"themes":["evaluation"],"summary":"  RAG evaluation in Rust  "}"#,
+        )
+        .expect("captured extractor output parses");
+        let normalized = normalize_extraction_properties(parsed);
+        assert_eq!(
+            normalized.get("entities"),
+            Some(&GraphProperty::TextList(vec![
+                "RAG".to_string(),
+                "Rust".to_string()
+            ]))
+        );
+        assert_eq!(
+            normalized.get("summary"),
+            Some(&GraphProperty::Text("RAG evaluation in Rust".to_string()))
+        );
+
+        let graph = KnowledgeGraph::new()
+            .add_node(
+                GraphNode::new("keep", "chunk")
+                    .with_property("trusted", GraphProperty::Boolean(true)),
+            )
+            .add_node(
+                GraphNode::new("drop", "chunk")
+                    .with_property("trusted", GraphProperty::Boolean(false)),
+            )
+            .add_edge(GraphEdge::new("keep", "drop", "next"));
+        let filtered = filter_graph_by_property(&graph, "trusted", &GraphProperty::Boolean(true));
+        assert!(filtered.node("keep").is_some());
+        assert!(filtered.node("drop").is_none());
+        assert!(filtered.edges.is_empty());
+
+        assert!(release_blocking_claims(&transform_parity_claims()).is_empty());
+    }
+
+    #[test]
+    fn test_29_1_3_pre_chunked_synthesizer_closes_testset_ledger() {
+        // SCEN-29.1.3 / AC3 / TEST-29.1.3
+        let descriptors = synthesizer_descriptors();
+        let pre_chunked = descriptors
+            .iter()
+            .find(|descriptor| descriptor.strategy == SynthesizerStrategy::PreChunked)
+            .expect("pre-chunked descriptor");
+        assert_eq!(pre_chunked.parity_status, ParityFeatureStatus::Complete);
+        assert!(pre_chunked.fixture_backed);
+
+        let persona = PersonaGenerator::new("deterministic-seed").generate(
+            "QA Lead",
+            "evaluation engineer",
+            vec!["verify provided chunks".to_string()],
+        );
+        let chunks = vec![
+            TextChunk::new("chunk-1", "doc-1", 0, "RAG evaluates retrieval."),
+            TextChunk::new("chunk-2", "doc-1", 1, "Rust services run fast."),
+        ];
+        let samples = synthesize_pre_chunked_samples(&chunks, &persona);
+        assert_eq!(samples.len(), 2);
+        assert_eq!(samples[0].hop_count, 1);
+        assert_eq!(samples[0].source_node_ids, vec!["chunk-1"]);
+        assert_eq!(
+            samples[0]
+                .sample
+                .metadata
+                .get("synthesis_type")
+                .map(String::as_str),
+            Some("pre-chunked")
+        );
+
+        assert!(release_blocking_claims(&synthesizer_parity_claims()).is_empty());
+
+        let ledger = crate::release::build_release_blocker_ledger();
+        let categories = ledger
+            .entries
+            .iter()
+            .map(|entry| entry.category)
+            .collect::<BTreeSet<_>>();
+        assert!(
+            !categories.contains(&crate::release::ReleaseBlockerCategory::Testset),
+            "testset release blockers must be fully closed"
         );
     }
 }
