@@ -1,6 +1,6 @@
 # Task 29.1 - testset-contract-parity-closure
 
-**Status**: Ready
+**Status**: In Progress
 **Phase**: 29
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
