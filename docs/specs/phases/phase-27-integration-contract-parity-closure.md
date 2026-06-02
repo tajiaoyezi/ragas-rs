@@ -1,6 +1,6 @@
 # Phase 27 - integration-contract-parity-closure
 
-**Status**: Ready
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 **Depends On**: 26
 
@@ -26,7 +26,7 @@ Phase 18 integration descriptors, phase 23 release-blocker ledger, phase 26 prov
 
 | Task | Spec | Status |
 |---|---|---|
-| 27.1 | docs/specs/tasks/task-27.1-integration-contract-parity-closure.md | Ready |
+| 27.1 | docs/specs/tasks/task-27.1-integration-contract-parity-closure.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 
