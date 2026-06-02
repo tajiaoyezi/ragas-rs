@@ -948,14 +948,13 @@ mod tests {
             "closed testset claims should not keep Testset in blocker ledger"
         );
 
-        for expected in [
-            ReleaseBlockerCategory::Optimizer,
-            ReleaseBlockerCategory::Quality,
-        ] {
-            assert!(
-                categories.contains(&expected),
-                "category {expected:?} should remain until its own closure task"
-            );
-        }
+        assert!(
+            !categories.contains(&ReleaseBlockerCategory::Optimizer),
+            "closed optimizer claims should not keep Optimizer in blocker ledger"
+        );
+        assert!(
+            categories.contains(&ReleaseBlockerCategory::Quality),
+            "Quality should remain until its own closure task"
+        );
     }
 }

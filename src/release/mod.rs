@@ -1542,12 +1542,7 @@ mod tests {
         let ledger = build_release_blocker_ledger();
         let categories: BTreeSet<_> = ledger.entries.iter().map(|entry| entry.category).collect();
 
-        for category in [
-            ReleaseBlockerCategory::Optimizer,
-            ReleaseBlockerCategory::Quality,
-        ] {
-            assert!(categories.contains(&category), "missing {category:?}");
-        }
+        assert!(categories.contains(&ReleaseBlockerCategory::Quality));
         assert!(
             !categories.contains(&ReleaseBlockerCategory::Metric),
             "closed metric claims should not keep Metric in blocker ledger"
@@ -1555,6 +1550,10 @@ mod tests {
         assert!(
             !categories.contains(&ReleaseBlockerCategory::Testset),
             "closed testset claims should not keep Testset in blocker ledger"
+        );
+        assert!(
+            !categories.contains(&ReleaseBlockerCategory::Optimizer),
+            "closed optimizer claims should not keep Optimizer in blocker ledger"
         );
 
         let docs_claims = docs_parity_claims();

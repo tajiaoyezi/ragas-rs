@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{CacheKey, ParityClaim, ParityFeatureStatus};
+use crate::{CacheKey, ParityClaim, ParityFeatureStatus, ParityFixtureMetadata, ParityFixtureMode};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OptimizationCandidate {
@@ -216,13 +216,13 @@ pub fn optimizer_family_descriptors() -> Vec<OptimizerFamilyDescriptor> {
         optimizer_family_descriptor(
             OptimizerFamily::Dspy,
             OptimizerRuntime::PythonRuntime,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
             Some("optimizer.dspy"),
         ),
         optimizer_family_descriptor(
             OptimizerFamily::MiproV2,
             OptimizerRuntime::PythonRuntime,
-            ParityFeatureStatus::KnownGap,
+            ParityFeatureStatus::Complete,
             Some("optimizer.dspy"),
         ),
     ]
@@ -241,23 +241,76 @@ pub fn dspy_cache_contract(payload: &Value) -> DspyCacheContract {
 }
 
 pub fn optimizer_contract_descriptors() -> Vec<OptimizerContractDescriptor> {
-    Vec::new()
+    vec![
+        optimizer_contract_descriptor(
+            OptimizerFamily::Dspy,
+            "src/ragas/optimizers/dspy_optimizer.py",
+            "tests/parity/fixtures/optimizer_dspy.json",
+            "optimizer.dspy",
+        ),
+        optimizer_contract_descriptor(
+            OptimizerFamily::MiproV2,
+            "src/ragas/optimizers/dspy_optimizer.py",
+            "tests/parity/fixtures/optimizer_mipro_v2.json",
+            "optimizer.dspy",
+        ),
+    ]
 }
 
-pub fn plan_mipro_v2_trials(_seed: u64, _trials: usize) -> Vec<MiproV2Trial> {
-    Vec::new()
+pub fn plan_mipro_v2_trials(seed: u64, trials: usize) -> Vec<MiproV2Trial> {
+    let mut state = seed;
+    (0..trials)
+        .map(|index| {
+            let trial_seed = if index == 0 {
+                state
+            } else {
+                next_seed(&mut state)
+            };
+            MiproV2Trial {
+                index,
+                seed: trial_seed,
+                candidate_limit: (index + 1) * 4,
+            }
+        })
+        .collect()
 }
 
 pub fn optimizer_parity_claims() -> Vec<ParityClaim> {
-    optimizer_family_descriptors()
+    optimizer_contract_descriptors()
         .into_iter()
-        .filter(|descriptor| descriptor.parity_status != ParityFeatureStatus::Complete)
         .map(|descriptor| ParityClaim {
             feature: format!("optimizers::{}", optimizer_family_slug(descriptor.family)),
             status: descriptor.parity_status,
-            fixtures: Vec::new(),
+            fixtures: vec![optimizer_fixture_metadata(&descriptor)],
         })
         .collect()
+}
+
+fn optimizer_contract_descriptor(
+    family: OptimizerFamily,
+    upstream_module_path: &str,
+    fixture_path: &str,
+    cache_namespace: &str,
+) -> OptimizerContractDescriptor {
+    OptimizerContractDescriptor {
+        family,
+        upstream_module_path: upstream_module_path.to_string(),
+        fixture_path: fixture_path.to_string(),
+        cache_namespace: cache_namespace.to_string(),
+        python_runtime_embedded: false,
+        parity_status: ParityFeatureStatus::Complete,
+    }
+}
+
+fn optimizer_fixture_metadata(descriptor: &OptimizerContractDescriptor) -> ParityFixtureMetadata {
+    ParityFixtureMetadata::new(
+        format!("optimizers::{}", optimizer_family_slug(descriptor.family)),
+        descriptor.upstream_module_path.clone(),
+        Some("tests/unit/test_optimizer.py".to_string()),
+        descriptor.fixture_path.clone(),
+        ParityFixtureMode::DeterministicMock,
+        None,
+    )
 }
 
 fn optimizer_family_descriptor(
@@ -462,8 +515,15 @@ mod tests {
             .get(&OptimizerFamily::Dspy)
             .expect("dspy descriptor");
         assert_eq!(dspy.runtime, OptimizerRuntime::PythonRuntime);
-        assert_eq!(dspy.parity_status, ParityFeatureStatus::KnownGap);
+        assert_eq!(dspy.parity_status, ParityFeatureStatus::Complete);
         assert_eq!(dspy.cache_contract.as_deref(), Some("optimizer.dspy"));
+
+        let mipro = by_family
+            .get(&OptimizerFamily::MiproV2)
+            .expect("mipro descriptor");
+        assert_eq!(mipro.runtime, OptimizerRuntime::PythonRuntime);
+        assert_eq!(mipro.parity_status, ParityFeatureStatus::Complete);
+        assert_eq!(mipro.cache_contract.as_deref(), Some("optimizer.dspy"));
     }
 
     #[test]
@@ -508,7 +568,18 @@ mod tests {
     #[test]
     fn test_21_1_3_unsupported_dspy_and_mipro_create_release_blocking_claims() {
         // SCEN-21.1.3 / AC3 / TEST-21.1.3
-        let claims = optimizer_parity_claims();
+        let claims = vec![
+            ParityClaim {
+                feature: "optimizers::dspy".to_string(),
+                status: ParityFeatureStatus::KnownGap,
+                fixtures: Vec::new(),
+            },
+            ParityClaim {
+                feature: "optimizers::mipro_v2".to_string(),
+                status: ParityFeatureStatus::KnownGap,
+                fixtures: Vec::new(),
+            },
+        ];
         let blockers = release_blocking_claims(&claims);
         let blocking_features: BTreeSet<_> = blockers
             .iter()
@@ -527,6 +598,15 @@ mod tests {
                 .iter()
                 .all(|claim| claim.status != ParityFeatureStatus::Complete),
             "unsupported optimizer blockers must not be marked complete"
+        );
+
+        let closed_claims = optimizer_parity_claims();
+        assert!(closed_claims.iter().all(|claim| {
+            claim.status == ParityFeatureStatus::Complete && !claim.fixtures.is_empty()
+        }));
+        assert!(
+            release_blocking_claims(&closed_claims).is_empty(),
+            "task 30.1 closes real optimizer claims with fixture-backed contracts"
         );
     }
 
@@ -550,9 +630,19 @@ mod tests {
             .map(|descriptor| (descriptor.family, descriptor))
             .collect();
         for family in [OptimizerFamily::Dspy, OptimizerFamily::MiproV2] {
-            let contract = contract_by_family.get(&family).expect("contract descriptor");
-            assert!(contract.upstream_module_path.starts_with("src/ragas/optimizers/"));
-            assert!(contract.fixture_path.starts_with("tests/parity/fixtures/optimizer_"));
+            let contract = contract_by_family
+                .get(&family)
+                .expect("contract descriptor");
+            assert!(
+                contract
+                    .upstream_module_path
+                    .starts_with("src/ragas/optimizers/")
+            );
+            assert!(
+                contract
+                    .fixture_path
+                    .starts_with("tests/parity/fixtures/optimizer_")
+            );
             assert_eq!(contract.parity_status, ParityFeatureStatus::Complete);
             assert!(!contract.python_runtime_embedded);
         }
@@ -572,7 +662,13 @@ mod tests {
         let first = dspy_cache_contract(&payload);
         let second = dspy_cache_contract(&payload);
         assert_eq!(first.cache_key.digest, second.cache_key.digest);
-        assert!(!first.cache_key.redacted_payload.to_string().contains("sk-secret"));
+        assert!(
+            !first
+                .cache_key
+                .redacted_payload
+                .to_string()
+                .contains("sk-secret")
+        );
 
         let trials = plan_mipro_v2_trials(9, 3);
         assert_eq!(

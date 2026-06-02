@@ -88,10 +88,11 @@ pub use metrics::{
     tool_call_f1, topic_adherence,
 };
 pub use optimizers::{
-    CandidateGenerator, DspyCacheContract, GeneticOptimizer, GeneticOptimizerConfig,
+    CandidateGenerator, DspyCacheContract, GeneticOptimizer, GeneticOptimizerConfig, MiproV2Trial,
     ObjectiveMetric, OptimizationCandidate, OptimizationResult, OptimizationStep, Optimizer,
-    OptimizerFamily, OptimizerFamilyDescriptor, OptimizerRuntime, dspy_cache_contract,
-    optimizer_family_descriptors, optimizer_parity_claims,
+    OptimizerContractDescriptor, OptimizerFamily, OptimizerFamilyDescriptor, OptimizerRuntime,
+    dspy_cache_contract, optimizer_contract_descriptors, optimizer_family_descriptors,
+    optimizer_parity_claims, plan_mipro_v2_trials,
 };
 pub use parity::{
     GapMatrixEntry, MetricGoldenComparison, MetricGoldenFixture, MetricGoldenOutcome, ParityCheck,
