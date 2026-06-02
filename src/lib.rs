@@ -110,8 +110,10 @@ pub use providers::{
 pub use release::{
     BugClass, BugLedgerEntry, BugSeverity, BugStatus, BugZeroAudit, GateEvidenceStatus,
     MetricReleaseBlocker, MetricReleaseBlockerSource, MetricReleaseBlockerSummary,
-    QualityGateEvidence, QualityGateKind, QualityGateSummary, ReleaseGateReport,
-    metric_release_blockers, quality_gate_blockers, release_blocking_bugs, release_gate_files,
+    QualityCommandEvidence, QualityEvidenceFinding, QualityEvidenceKind, QualityGateDescriptor,
+    QualityGateEvidence, QualityGateKind, QualityGateMode, QualityGateSummary, ReleaseGateReport,
+    metric_release_blockers, property_fuzz_coverage_gate_descriptors, quality_gate_blockers,
+    release_blocking_bugs, release_gate_files, required_quality_evidence_blockers,
     required_quality_gates, summarize_bug_zero_audit, summarize_metric_release_blockers,
     summarize_quality_gates,
 };

@@ -17,6 +17,60 @@ pub enum QualityGateKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum QualityEvidenceKind {
+    Property,
+    Fuzz,
+    Coverage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum QualityGateMode {
+    RequiredDefaultCi,
+    RequiredReleaseEvidence,
+    OptionalLongRunning,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QualityGateDescriptor {
+    pub gate_id: &'static str,
+    pub evidence_kind: QualityEvidenceKind,
+    pub gate_kind: QualityGateKind,
+    pub command: &'static str,
+    pub scope: &'static str,
+    pub mode: QualityGateMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QualityCommandEvidence {
+    pub gate_id: String,
+    pub status: GateEvidenceStatus,
+    pub detail: String,
+}
+
+impl QualityCommandEvidence {
+    pub fn new(
+        gate_id: impl Into<String>,
+        status: GateEvidenceStatus,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self {
+            gate_id: gate_id.into(),
+            status,
+            detail: detail.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QualityEvidenceFinding {
+    pub gate_id: String,
+    pub evidence_kind: QualityEvidenceKind,
+    pub command: String,
+    pub detail: String,
+    pub release_blocking: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum GateEvidenceStatus {
     Passed,
     Failed,
@@ -235,6 +289,17 @@ pub fn required_quality_gates() -> Vec<QualityGateKind> {
     ]
 }
 
+pub fn property_fuzz_coverage_gate_descriptors() -> Vec<QualityGateDescriptor> {
+    Vec::new()
+}
+
+pub fn required_quality_evidence_blockers(
+    _descriptors: &[QualityGateDescriptor],
+    _evidence: &[QualityCommandEvidence],
+) -> Vec<QualityEvidenceFinding> {
+    Vec::new()
+}
+
 pub fn summarize_quality_gates(report: &ReleaseGateReport) -> QualityGateSummary {
     report.evidence.iter().fold(
         QualityGateSummary {
@@ -429,6 +494,99 @@ mod tests {
 
         assert_eq!(blockers.len(), 1);
         assert_eq!(blockers[0].kind, QualityGateKind::Parity);
+    }
+
+    #[test]
+    fn test_22_1_1_property_fuzz_and_coverage_gates_declare_commands_scope_and_mode() {
+        // SCEN-22.1.1 / AC1 / TEST-22.1.1
+        let descriptors = property_fuzz_coverage_gate_descriptors();
+
+        assert!(descriptors.iter().all(|gate| !gate.gate_id.is_empty()));
+        assert!(descriptors.iter().all(|gate| !gate.command.is_empty()));
+        assert!(descriptors.iter().all(|gate| !gate.scope.is_empty()));
+        assert!(descriptors.iter().any(|gate| {
+            gate.evidence_kind == QualityEvidenceKind::Property
+                && gate.gate_kind == QualityGateKind::FuzzProperty
+                && gate.command == "cargo test property::"
+                && gate.scope == "src/"
+                && gate.mode == QualityGateMode::RequiredDefaultCi
+        }));
+        assert!(descriptors.iter().any(|gate| {
+            gate.evidence_kind == QualityEvidenceKind::Fuzz
+                && gate.gate_kind == QualityGateKind::FuzzProperty
+                && gate.command == "cargo test fuzz_smoke::"
+                && gate.scope == "src/"
+                && gate.mode == QualityGateMode::RequiredDefaultCi
+        }));
+        assert!(descriptors.iter().any(|gate| {
+            gate.evidence_kind == QualityEvidenceKind::Coverage
+                && gate.gate_kind == QualityGateKind::Coverage
+                && gate.command == "cargo llvm-cov --summary-only"
+                && gate.scope == "src/"
+                && gate.mode == QualityGateMode::RequiredReleaseEvidence
+        }));
+    }
+
+    #[test]
+    fn test_22_1_2_missing_required_quality_evidence_blocks_release() {
+        // SCEN-22.1.2 / AC2 / TEST-22.1.2
+        let descriptors = property_fuzz_coverage_gate_descriptors();
+        let evidence = vec![QualityCommandEvidence::new(
+            "quality::property::invariants",
+            GateEvidenceStatus::Passed,
+            "bounded property suite passed",
+        )];
+
+        let blockers = required_quality_evidence_blockers(&descriptors, &evidence);
+
+        assert!(blockers.iter().any(|finding| {
+            finding.gate_id == "quality::coverage::llvm-cov-summary"
+                && finding.evidence_kind == QualityEvidenceKind::Coverage
+                && finding.command == "cargo llvm-cov --summary-only"
+                && finding.release_blocking
+        }));
+        assert!(blockers.iter().any(|finding| {
+            finding.gate_id == "quality::fuzz::smoke-corpus"
+                && finding.evidence_kind == QualityEvidenceKind::Fuzz
+                && finding.command == "cargo test fuzz_smoke::"
+                && finding.release_blocking
+        }));
+        assert!(!blockers
+            .iter()
+            .any(|finding| finding.gate_id == "quality::fuzz::long-running-campaign"));
+    }
+
+    #[test]
+    fn test_22_1_3_optional_long_running_gates_do_not_block_default_ci() {
+        // SCEN-22.1.3 / AC3 / TEST-22.1.3
+        let descriptors = property_fuzz_coverage_gate_descriptors();
+        let optional = descriptors
+            .iter()
+            .find(|gate| gate.gate_id == "quality::fuzz::long-running-campaign")
+            .expect("optional long-running fuzz gate is visible");
+        let evidence = vec![
+            QualityCommandEvidence::new(
+                "quality::property::invariants",
+                GateEvidenceStatus::Passed,
+                "property suite passed",
+            ),
+            QualityCommandEvidence::new(
+                "quality::fuzz::smoke-corpus",
+                GateEvidenceStatus::Passed,
+                "fuzz smoke corpus replay passed",
+            ),
+            QualityCommandEvidence::new(
+                "quality::coverage::llvm-cov-summary",
+                GateEvidenceStatus::Passed,
+                "coverage summary captured",
+            ),
+        ];
+
+        let blockers = required_quality_evidence_blockers(&descriptors, &evidence);
+
+        assert_eq!(optional.mode, QualityGateMode::OptionalLongRunning);
+        assert_eq!(optional.command, "cargo fuzz run ragas_evaluation -- -max_total_time=3600");
+        assert!(blockers.is_empty());
     }
 
     #[test]
