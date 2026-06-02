@@ -45,9 +45,9 @@ RED tests own final signatures.
 
 ## 6. Acceptance Criteria
 
-- **AC1**: Ledger aggregates provider, backend, integration, metric, testset, optimizer, docs, and quality blockers.
-- **AC2**: Each blocker has category, feature, severity, source, and release impact.
-- **AC3**: Release readiness fails when any non-waived blocker remains.
+- [ ] **AC1**: Ledger aggregates provider, backend, integration, metric, testset, optimizer, docs, and quality blockers.
+- [ ] **AC2**: Each blocker has category, feature, severity, source, and release impact.
+- [ ] **AC3**: Release readiness fails when any non-waived blocker remains.
 
 ## 7. Traceability
 
@@ -64,10 +64,10 @@ RED tests own final signatures.
 
 ## 9. Verification Plan
 
-- install
-- typecheck
-- unit-test
-- build
+- Install
+- Typecheck
+- Unit Test
+- Build
 
 ## 10. Completion Notes
 
