@@ -1,6 +1,6 @@
 # Phase 21 - optimizer-experiment-cli-docs-parity
 
-**Status**: Ready
+**Status**: Done
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 **Depends On**: 20
 
@@ -28,7 +28,7 @@ Phase 20 testset fixtures and Phase 19 metric catalog status.
 |---|---|---|
 | 21.1 | docs/specs/tasks/task-21.1-dspy-mipro-cache-contracts.md | Done |
 | 21.2 | docs/specs/tasks/task-21.2-experiment-sdk-cli-contracts.md | Done |
-| 21.3 | docs/specs/tasks/task-21.3-quickstart-docs-parity.md | Ready |
+| 21.3 | docs/specs/tasks/task-21.3-quickstart-docs-parity.md | Done |
 
 ## 6. Phase Acceptance And Smoke
 

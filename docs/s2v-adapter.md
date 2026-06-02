@@ -108,7 +108,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 18 | provider-backend-runtime-parity | docs/specs/phases/phase-18-provider-backend-runtime-parity.md | Done | 4 | - |
 | 19 | metric-catalog-golden-parity | docs/specs/phases/phase-19-metric-catalog-golden-parity.md | Done | 3 | - |
 | 20 | testset-generation-full-parity | docs/specs/phases/phase-20-testset-generation-full-parity.md | Done | 3 | - |
-| 21 | optimizer-experiment-cli-docs-parity | docs/specs/phases/phase-21-optimizer-experiment-cli-docs-parity.md | Ready | 3 | - |
+| 21 | optimizer-experiment-cli-docs-parity | docs/specs/phases/phase-21-optimizer-experiment-cli-docs-parity.md | Done | 3 | - |
 | 22 | exhaustive-test-engineering | docs/specs/phases/phase-22-exhaustive-test-engineering.md | Ready | 3 | - |
 | 23 | release-candidate-bug-zero-audit | docs/specs/phases/phase-23-release-candidate-bug-zero-audit.md | Ready | 3 | - |
 
@@ -172,7 +172,7 @@ Rust unit tests live in `#[cfg(test)] mod tests` blocks inside the source module
 | 20.3 | testset | docs/specs/tasks/task-20.3-synthesizer-prompt-fixture-parity.md | Done | after task 20.2 | - |
 | 21.1 | optimizers | docs/specs/tasks/task-21.1-dspy-mipro-cache-contracts.md | Done | after task 20.3 | - |
 | 21.2 | cli | docs/specs/tasks/task-21.2-experiment-sdk-cli-contracts.md | Done | after task 21.1 | - |
-| 21.3 | docs | docs/specs/tasks/task-21.3-quickstart-docs-parity.md | Ready | after task 21.2 | - |
+| 21.3 | docs | docs/specs/tasks/task-21.3-quickstart-docs-parity.md | Done | after task 21.2 | - |
 | 22.1 | quality | docs/specs/tasks/task-22.1-property-fuzz-coverage-gates.md | Ready | after task 21.3 | - |
 | 22.2 | quality | docs/specs/tasks/task-22.2-panic-mutation-safety-gates.md | Ready | after task 22.1 | - |
 | 22.3 | quality | docs/specs/tasks/task-22.3-cross-platform-e2e-matrix.md | Ready | after task 22.2 | - |
