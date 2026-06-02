@@ -1,6 +1,6 @@
 # Task 22.2 - panic-mutation-safety-gates
 
-**Status**: In Progress
+**Status**: Done
 **Phase**: 22
 **PRD**: docs/prds/ragas-rs-perfect-refactor.prd.md
 
@@ -45,17 +45,17 @@ RED tests own final signatures.
 
 ## 6. Acceptance Criteria
 
-- [ ] **AC1**: Panic-safety gates declare scope, command, and failure classes.
-- [ ] **AC2**: Mutation gates declare tool, threshold, and optional/required status.
-- [ ] **AC3**: Missing required panic or mutation evidence creates release blockers.
+- [x] **AC1**: Panic-safety gates declare scope, command, and failure classes.
+- [x] **AC2**: Mutation gates declare tool, threshold, and optional/required status.
+- [x] **AC3**: Missing required panic or mutation evidence creates release blockers.
 
 ## 7. Traceability
 
 | AC | Scenario | Test ID | Status |
 |---|---|---|
-| AC1 | SCEN-22.2.1 | TEST-22.2.1 | Not Started |
-| AC2 | SCEN-22.2.2 | TEST-22.2.2 | Not Started |
-| AC3 | SCEN-22.2.3 | TEST-22.2.3 | Not Started |
+| AC1 | SCEN-22.2.1 | TEST-22.2.1 | Done |
+| AC2 | SCEN-22.2.2 | TEST-22.2.2 | Done |
+| AC3 | SCEN-22.2.3 | TEST-22.2.3 | Done |
 
 ## 8. Risks
 
@@ -71,9 +71,19 @@ RED tests own final signatures.
 
 ## 10. Completion Notes
 
-- **完成日期**：<TBD-after-impl>
-- **改动文件**：<TBD-after-impl>
-- **commit 列表**：<TBD-after-impl>
-- **§9 Verification 结果**：<TBD-after-impl>
-- **剩余风险 / 未做项**：<TBD-after-impl>
-- **下游 task 影响**：<TBD-after-impl>
+- **完成日期**：2026-06-02
+- **改动文件**：
+  - `src/release/mod.rs`（新增 panic safety/mutation descriptor、failure class、required release evidence threshold 与 TEST-22.2.1~22.2.3）
+  - `src/lib.rs`（RED 阶段导出新增 safety gate API）
+- **commit 列表**：
+  - `6ebe59f` docs(spec): task-22.2 Ready gate format
+  - `b2f1b55` docs(spec): task-22.2 进入实施
+  - `2aa19ac` test(release): 加 task-22.2 RED 测试
+  - `97eb67f` feat(release): 实现 task-22.2 safety gates
+- **§9 Verification 结果**：
+  - Install: passed (`cargo build`)
+  - Typecheck: passed (`cargo check`)
+  - Unit Test: passed, 178 passed / 0 failed (`cargo test`)
+  - Build: passed (`cargo build`)
+- **剩余风险 / 未做项**：Mutation release threshold is represented as required release evidence, but cargo-mutants remains outside default deterministic CI; task 22.3 must add platform and E2E evidence before Phase 22 can close.
+- **下游 task 影响**：task 22.3 and phase 23 release ledger can aggregate panic and mutation blockers through `panic_mutation_quality_gate_descriptors()` and `required_quality_evidence_blockers()`.
