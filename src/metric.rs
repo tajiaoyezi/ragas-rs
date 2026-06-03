@@ -1313,4 +1313,183 @@ mod tests {
 
         assert!(error.to_string().contains("context recall classification"));
     }
+
+    // ---------------------------------------------------------------------
+    // ROUGE-L deterministic discrimination (NON-ignored: runs offline, no LLM).
+    // This is the lexical baseline that does not need a model key, so it always
+    // runs and proves the discrimination shape (faithful > adversarial).
+    // ---------------------------------------------------------------------
+    #[test]
+    fn rouge_l_discriminates_overlapping_from_disjoint_candidate() {
+        use crate::rouge_l_recall;
+
+        let reference = "Ragas evaluates retrieval augmented generation applications.";
+        // A candidate that closely tracks the reference shares a long subsequence.
+        let faithful = "Ragas evaluates retrieval augmented generation applications.";
+        // A candidate about an unrelated topic shares almost no subsequence.
+        let adversarial = "The weather in Paris was cold and rainy yesterday.";
+
+        let faithful_score = rouge_l_recall(faithful, reference)
+            .score
+            .expect("faithful rouge score");
+        let adversarial_score = rouge_l_recall(adversarial, reference)
+            .score
+            .expect("adversarial rouge score");
+
+        assert!(
+            faithful_score > adversarial_score,
+            "faithful={faithful_score} must exceed adversarial={adversarial_score}"
+        );
+        assert!((faithful_score - 1.0).abs() < 1e-9);
+        assert_eq!(adversarial_score, 0.0);
+    }
+
+    // ---------------------------------------------------------------------
+    // LIVE discrimination gate (IGNORED unless OPENAI_API_KEY is set).
+    //
+    // These are the project's real "done" gate for the LLM metrics: they call a
+    // real provider and assert that a faithful/relevant sample scores STRICTLY
+    // higher than an adversarial one. They are #[ignore]-attributed so they never
+    // run in normal `cargo test`; run them with:
+    //   OPENAI_API_KEY=... cargo test --lib -- --ignored
+    // Until a real key has driven them, the honest status of the LLM metrics is
+    // "math verified; real-LLM UNVERIFIED".
+    // ---------------------------------------------------------------------
+    use crate::OpenAiCompatibleClient;
+
+    /// Build the live client from the environment, or `None` to skip when no key.
+    fn live_client() -> Option<Arc<OpenAiCompatibleClient>> {
+        let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+        OpenAiCompatibleClient::from_env(model).map(Arc::new)
+    }
+
+    fn live_embedding_client() -> Option<Arc<OpenAiCompatibleClient>> {
+        let model =
+            std::env::var("OPENAI_EMBEDDING_MODEL").unwrap_or_else(|_| "text-embedding-3-small".to_string());
+        OpenAiCompatibleClient::from_env(model).map(Arc::new)
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_faithfulness_scores_faithful_above_unfaithful() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        let metric = FaithfulnessMetric::new(client);
+
+        let contexts =
+            vec!["Ragas is an open-source framework to evaluate LLM applications.".to_string()];
+        let faithful = SingleTurnSample::new(
+            "What is Ragas?",
+            "Ragas is a framework for evaluating LLM applications.",
+            contexts.clone(),
+        );
+        let unfaithful = SingleTurnSample::new(
+            "What is Ragas?",
+            "Ragas is a brand of running shoes founded in 1962 in Italy.",
+            contexts,
+        );
+
+        let faithful_score = numeric(&metric.score(&faithful).await.expect("faithful"));
+        let unfaithful_score = numeric(&metric.score(&unfaithful).await.expect("unfaithful"));
+
+        assert!(
+            faithful_score > unfaithful_score,
+            "faithful={faithful_score} must exceed unfaithful={unfaithful_score}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_answer_relevancy_scores_relevant_above_irrelevant() {
+        let (Some(llm), Some(embedding)) = (live_client(), live_embedding_client()) else {
+            return;
+        };
+        let metric = ResponseRelevancyMetric::new(llm, embedding);
+
+        let relevant = SingleTurnSample::new(
+            "Where was Albert Einstein born?",
+            "Albert Einstein was born in Ulm, Germany.",
+            Vec::new(),
+        );
+        let irrelevant = SingleTurnSample::new(
+            "Where was Albert Einstein born?",
+            "Photosynthesis converts sunlight into chemical energy in plants.",
+            Vec::new(),
+        );
+
+        let relevant_score = numeric(&metric.score(&relevant).await.expect("relevant"));
+        let irrelevant_score = numeric(&metric.score(&irrelevant).await.expect("irrelevant"));
+
+        assert!(
+            relevant_score > irrelevant_score,
+            "relevant={relevant_score} must exceed irrelevant={irrelevant_score}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_context_precision_ranks_useful_context_above_useless() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        let metric = ContextPrecisionMetric::new(client);
+
+        let reference = "Ragas is a framework to evaluate LLM applications.";
+        let useful_first = SingleTurnSample::new(
+            "What is Ragas?",
+            "answer",
+            vec![
+                "Ragas is a framework to evaluate LLM applications.".to_string(),
+                "The Eiffel Tower is located in Paris, France.".to_string(),
+            ],
+        )
+        .with_reference(reference);
+        // Same contexts but with the useful one buried at the bottom -> lower AP@k.
+        let useful_last = SingleTurnSample::new(
+            "What is Ragas?",
+            "answer",
+            vec![
+                "The Eiffel Tower is located in Paris, France.".to_string(),
+                "Ragas is a framework to evaluate LLM applications.".to_string(),
+            ],
+        )
+        .with_reference(reference);
+
+        let first_score = numeric(&metric.score(&useful_first).await.expect("useful first"));
+        let last_score = numeric(&metric.score(&useful_last).await.expect("useful last"));
+
+        assert!(
+            first_score > last_score,
+            "useful-first={first_score} must exceed useful-last={last_score}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_context_recall_scores_supported_above_unsupported() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        let metric = LlmContextRecallMetric::new(client);
+
+        let contexts = vec![
+            "Ragas is a framework to evaluate LLM applications.".to_string(),
+            "Ragas is maintained by the Exploding Gradients team.".to_string(),
+        ];
+        let supported = SingleTurnSample::new("What is Ragas?", "answer", contexts.clone())
+            .with_reference(
+                "Ragas evaluates LLM applications. Exploding Gradients maintains it.",
+            );
+        let unsupported = SingleTurnSample::new("What is Ragas?", "answer", contexts)
+            .with_reference("Mount Everest is the tallest mountain. The ocean is deep and blue.");
+
+        let supported_score = numeric(&metric.score(&supported).await.expect("supported"));
+        let unsupported_score = numeric(&metric.score(&unsupported).await.expect("unsupported"));
+
+        assert!(
+            supported_score > unsupported_score,
+            "supported={supported_score} must exceed unsupported={unsupported_score}"
+        );
+    }
 }
