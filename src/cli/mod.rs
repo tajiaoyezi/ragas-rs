@@ -5,8 +5,7 @@ use serde_json::json;
 
 use crate::{
     DatasetBackend, EvaluationDataset, EvaluationSample, ExtractionBundle, GraphNode,
-    InMemoryDatasetBackend, KnowledgeGraph, ParityClaim, ParityFeatureStatus,
-    ParityFixtureMetadata, ParityFixtureMode, PersonaGenerator, RagasError, attach_extractions,
+    InMemoryDatasetBackend, KnowledgeGraph, PersonaGenerator, RagasError, attach_extractions,
     build_chunk_relationships, split_text_into_chunks, synthesize_single_hop_sample,
 };
 
@@ -31,40 +30,6 @@ pub struct CliOutput {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum WorkflowFamily {
-    Evaluate,
-    Testset,
-    Benchmark,
-    Experiment,
-    SdkFacing,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum WorkflowSurface {
-    Cli,
-    Library,
-    Sdk,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkflowDescriptor {
-    pub family: WorkflowFamily,
-    pub surface: WorkflowSurface,
-    pub parity_status: ParityFeatureStatus,
-    pub command: Option<String>,
-    pub machine_readable: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SdkModuleContract {
-    pub upstream_module_path: String,
-    pub upstream_size_bytes: usize,
-    pub surface: WorkflowSurface,
-    pub exports_remote_client: bool,
-    pub release_blocking: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,56 +88,6 @@ pub fn run_cli_command(
     }
 }
 
-pub fn workflow_descriptors() -> Vec<WorkflowDescriptor> {
-    vec![
-        workflow_descriptor(
-            WorkflowFamily::Evaluate,
-            WorkflowSurface::Cli,
-            ParityFeatureStatus::Complete,
-            Some("evaluate"),
-            true,
-        ),
-        workflow_descriptor(
-            WorkflowFamily::Testset,
-            WorkflowSurface::Cli,
-            ParityFeatureStatus::Complete,
-            Some("testset"),
-            true,
-        ),
-        workflow_descriptor(
-            WorkflowFamily::Benchmark,
-            WorkflowSurface::Cli,
-            ParityFeatureStatus::Complete,
-            Some("benchmark"),
-            true,
-        ),
-        workflow_descriptor(
-            WorkflowFamily::Experiment,
-            WorkflowSurface::Library,
-            ParityFeatureStatus::Complete,
-            None,
-            true,
-        ),
-        workflow_descriptor(
-            WorkflowFamily::SdkFacing,
-            WorkflowSurface::Sdk,
-            ParityFeatureStatus::Complete,
-            None,
-            true,
-        ),
-    ]
-}
-
-pub fn sdk_module_contract() -> SdkModuleContract {
-    SdkModuleContract {
-        upstream_module_path: "src/ragas/sdk.py".to_string(),
-        upstream_size_bytes: 0,
-        surface: WorkflowSurface::Sdk,
-        exports_remote_client: false,
-        release_blocking: false,
-    }
-}
-
 pub fn cli_contract_snapshot(output: &CliOutput) -> Result<CliContractSnapshot, RagasError> {
     let stdout: serde_json::Value = serde_json::from_str(&output.stdout)
         .map_err(|error| parse_error(format!("CLI stdout snapshot parse failed: {error}")))?;
@@ -209,25 +124,6 @@ pub fn cli_error_snapshot(error: &RagasError) -> Result<CliErrorSnapshot, RagasE
         ],
         exit_code: 1,
     })
-}
-
-pub fn workflow_parity_claims() -> Vec<ParityClaim> {
-    workflow_descriptors()
-        .into_iter()
-        .map(|descriptor| {
-            let feature = format!("workflow::{}", workflow_family_slug(descriptor.family));
-            let fixtures = if descriptor.parity_status == ParityFeatureStatus::Complete {
-                vec![workflow_fixture_metadata(&feature, descriptor.family)]
-            } else {
-                Vec::new()
-            };
-            ParityClaim {
-                feature,
-                status: descriptor.parity_status,
-                fixtures,
-            }
-        })
-        .collect()
 }
 
 fn run_evaluate(
@@ -337,53 +233,6 @@ fn dataset_io_error(message: impl Into<String>) -> RagasError {
     }
 }
 
-fn workflow_descriptor(
-    family: WorkflowFamily,
-    surface: WorkflowSurface,
-    parity_status: ParityFeatureStatus,
-    command: Option<&str>,
-    machine_readable: bool,
-) -> WorkflowDescriptor {
-    WorkflowDescriptor {
-        family,
-        surface,
-        parity_status,
-        command: command.map(str::to_string),
-        machine_readable,
-    }
-}
-
-fn workflow_family_slug(family: WorkflowFamily) -> &'static str {
-    match family {
-        WorkflowFamily::Evaluate => "evaluate",
-        WorkflowFamily::Testset => "testset",
-        WorkflowFamily::Benchmark => "benchmark",
-        WorkflowFamily::Experiment => "experiment",
-        WorkflowFamily::SdkFacing => "sdk_facing",
-    }
-}
-
-fn workflow_fixture_metadata(feature: &str, family: WorkflowFamily) -> ParityFixtureMetadata {
-    let module_path = match family {
-        WorkflowFamily::Evaluate | WorkflowFamily::Testset | WorkflowFamily::Benchmark => {
-            "src/ragas/cli.py"
-        }
-        WorkflowFamily::Experiment => "src/ragas/experiment.py",
-        WorkflowFamily::SdkFacing => "src/ragas/sdk.py",
-    };
-    ParityFixtureMetadata::new(
-        feature,
-        module_path,
-        None,
-        format!(
-            "tests/parity/fixtures/workflow_{}.json",
-            workflow_family_slug(family)
-        ),
-        ParityFixtureMode::DeterministicMock,
-        None,
-    )
-}
-
 fn cli_error_kind(error: &RagasError) -> &'static str {
     match error {
         RagasError::EmptyDataset => "empty_dataset",
@@ -398,10 +247,8 @@ fn cli_error_kind(error: &RagasError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::release_blocking_claims;
     use crate::{DatasetBackend, EvaluationDataset, EvaluationSample, SingleTurnSample};
     use serde_json::Value;
-    use std::collections::BTreeSet;
 
     fn fixture_dataset() -> EvaluationDataset<EvaluationSample> {
         EvaluationDataset::from_samples(vec![EvaluationSample::SingleTurn(
@@ -504,41 +351,6 @@ mod tests {
     }
 
     #[test]
-    fn test_21_2_1_workflow_registry_lists_upstream_flows() {
-        // SCEN-21.2.1 / AC1 / TEST-21.2.1
-        let descriptors = workflow_descriptors();
-        let by_family: BTreeMap<_, _> = descriptors
-            .iter()
-            .map(|descriptor| (descriptor.family, descriptor))
-            .collect();
-
-        for expected in [
-            WorkflowFamily::Evaluate,
-            WorkflowFamily::Testset,
-            WorkflowFamily::Benchmark,
-            WorkflowFamily::Experiment,
-            WorkflowFamily::SdkFacing,
-        ] {
-            assert!(by_family.contains_key(&expected), "missing {expected:?}");
-        }
-
-        let evaluate = by_family
-            .get(&WorkflowFamily::Evaluate)
-            .expect("evaluate workflow");
-        assert_eq!(evaluate.surface, WorkflowSurface::Cli);
-        assert_eq!(evaluate.parity_status, ParityFeatureStatus::Complete);
-        assert_eq!(evaluate.command.as_deref(), Some("evaluate"));
-        assert!(evaluate.machine_readable);
-
-        let sdk = by_family
-            .get(&WorkflowFamily::SdkFacing)
-            .expect("SDK-facing workflow");
-        assert_eq!(sdk.surface, WorkflowSurface::Sdk);
-        assert_eq!(sdk.parity_status, ParityFeatureStatus::Complete);
-        assert!(sdk.machine_readable);
-    }
-
-    #[test]
     fn test_21_2_2_cli_contract_snapshots_preserve_outputs_and_errors() {
         // SCEN-21.2.2 / AC2 / TEST-21.2.2
         let mut runtime = CliRuntime::new();
@@ -580,106 +392,5 @@ mod tests {
         assert_eq!(error_snapshot.error_kind, "dataset_io");
         assert_eq!(error_snapshot.stderr_keys, vec!["error", "kind", "status"]);
         assert_eq!(error_snapshot.exit_code, 1);
-    }
-
-    #[test]
-    fn test_21_2_3_missing_cli_or_sdk_workflows_create_release_blocking_claims() {
-        // SCEN-21.2.3 / AC3 / TEST-21.2.3
-        let claims = workflow_parity_claims();
-        let blockers = release_blocking_claims(&claims);
-        let blocking_features: BTreeSet<_> = blockers
-            .iter()
-            .map(|claim| claim.feature.as_str())
-            .collect();
-
-        assert!(!blocking_features.contains("workflow::sdk_facing"));
-
-        let synthetic_missing = vec![ParityClaim {
-            feature: "workflow::synthetic_missing".to_string(),
-            status: ParityFeatureStatus::KnownGap,
-            fixtures: Vec::new(),
-        }];
-        assert_eq!(release_blocking_claims(&synthetic_missing).len(), 1);
-
-        let complete_features: BTreeSet<_> = claims
-            .iter()
-            .filter(|claim| claim.status == ParityFeatureStatus::Complete)
-            .map(|claim| claim.feature.as_str())
-            .collect();
-        for expected in [
-            "workflow::evaluate",
-            "workflow::testset",
-            "workflow::benchmark",
-            "workflow::experiment",
-            "workflow::sdk_facing",
-        ] {
-            assert!(
-                complete_features.contains(expected),
-                "missing complete workflow claim {expected}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_24_3_1_sdk_module_contract_records_empty_upstream_module() {
-        // SCEN-24.3.1 / AC1 / TEST-24.3.1
-        let contract = sdk_module_contract();
-
-        assert_eq!(contract.upstream_module_path, "src/ragas/sdk.py");
-        assert_eq!(contract.upstream_size_bytes, 0);
-        assert_eq!(contract.surface, WorkflowSurface::Sdk);
-        assert!(!contract.exports_remote_client);
-        assert!(!contract.release_blocking);
-    }
-
-    #[test]
-    fn test_24_3_2_sdk_workflow_claim_is_fixture_backed_complete() {
-        // SCEN-24.3.2 / AC2 / TEST-24.3.2
-        let descriptors = workflow_descriptors();
-        let sdk = descriptors
-            .iter()
-            .find(|descriptor| descriptor.family == WorkflowFamily::SdkFacing)
-            .expect("SDK-facing descriptor");
-
-        assert_eq!(sdk.surface, WorkflowSurface::Sdk);
-        assert_eq!(sdk.parity_status, ParityFeatureStatus::Complete);
-        assert_eq!(sdk.command, None);
-        assert!(sdk.machine_readable);
-
-        let claims = workflow_parity_claims();
-        let claim = claims
-            .iter()
-            .find(|claim| claim.feature == "workflow::sdk_facing")
-            .expect("SDK-facing parity claim");
-
-        assert_eq!(claim.status, ParityFeatureStatus::Complete);
-        assert_eq!(claim.fixtures.len(), 1);
-        assert_eq!(claim.fixtures[0].upstream_module_path, "src/ragas/sdk.py");
-        assert_eq!(
-            claim.fixtures[0].fixture_path,
-            "tests/parity/fixtures/workflow_sdk_facing.json"
-        );
-    }
-
-    #[test]
-    fn test_24_3_3_sdk_workflow_is_absent_from_release_blockers() {
-        // SCEN-24.3.3 / AC3 / TEST-24.3.3
-        let claims = workflow_parity_claims();
-        let blockers = release_blocking_claims(&claims);
-        let blocking_features: BTreeSet<_> = blockers
-            .iter()
-            .map(|claim| claim.feature.as_str())
-            .collect();
-
-        assert!(!blocking_features.contains("workflow::sdk_facing"));
-
-        let synthetic_missing = vec![ParityClaim {
-            feature: "workflow::missing".to_string(),
-            status: ParityFeatureStatus::KnownGap,
-            fixtures: Vec::new(),
-        }];
-        let synthetic_blockers = release_blocking_claims(&synthetic_missing);
-        assert_eq!(synthetic_blockers.len(), 1);
-        assert_eq!(synthetic_blockers[0].feature, "workflow::missing");
     }
 }

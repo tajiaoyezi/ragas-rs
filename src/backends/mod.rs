@@ -5,77 +5,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    EvaluationDataset, EvaluationSample, ParityClaim, ParityFeatureStatus, ParityFixtureMetadata,
-    ParityFixtureMode, RagasError, SingleTurnSample,
-};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum BackendFamily {
-    InMemory,
-    LocalJsonl,
-    LocalCsv,
-    DiskCache,
-    GoogleDrive,
-}
-
-impl BackendFamily {
-    pub fn slug(self) -> &'static str {
-        match self {
-            Self::InMemory => "in-memory",
-            Self::LocalJsonl => "local-jsonl",
-            Self::LocalCsv => "local-csv",
-            Self::DiskCache => "disk-cache",
-            Self::GoogleDrive => "gdrive",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BackendMode {
-    Deterministic,
-    External,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BackendCapability {
-    DatasetStorage,
-    KeyValueCache,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BackendDescriptor {
-    pub family: BackendFamily,
-    pub mode: BackendMode,
-    pub capability: BackendCapability,
-    pub supports_key_value: bool,
-    pub requires_external_service: bool,
-    pub parity_status: ParityFeatureStatus,
-}
-
-impl BackendDescriptor {
-    pub fn new(
-        family: BackendFamily,
-        mode: BackendMode,
-        capability: BackendCapability,
-        supports_key_value: bool,
-        requires_external_service: bool,
-        parity_status: ParityFeatureStatus,
-    ) -> Self {
-        Self {
-            family,
-            mode,
-            capability,
-            supports_key_value,
-            requires_external_service,
-            parity_status,
-        }
-    }
-
-    pub fn parity_feature(&self) -> String {
-        format!("backend::{}", self.family.slug())
-    }
-}
+use crate::{EvaluationDataset, EvaluationSample, RagasError, SingleTurnSample};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum GDriveAuthMode {
@@ -113,128 +43,6 @@ impl GDriveBackendConfig {
             experiments_folder_name: "experiments".to_string(),
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct BackendRegistry {
-    descriptors: Vec<BackendDescriptor>,
-}
-
-impl BackendRegistry {
-    pub fn new() -> Self {
-        Self {
-            descriptors: backend_descriptors(),
-        }
-    }
-
-    pub fn descriptors(&self) -> &[BackendDescriptor] {
-        &self.descriptors
-    }
-}
-
-impl Default for BackendRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-pub fn backend_descriptors() -> Vec<BackendDescriptor> {
-    vec![
-        BackendDescriptor::new(
-            BackendFamily::InMemory,
-            BackendMode::Deterministic,
-            BackendCapability::DatasetStorage,
-            false,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        BackendDescriptor::new(
-            BackendFamily::LocalJsonl,
-            BackendMode::Deterministic,
-            BackendCapability::DatasetStorage,
-            false,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        BackendDescriptor::new(
-            BackendFamily::LocalCsv,
-            BackendMode::Deterministic,
-            BackendCapability::DatasetStorage,
-            false,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        BackendDescriptor::new(
-            BackendFamily::DiskCache,
-            BackendMode::Deterministic,
-            BackendCapability::KeyValueCache,
-            true,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        BackendDescriptor::new(
-            BackendFamily::GoogleDrive,
-            BackendMode::External,
-            BackendCapability::DatasetStorage,
-            false,
-            true,
-            ParityFeatureStatus::Complete,
-        ),
-    ]
-}
-
-pub fn backend_parity_claims() -> Vec<ParityClaim> {
-    backend_descriptors()
-        .into_iter()
-        .filter_map(|descriptor| {
-            let feature = descriptor.parity_feature();
-            if descriptor.family == BackendFamily::DiskCache {
-                return Some(ParityClaim {
-                    feature,
-                    status: descriptor.parity_status,
-                    fixtures: vec![backend_fixture_metadata(
-                        "backend::disk-cache",
-                        "src/ragas/cache.py",
-                        Some("tests/unit/test_cache.py"),
-                        "tests/parity/fixtures/backend_disk_cache.json",
-                    )],
-                });
-            }
-            if descriptor.family == BackendFamily::GoogleDrive {
-                return Some(ParityClaim {
-                    feature,
-                    status: descriptor.parity_status,
-                    fixtures: vec![backend_fixture_metadata(
-                        "backend::gdrive",
-                        "src/ragas/backends/gdrive_backend.py",
-                        None,
-                        "tests/parity/fixtures/backend_gdrive.json",
-                    )],
-                });
-            }
-            (descriptor.parity_status != ParityFeatureStatus::Complete).then_some(ParityClaim {
-                feature,
-                status: descriptor.parity_status,
-                fixtures: Vec::new(),
-            })
-        })
-        .collect()
-}
-
-fn backend_fixture_metadata(
-    feature: &str,
-    upstream_module_path: &str,
-    upstream_test_path: Option<&str>,
-    fixture_path: &str,
-) -> ParityFixtureMetadata {
-    ParityFixtureMetadata::new(
-        feature,
-        upstream_module_path,
-        upstream_test_path.map(str::to_string),
-        fixture_path,
-        ParityFixtureMode::DeterministicMock,
-        None,
-    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -767,7 +575,6 @@ fn dataset_io_error(message: impl Into<String>) -> RagasError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::release_blocking_claims;
 
     fn sample(question: &str, response: &str, context: &str) -> EvaluationSample {
         EvaluationSample::SingleTurn(
@@ -844,42 +651,6 @@ mod tests {
     }
 
     #[test]
-    fn test_18_3_1_backend_registry_lists_upstream_families_with_status() {
-        // SCEN-18.3.1 / AC1 / TEST-18.3.1
-        let registry = BackendRegistry::new();
-        let descriptors = registry.descriptors();
-        let families: BTreeSet<_> = descriptors
-            .iter()
-            .map(|descriptor| descriptor.family)
-            .collect();
-
-        for expected in [
-            BackendFamily::InMemory,
-            BackendFamily::LocalJsonl,
-            BackendFamily::LocalCsv,
-            BackendFamily::DiskCache,
-            BackendFamily::GoogleDrive,
-        ] {
-            assert!(families.contains(&expected), "missing {expected:?}");
-        }
-
-        let memory = descriptors
-            .iter()
-            .find(|descriptor| descriptor.family == BackendFamily::InMemory)
-            .expect("in-memory descriptor");
-        assert_eq!(memory.mode, BackendMode::Deterministic);
-        assert_eq!(memory.parity_status, ParityFeatureStatus::Complete);
-
-        let gdrive = descriptors
-            .iter()
-            .find(|descriptor| descriptor.family == BackendFamily::GoogleDrive)
-            .expect("gdrive descriptor");
-        assert_eq!(gdrive.mode, BackendMode::External);
-        assert!(gdrive.requires_external_service);
-        assert_eq!(gdrive.parity_status, ParityFeatureStatus::Complete);
-    }
-
-    #[test]
     fn test_18_3_2_disk_cache_compatibility_preserves_key_value_semantics() {
         // SCEN-18.3.2 / AC2 / TEST-18.3.2
         let mut cache = DiskCacheCompatibility::new();
@@ -893,23 +664,6 @@ mod tests {
         assert_eq!(cache.get("alpha"), Some(br#"{"score":0.9}"#.to_vec()));
         assert!(cache.delete("beta"));
         assert_eq!(cache.get("beta"), None);
-    }
-
-    #[test]
-    fn test_18_3_3_unsupported_external_backend_blocks_release() {
-        // SCEN-18.3.3 / AC3 / TEST-18.3.3
-        let synthetic_missing = vec![ParityClaim {
-            feature: "backend::external-missing".to_string(),
-            status: ParityFeatureStatus::KnownGap,
-            fixtures: Vec::new(),
-        }];
-        let blockers = release_blocking_claims(&synthetic_missing);
-        let blocking_features: BTreeSet<_> = blockers
-            .iter()
-            .map(|claim| claim.feature.as_str())
-            .collect();
-
-        assert!(blocking_features.contains("backend::external-missing"));
     }
 
     fn temp_cache_dir(name: &str) -> std::path::PathBuf {
@@ -974,32 +728,6 @@ mod tests {
     }
 
     #[test]
-    fn test_24_2_3_disk_cache_complete_claim_is_fixture_backed_and_not_blocking() {
-        // SCEN-24.2.3 / AC3 / TEST-24.2.3
-        let disk_descriptor = backend_descriptors()
-            .into_iter()
-            .find(|descriptor| descriptor.family == BackendFamily::DiskCache)
-            .expect("disk-cache descriptor");
-        assert_eq!(disk_descriptor.parity_status, ParityFeatureStatus::Complete);
-
-        let claims = backend_parity_claims();
-        let disk_claim = claims
-            .iter()
-            .find(|claim| claim.feature == "backend::disk-cache")
-            .expect("disk-cache parity claim");
-        assert_eq!(disk_claim.status, ParityFeatureStatus::Complete);
-        assert!(!disk_claim.fixtures.is_empty());
-
-        let blockers = release_blocking_claims(&claims);
-        let blocking_features: BTreeSet<_> = blockers
-            .iter()
-            .map(|claim| claim.feature.as_str())
-            .collect();
-        assert!(!blocking_features.contains("backend::disk-cache"));
-        assert!(!blocking_features.contains("backend::gdrive"));
-    }
-
-    #[test]
     fn test_25_1_1_gdrive_config_records_upstream_auth_contract() {
         // SCEN-25.1.1 / AC1 / TEST-25.1.1
         let config = GDriveBackendConfig::new("folder-root");
@@ -1059,43 +787,5 @@ mod tests {
         assert!(backend.delete("quality/run-1"));
         assert!(backend.list().is_empty());
         assert!(backend.load("quality/run-1").is_err());
-    }
-
-    #[test]
-    fn test_25_1_3_gdrive_complete_claim_is_fixture_backed_and_not_blocking() {
-        // SCEN-25.1.3 / AC3 / TEST-25.1.3
-        let descriptor = backend_descriptors()
-            .into_iter()
-            .find(|descriptor| descriptor.family == BackendFamily::GoogleDrive)
-            .expect("gdrive descriptor");
-        assert_eq!(descriptor.parity_status, ParityFeatureStatus::Complete);
-        assert_eq!(descriptor.mode, BackendMode::External);
-        assert!(descriptor.requires_external_service);
-
-        let claims = backend_parity_claims();
-        let claim = claims
-            .iter()
-            .find(|claim| claim.feature == "backend::gdrive")
-            .expect("gdrive parity claim");
-        assert_eq!(claim.status, ParityFeatureStatus::Complete);
-        assert_eq!(claim.fixtures.len(), 1);
-        assert_eq!(
-            claim.fixtures[0].fixture_path,
-            "tests/parity/fixtures/backend_gdrive.json"
-        );
-
-        let blockers = release_blocking_claims(&claims);
-        let blocking_features: BTreeSet<_> = blockers
-            .iter()
-            .map(|claim| claim.feature.as_str())
-            .collect();
-        assert!(!blocking_features.contains("backend::gdrive"));
-
-        let synthetic_missing = vec![ParityClaim {
-            feature: "backend::external-missing".to_string(),
-            status: ParityFeatureStatus::KnownGap,
-            fixtures: Vec::new(),
-        }];
-        assert_eq!(release_blocking_claims(&synthetic_missing).len(), 1);
     }
 }

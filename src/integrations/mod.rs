@@ -3,10 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    ParityClaim, ParityFeatureStatus, ParityFixtureMetadata, ParityFixtureMode, RagasError,
-    RuntimeEvent, RuntimeEventKind,
-};
+use crate::{RagasError, RuntimeEvent, RuntimeEventKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum IntegrationDestination {
@@ -54,43 +51,6 @@ impl IntegrationFamily {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum IntegrationTestMode {
-    DeterministicContract,
-    FeatureGatedLive,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IntegrationDescriptor {
-    pub family: IntegrationFamily,
-    pub destination: Option<IntegrationDestination>,
-    pub test_mode: IntegrationTestMode,
-    pub requires_vendor_sdk: bool,
-    pub parity_status: ParityFeatureStatus,
-}
-
-impl IntegrationDescriptor {
-    pub fn new(
-        family: IntegrationFamily,
-        destination: Option<IntegrationDestination>,
-        test_mode: IntegrationTestMode,
-        requires_vendor_sdk: bool,
-        parity_status: ParityFeatureStatus,
-    ) -> Self {
-        Self {
-            family,
-            destination,
-            test_mode,
-            requires_vendor_sdk,
-            parity_status,
-        }
-    }
-
-    pub fn parity_feature(&self) -> String {
-        format!("integration::{}", self.family.slug())
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IntegrationBoundaryMode {
     CallbackAdapter,
     DelegatedFramework,
@@ -116,8 +76,6 @@ pub struct IntegrationContractDescriptor {
     pub auth_envs: Vec<&'static str>,
     pub target_operation: &'static str,
     pub lifecycle_fields: Vec<&'static str>,
-    pub upstream_module_path: &'static str,
-    pub fixture_path: &'static str,
     pub requires_vendor_sdk: bool,
 }
 
@@ -161,8 +119,6 @@ pub fn integration_contract_descriptors() -> Vec<IntegrationContractDescriptor> 
             IntegrationAuthMode::DelegatedSdk,
             &[],
             "EvaluatorChain.invoke",
-            "src/ragas/integrations/langchain.py",
-            "tests/parity/fixtures/integration_langchain.json",
             true,
         ),
         integration_contract(
@@ -171,8 +127,6 @@ pub fn integration_contract_descriptors() -> Vec<IntegrationContractDescriptor> 
             IntegrationAuthMode::DelegatedSdk,
             &[],
             "LangGraph workflow adapter",
-            "src/ragas/integrations/langgraph.py",
-            "tests/parity/fixtures/integration_langgraph.json",
             true,
         ),
         integration_contract(
@@ -181,8 +135,6 @@ pub fn integration_contract_descriptors() -> Vec<IntegrationContractDescriptor> 
             IntegrationAuthMode::BearerToken,
             &["LANGCHAIN_API_KEY", "LANGCHAIN_ENDPOINT"],
             "Client.run_on_dataset",
-            "src/ragas/integrations/langsmith.py",
-            "tests/parity/fixtures/integration_langsmith.json",
             true,
         ),
         integration_contract(
@@ -191,8 +143,6 @@ pub fn integration_contract_descriptors() -> Vec<IntegrationContractDescriptor> 
             IntegrationAuthMode::DelegatedSdk,
             &[],
             "LlamaIndex evaluator adapter",
-            "src/ragas/integrations/llama_index.py",
-            "tests/parity/fixtures/integration_llamaindex.json",
             true,
         ),
         integration_contract(
@@ -201,8 +151,6 @@ pub fn integration_contract_descriptors() -> Vec<IntegrationContractDescriptor> 
             IntegrationAuthMode::BearerToken,
             &["AG_UI_API_KEY"],
             "call_ag_ui_endpoint stream events",
-            "src/ragas/integrations/ag_ui.py",
-            "tests/parity/fixtures/integration_ag_ui.json",
             true,
         ),
         integration_contract(
@@ -211,8 +159,6 @@ pub fn integration_contract_descriptors() -> Vec<IntegrationContractDescriptor> 
             IntegrationAuthMode::AwsSigV4,
             &["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"],
             "Bedrock evaluation job",
-            "src/ragas/integrations/amazon_bedrock.py",
-            "tests/parity/fixtures/integration_bedrock.json",
             true,
         ),
         integration_contract(
@@ -221,8 +167,6 @@ pub fn integration_contract_descriptors() -> Vec<IntegrationContractDescriptor> 
             IntegrationAuthMode::DelegatedSdk,
             &[],
             "Griptape task adapter",
-            "src/ragas/integrations/griptape.py",
-            "tests/parity/fixtures/integration_griptape.json",
             true,
         ),
         integration_contract(
@@ -231,8 +175,6 @@ pub fn integration_contract_descriptors() -> Vec<IntegrationContractDescriptor> 
             IntegrationAuthMode::BearerToken,
             &["HELICONE_API_KEY"],
             "Helicone trace export",
-            "src/ragas/integrations/helicone.py",
-            "tests/parity/fixtures/integration_helicone.json",
             true,
         ),
         integration_contract(
@@ -245,8 +187,6 @@ pub fn integration_contract_descriptors() -> Vec<IntegrationContractDescriptor> 
                 "LANGFUSE_HOST",
             ],
             "LangfuseTrace sync_trace",
-            "src/ragas/integrations/tracing/langfuse.py",
-            "tests/parity/fixtures/integration_langfuse.json",
             true,
         ),
         integration_contract(
@@ -255,8 +195,6 @@ pub fn integration_contract_descriptors() -> Vec<IntegrationContractDescriptor> 
             IntegrationAuthMode::EnvVars,
             &["OPIK_API_KEY", "OPIK_WORKSPACE"],
             "OpikTracer log feedback scores",
-            "src/ragas/integrations/opik.py",
-            "tests/parity/fixtures/integration_opik.json",
             true,
         ),
         integration_contract(
@@ -265,8 +203,6 @@ pub fn integration_contract_descriptors() -> Vec<IntegrationContractDescriptor> 
             IntegrationAuthMode::BearerToken,
             &["R2R_API_KEY", "R2R_BASE_URL"],
             "R2R app endpoint",
-            "src/ragas/integrations/r2r.py",
-            "tests/parity/fixtures/integration_r2r.json",
             true,
         ),
         integration_contract(
@@ -275,8 +211,6 @@ pub fn integration_contract_descriptors() -> Vec<IntegrationContractDescriptor> 
             IntegrationAuthMode::DelegatedSdk,
             &[],
             "Swarm agent adapter",
-            "src/ragas/integrations/swarm.py",
-            "tests/parity/fixtures/integration_swarm.json",
             true,
         ),
     ]
@@ -321,8 +255,6 @@ fn integration_contract(
     auth_mode: IntegrationAuthMode,
     auth_envs: &[&'static str],
     target_operation: &'static str,
-    upstream_module_path: &'static str,
-    fixture_path: &'static str,
     requires_vendor_sdk: bool,
 ) -> IntegrationContractDescriptor {
     IntegrationContractDescriptor {
@@ -338,8 +270,6 @@ fn integration_contract(
             "sample_index",
             "payload",
         ],
-        upstream_module_path,
-        fixture_path,
         requires_vendor_sdk,
     }
 }
@@ -382,146 +312,6 @@ fn integration_destination_for_family(family: IntegrationFamily) -> IntegrationD
         IntegrationFamily::Opik => IntegrationDestination::Opik,
         _ => IntegrationDestination::Tracing,
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct IntegrationRegistry {
-    descriptors: Vec<IntegrationDescriptor>,
-}
-
-impl IntegrationRegistry {
-    pub fn new() -> Self {
-        Self {
-            descriptors: integration_descriptors(),
-        }
-    }
-
-    pub fn descriptors(&self) -> &[IntegrationDescriptor] {
-        &self.descriptors
-    }
-}
-
-impl Default for IntegrationRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-pub fn integration_descriptors() -> Vec<IntegrationDescriptor> {
-    vec![
-        IntegrationDescriptor::new(
-            IntegrationFamily::GenericTracing,
-            Some(IntegrationDestination::Tracing),
-            IntegrationTestMode::DeterministicContract,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        IntegrationDescriptor::new(
-            IntegrationFamily::LangChain,
-            None,
-            IntegrationTestMode::FeatureGatedLive,
-            true,
-            ParityFeatureStatus::Complete,
-        ),
-        IntegrationDescriptor::new(
-            IntegrationFamily::LangGraph,
-            None,
-            IntegrationTestMode::FeatureGatedLive,
-            true,
-            ParityFeatureStatus::Complete,
-        ),
-        IntegrationDescriptor::new(
-            IntegrationFamily::LangSmith,
-            Some(IntegrationDestination::LangSmith),
-            IntegrationTestMode::FeatureGatedLive,
-            true,
-            ParityFeatureStatus::Complete,
-        ),
-        IntegrationDescriptor::new(
-            IntegrationFamily::LlamaIndex,
-            None,
-            IntegrationTestMode::FeatureGatedLive,
-            true,
-            ParityFeatureStatus::Complete,
-        ),
-        IntegrationDescriptor::new(
-            IntegrationFamily::AgUi,
-            None,
-            IntegrationTestMode::FeatureGatedLive,
-            true,
-            ParityFeatureStatus::Complete,
-        ),
-        IntegrationDescriptor::new(
-            IntegrationFamily::Bedrock,
-            None,
-            IntegrationTestMode::FeatureGatedLive,
-            true,
-            ParityFeatureStatus::Complete,
-        ),
-        IntegrationDescriptor::new(
-            IntegrationFamily::Griptape,
-            None,
-            IntegrationTestMode::FeatureGatedLive,
-            true,
-            ParityFeatureStatus::Complete,
-        ),
-        IntegrationDescriptor::new(
-            IntegrationFamily::Helicone,
-            None,
-            IntegrationTestMode::FeatureGatedLive,
-            true,
-            ParityFeatureStatus::Complete,
-        ),
-        IntegrationDescriptor::new(
-            IntegrationFamily::Langfuse,
-            Some(IntegrationDestination::Langfuse),
-            IntegrationTestMode::FeatureGatedLive,
-            true,
-            ParityFeatureStatus::Complete,
-        ),
-        IntegrationDescriptor::new(
-            IntegrationFamily::Opik,
-            Some(IntegrationDestination::Opik),
-            IntegrationTestMode::FeatureGatedLive,
-            true,
-            ParityFeatureStatus::Complete,
-        ),
-        IntegrationDescriptor::new(
-            IntegrationFamily::R2R,
-            None,
-            IntegrationTestMode::FeatureGatedLive,
-            true,
-            ParityFeatureStatus::Complete,
-        ),
-        IntegrationDescriptor::new(
-            IntegrationFamily::Swarm,
-            None,
-            IntegrationTestMode::FeatureGatedLive,
-            true,
-            ParityFeatureStatus::Complete,
-        ),
-    ]
-}
-
-pub fn integration_parity_claims() -> Vec<ParityClaim> {
-    integration_contract_descriptors()
-        .into_iter()
-        .map(|descriptor| {
-            let feature = format!("integration::{}", descriptor.family.slug());
-            ParityClaim {
-                feature: feature.clone(),
-                status: ParityFeatureStatus::Complete,
-                fixtures: vec![ParityFixtureMetadata::new(
-                    feature,
-                    descriptor.upstream_module_path,
-                    None,
-                    descriptor.fixture_path,
-                    ParityFixtureMode::DeterministicMock,
-                    None,
-                )],
-            }
-        })
-        .collect()
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -685,10 +475,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    use crate::{
-        CallbackManager, ReleaseBlockerCategory, build_release_blocker_ledger,
-        release_blocking_claims, validate_parity_claim,
-    };
+    use crate::CallbackManager;
 
     #[test]
     fn test_14_2_1_tracing_integration_receives_callback_events() {
@@ -767,55 +554,6 @@ mod tests {
     }
 
     #[test]
-    fn test_18_4_1_integration_registry_lists_upstream_families_with_test_mode() {
-        // SCEN-18.4.1 / AC1 / TEST-18.4.1
-        let registry = IntegrationRegistry::new();
-        let descriptors = registry.descriptors();
-        let families: BTreeSet<_> = descriptors
-            .iter()
-            .map(|descriptor| descriptor.family)
-            .collect();
-
-        for expected in [
-            IntegrationFamily::GenericTracing,
-            IntegrationFamily::LangChain,
-            IntegrationFamily::LangGraph,
-            IntegrationFamily::LangSmith,
-            IntegrationFamily::LlamaIndex,
-            IntegrationFamily::AgUi,
-            IntegrationFamily::Bedrock,
-            IntegrationFamily::Griptape,
-            IntegrationFamily::Helicone,
-            IntegrationFamily::Langfuse,
-            IntegrationFamily::Opik,
-            IntegrationFamily::R2R,
-            IntegrationFamily::Swarm,
-        ] {
-            assert!(families.contains(&expected), "missing {expected:?}");
-        }
-
-        let tracing = descriptors
-            .iter()
-            .find(|descriptor| descriptor.family == IntegrationFamily::GenericTracing)
-            .expect("tracing descriptor");
-        assert_eq!(
-            tracing.test_mode,
-            IntegrationTestMode::DeterministicContract
-        );
-        assert_eq!(tracing.parity_status, ParityFeatureStatus::Complete);
-
-        let langsmith = descriptors
-            .iter()
-            .find(|descriptor| descriptor.family == IntegrationFamily::LangSmith)
-            .expect("langsmith descriptor");
-        assert_eq!(
-            langsmith.destination,
-            Some(IntegrationDestination::LangSmith)
-        );
-        assert_eq!(langsmith.parity_status, ParityFeatureStatus::Complete);
-    }
-
-    #[test]
     fn test_18_4_2_callback_payload_normalization_redacts_and_preserves_lifecycle_fields() {
         // SCEN-18.4.2 / AC2 / TEST-18.4.2
         let event = RuntimeEvent::metric_started("run-42", "faithfulness", 7);
@@ -851,39 +589,6 @@ mod tests {
     }
 
     #[test]
-    fn test_18_4_3_integration_families_emit_release_ledger_claims() {
-        // SCEN-18.4.3 / AC3 / TEST-18.4.3
-        let claims = integration_parity_claims();
-        let blockers = release_blocking_claims(&claims);
-        let features: BTreeSet<_> = claims.iter().map(|claim| claim.feature.as_str()).collect();
-
-        for expected in [
-            "integration::langchain",
-            "integration::langgraph",
-            "integration::langsmith",
-            "integration::llamaindex",
-            "integration::ag-ui",
-            "integration::bedrock",
-            "integration::griptape",
-            "integration::helicone",
-            "integration::langfuse",
-            "integration::opik",
-            "integration::r2r",
-            "integration::swarm",
-        ] {
-            assert!(
-                features.contains(expected),
-                "missing integration claim {expected}"
-            );
-        }
-
-        assert!(
-            blockers.is_empty(),
-            "task 27.1 closes integration release blockers with fixture-backed claims"
-        );
-    }
-
-    #[test]
     fn test_27_1_1_integration_contract_descriptors_cover_tracked_upstream_families() {
         // SCEN-27.1.1 / AC1 / TEST-27.1.1
         let descriptors = integration_contract_descriptors();
@@ -910,13 +615,7 @@ mod tests {
         }
 
         assert!(descriptors.iter().all(|descriptor| {
-            descriptor
-                .upstream_module_path
-                .starts_with("src/ragas/integrations/")
-                && descriptor
-                    .fixture_path
-                    .starts_with("tests/parity/fixtures/integration_")
-                && !descriptor.target_operation.is_empty()
+            !descriptor.target_operation.is_empty()
                 && descriptor.lifecycle_fields.contains(&"run_id")
                 && descriptor.lifecycle_fields.contains(&"event_kind")
         }));
@@ -1011,48 +710,5 @@ mod tests {
             "AWS4-HMAC-SHA256 <redacted>"
         );
         assert!(!bedrock.safe_debug.contains("aws-secret"));
-    }
-
-    #[test]
-    fn test_27_1_3_integration_claims_are_fixture_backed_and_not_release_blocking() {
-        // SCEN-27.1.3 / AC3 / TEST-27.1.3
-        let claims = integration_parity_claims();
-        let features: BTreeSet<_> = claims.iter().map(|claim| claim.feature.as_str()).collect();
-
-        for expected in [
-            "integration::langchain",
-            "integration::langgraph",
-            "integration::langsmith",
-            "integration::llamaindex",
-            "integration::ag-ui",
-            "integration::bedrock",
-            "integration::griptape",
-            "integration::helicone",
-            "integration::langfuse",
-            "integration::opik",
-            "integration::r2r",
-            "integration::swarm",
-        ] {
-            assert!(features.contains(expected), "missing {expected}");
-        }
-
-        assert!(claims.iter().all(|claim| {
-            claim.status == ParityFeatureStatus::Complete
-                && !claim.fixtures.is_empty()
-                && validate_parity_claim(claim).is_ok()
-        }));
-        assert!(
-            release_blocking_claims(&claims).is_empty(),
-            "integration claims should not block release"
-        );
-
-        let ledger = build_release_blocker_ledger();
-        assert!(
-            !ledger
-                .entries
-                .iter()
-                .any(|entry| entry.category == ReleaseBlockerCategory::Integration),
-            "integration category should be absent from release blockers"
-        );
     }
 }

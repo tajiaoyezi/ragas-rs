@@ -7,8 +7,7 @@ use async_trait::async_trait;
 
 use crate::{
     EmbeddingProvider, EmbeddingRequest, EmbeddingResponse, LlmProvider, LlmRequest, LlmResponse,
-    ParityClaim, ParityFeatureStatus, ParityFixtureMetadata, ParityFixtureMode, RagasError,
-    TokenUsage, UsageTracker,
+    RagasError, TokenUsage, UsageTracker,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -41,59 +40,10 @@ impl ProviderFamily {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ProviderMode {
-    Deterministic,
-    Live,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProviderKind {
     Llm,
     Embedding,
     StructuredLlm,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProviderDescriptor {
-    pub family: ProviderFamily,
-    pub kind: ProviderKind,
-    pub mode: ProviderMode,
-    pub supports_system_prompt: bool,
-    pub supports_structured_output: bool,
-    pub parity_status: ParityFeatureStatus,
-}
-
-impl ProviderDescriptor {
-    pub fn new(
-        family: ProviderFamily,
-        kind: ProviderKind,
-        mode: ProviderMode,
-        supports_system_prompt: bool,
-        supports_structured_output: bool,
-        parity_status: ParityFeatureStatus,
-    ) -> Self {
-        Self {
-            family,
-            kind,
-            mode,
-            supports_system_prompt,
-            supports_structured_output,
-            parity_status,
-        }
-    }
-
-    pub fn parity_feature(&self) -> String {
-        format!("provider::{}", self.family.slug())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StructuredLlmDescriptor {
-    pub family: ProviderFamily,
-    pub mode: ProviderMode,
-    pub supports_system_prompt: bool,
-    pub supports_structured_output: bool,
-    pub parity_status: ParityFeatureStatus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -122,8 +72,6 @@ pub struct ProviderProtocolDescriptor {
     pub request_path: &'static str,
     pub supports_system_prompt: bool,
     pub supports_structured_output: bool,
-    pub upstream_module_path: &'static str,
-    pub fixture_path: &'static str,
     pub response_text_path: &'static str,
     pub usage_path: Option<&'static str>,
 }
@@ -202,8 +150,6 @@ pub fn provider_protocol_descriptors() -> Vec<ProviderProtocolDescriptor> {
             request_path: "/chat/completions",
             supports_system_prompt: true,
             supports_structured_output: false,
-            upstream_module_path: "src/ragas/llms/base.py",
-            fixture_path: "tests/parity/fixtures/provider_openai_compatible.json",
             response_text_path: "choices[0].message.content",
             usage_path: Some("usage"),
         },
@@ -217,8 +163,6 @@ pub fn provider_protocol_descriptors() -> Vec<ProviderProtocolDescriptor> {
             request_path: "/embeddings",
             supports_system_prompt: false,
             supports_structured_output: false,
-            upstream_module_path: "src/ragas/embeddings/openai_provider.py",
-            fixture_path: "tests/parity/fixtures/provider_openai_compatible.json",
             response_text_path: "data[*].embedding",
             usage_path: Some("usage"),
         },
@@ -232,8 +176,6 @@ pub fn provider_protocol_descriptors() -> Vec<ProviderProtocolDescriptor> {
             request_path: "/openai/deployments/{deployment}/chat/completions?api-version={api_version}",
             supports_system_prompt: true,
             supports_structured_output: false,
-            upstream_module_path: "src/ragas/llms/base.py",
-            fixture_path: "tests/parity/fixtures/provider_azure_openai.json",
             response_text_path: "choices[0].message.content",
             usage_path: Some("usage"),
         },
@@ -247,8 +189,6 @@ pub fn provider_protocol_descriptors() -> Vec<ProviderProtocolDescriptor> {
             request_path: "/openai/deployments/{deployment}/embeddings?api-version={api_version}",
             supports_system_prompt: false,
             supports_structured_output: false,
-            upstream_module_path: "src/ragas/embeddings/openai_provider.py",
-            fixture_path: "tests/parity/fixtures/provider_azure_openai.json",
             response_text_path: "data[*].embedding",
             usage_path: Some("usage"),
         },
@@ -262,8 +202,6 @@ pub fn provider_protocol_descriptors() -> Vec<ProviderProtocolDescriptor> {
             request_path: "/completion",
             supports_system_prompt: true,
             supports_structured_output: false,
-            upstream_module_path: "src/ragas/llms/litellm_llm.py",
-            fixture_path: "tests/parity/fixtures/provider_litellm.json",
             response_text_path: "choices[0].message.content",
             usage_path: Some("usage"),
         },
@@ -277,8 +215,6 @@ pub fn provider_protocol_descriptors() -> Vec<ProviderProtocolDescriptor> {
             request_path: "/completion",
             supports_system_prompt: true,
             supports_structured_output: true,
-            upstream_module_path: "src/ragas/llms/adapters/litellm.py",
-            fixture_path: "tests/parity/fixtures/provider_litellm.json",
             response_text_path: "choices[0].message.content",
             usage_path: Some("usage"),
         },
@@ -292,8 +228,6 @@ pub fn provider_protocol_descriptors() -> Vec<ProviderProtocolDescriptor> {
             request_path: "/embedding",
             supports_system_prompt: false,
             supports_structured_output: false,
-            upstream_module_path: "src/ragas/embeddings/litellm_provider.py",
-            fixture_path: "tests/parity/fixtures/provider_litellm.json",
             response_text_path: "data[*].embedding",
             usage_path: Some("usage"),
         },
@@ -307,8 +241,6 @@ pub fn provider_protocol_descriptors() -> Vec<ProviderProtocolDescriptor> {
             request_path: "/chat/completions",
             supports_system_prompt: true,
             supports_structured_output: true,
-            upstream_module_path: "src/ragas/llms/adapters/instructor.py",
-            fixture_path: "tests/parity/fixtures/provider_instructor.json",
             response_text_path: "parsed",
             usage_path: Some("usage"),
         },
@@ -322,8 +254,6 @@ pub fn provider_protocol_descriptors() -> Vec<ProviderProtocolDescriptor> {
             request_path: "/run",
             supports_system_prompt: true,
             supports_structured_output: false,
-            upstream_module_path: "src/ragas/llms/haystack_wrapper.py",
-            fixture_path: "tests/parity/fixtures/provider_haystack.json",
             response_text_path: "replies[0]",
             usage_path: None,
         },
@@ -337,8 +267,6 @@ pub fn provider_protocol_descriptors() -> Vec<ProviderProtocolDescriptor> {
             request_path: "/run",
             supports_system_prompt: false,
             supports_structured_output: false,
-            upstream_module_path: "src/ragas/embeddings/haystack_wrapper.py",
-            fixture_path: "tests/parity/fixtures/provider_haystack.json",
             response_text_path: "embedding",
             usage_path: None,
         },
@@ -352,8 +280,6 @@ pub fn provider_protocol_descriptors() -> Vec<ProviderProtocolDescriptor> {
             request_path: "/generate",
             supports_system_prompt: false,
             supports_structured_output: false,
-            upstream_module_path: "src/ragas/embeddings/huggingface_provider.py",
-            fixture_path: "tests/parity/fixtures/provider_huggingface.json",
             response_text_path: "generated_text",
             usage_path: None,
         },
@@ -367,8 +293,6 @@ pub fn provider_protocol_descriptors() -> Vec<ProviderProtocolDescriptor> {
             request_path: "/encode",
             supports_system_prompt: false,
             supports_structured_output: false,
-            upstream_module_path: "src/ragas/embeddings/huggingface_provider.py",
-            fixture_path: "tests/parity/fixtures/provider_huggingface.json",
             response_text_path: "embeddings",
             usage_path: None,
         },
@@ -382,8 +306,6 @@ pub fn provider_protocol_descriptors() -> Vec<ProviderProtocolDescriptor> {
             request_path: ":generateContent",
             supports_system_prompt: true,
             supports_structured_output: false,
-            upstream_module_path: "src/ragas/llms/base.py",
-            fixture_path: "tests/parity/fixtures/provider_google.json",
             response_text_path: "candidates[0].content.parts[0].text",
             usage_path: Some("usageMetadata"),
         },
@@ -397,8 +319,6 @@ pub fn provider_protocol_descriptors() -> Vec<ProviderProtocolDescriptor> {
             request_path: ":embedContent",
             supports_system_prompt: false,
             supports_structured_output: false,
-            upstream_module_path: "src/ragas/embeddings/google_provider.py",
-            fixture_path: "tests/parity/fixtures/provider_google.json",
             response_text_path: "embedding.values",
             usage_path: None,
         },
@@ -412,8 +332,6 @@ pub fn provider_protocol_descriptors() -> Vec<ProviderProtocolDescriptor> {
             request_path: "/20231130/actions/generateText",
             supports_system_prompt: true,
             supports_structured_output: false,
-            upstream_module_path: "src/ragas/llms/oci_genai_wrapper.py",
-            fixture_path: "tests/parity/fixtures/provider_oci_genai.json",
             response_text_path: "modelOutput.generatedTexts[0].text",
             usage_path: Some("modelOutput.usage"),
         },
@@ -542,194 +460,15 @@ fn provider_plan_messages(input: &ProviderProtocolInput) -> Vec<serde_json::Valu
     messages
 }
 
-pub fn upstream_provider_descriptors() -> Vec<ProviderDescriptor> {
-    vec![
-        ProviderDescriptor::new(
-            ProviderFamily::OpenAiCompatible,
-            ProviderKind::Llm,
-            ProviderMode::Live,
-            true,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        ProviderDescriptor::new(
-            ProviderFamily::OpenAiCompatible,
-            ProviderKind::Embedding,
-            ProviderMode::Live,
-            false,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        ProviderDescriptor::new(
-            ProviderFamily::AzureOpenAi,
-            ProviderKind::Llm,
-            ProviderMode::Live,
-            true,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        ProviderDescriptor::new(
-            ProviderFamily::AzureOpenAi,
-            ProviderKind::Embedding,
-            ProviderMode::Live,
-            false,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        ProviderDescriptor::new(
-            ProviderFamily::LiteLlm,
-            ProviderKind::Llm,
-            ProviderMode::Live,
-            true,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        ProviderDescriptor::new(
-            ProviderFamily::LiteLlm,
-            ProviderKind::StructuredLlm,
-            ProviderMode::Live,
-            true,
-            true,
-            ParityFeatureStatus::Complete,
-        ),
-        ProviderDescriptor::new(
-            ProviderFamily::Instructor,
-            ProviderKind::StructuredLlm,
-            ProviderMode::Live,
-            true,
-            true,
-            ParityFeatureStatus::Complete,
-        ),
-        ProviderDescriptor::new(
-            ProviderFamily::Haystack,
-            ProviderKind::Llm,
-            ProviderMode::Live,
-            true,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        ProviderDescriptor::new(
-            ProviderFamily::Haystack,
-            ProviderKind::Embedding,
-            ProviderMode::Live,
-            false,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        ProviderDescriptor::new(
-            ProviderFamily::HuggingFace,
-            ProviderKind::Llm,
-            ProviderMode::Live,
-            false,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        ProviderDescriptor::new(
-            ProviderFamily::HuggingFace,
-            ProviderKind::Embedding,
-            ProviderMode::Live,
-            false,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        ProviderDescriptor::new(
-            ProviderFamily::Google,
-            ProviderKind::Llm,
-            ProviderMode::Live,
-            true,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        ProviderDescriptor::new(
-            ProviderFamily::Google,
-            ProviderKind::Embedding,
-            ProviderMode::Live,
-            false,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        ProviderDescriptor::new(
-            ProviderFamily::OciGenAi,
-            ProviderKind::Llm,
-            ProviderMode::Live,
-            true,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        ProviderDescriptor::new(
-            ProviderFamily::Mock,
-            ProviderKind::Llm,
-            ProviderMode::Deterministic,
-            true,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-        ProviderDescriptor::new(
-            ProviderFamily::Mock,
-            ProviderKind::Embedding,
-            ProviderMode::Deterministic,
-            false,
-            false,
-            ParityFeatureStatus::Complete,
-        ),
-    ]
-}
-
-pub fn structured_llm_descriptors() -> Vec<StructuredLlmDescriptor> {
-    upstream_provider_descriptors()
-        .into_iter()
-        .filter(|descriptor| descriptor.kind == ProviderKind::StructuredLlm)
-        .map(|descriptor| StructuredLlmDescriptor {
-            family: descriptor.family,
-            mode: descriptor.mode,
-            supports_system_prompt: descriptor.supports_system_prompt,
-            supports_structured_output: descriptor.supports_structured_output,
-            parity_status: descriptor.parity_status,
-        })
-        .collect()
-}
-
-pub fn provider_parity_claims() -> Vec<ParityClaim> {
-    let mut fixtures_by_feature: BTreeMap<String, Vec<ParityFixtureMetadata>> = BTreeMap::new();
-    for descriptor in provider_protocol_descriptors() {
-        let feature = format!("provider::{}", descriptor.family.slug());
-        fixtures_by_feature
-            .entry(feature.clone())
-            .or_default()
-            .push(ParityFixtureMetadata::new(
-                feature,
-                descriptor.upstream_module_path,
-                None,
-                descriptor.fixture_path,
-                ParityFixtureMode::DeterministicMock,
-                None,
-            ));
-    }
-
-    fixtures_by_feature
-        .into_iter()
-        .map(|(feature, fixtures)| ParityClaim {
-            feature,
-            status: ParityFeatureStatus::Complete,
-            fixtures,
-        })
-        .collect()
-}
-
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ProviderRegistry {
     llms: HashMap<String, Arc<dyn LlmProvider>>,
     embeddings: HashMap<String, Arc<dyn EmbeddingProvider>>,
-    descriptors: Vec<ProviderDescriptor>,
 }
 
 impl ProviderRegistry {
     pub fn new() -> Self {
-        Self {
-            llms: HashMap::new(),
-            embeddings: HashMap::new(),
-            descriptors: upstream_provider_descriptors(),
-        }
+        Self::default()
     }
 
     pub fn register_llm(mut self, name: impl Into<String>, provider: Arc<dyn LlmProvider>) -> Self {
@@ -744,15 +483,6 @@ impl ProviderRegistry {
     ) -> Self {
         self.embeddings.insert(name.into(), provider);
         self
-    }
-
-    pub fn with_provider_descriptor(mut self, descriptor: ProviderDescriptor) -> Self {
-        self.descriptors.push(descriptor);
-        self
-    }
-
-    pub fn provider_descriptors(&self) -> &[ProviderDescriptor] {
-        &self.descriptors
     }
 
     pub fn llm(&self, name: &str) -> Result<Arc<dyn LlmProvider>, RagasError> {
@@ -771,12 +501,6 @@ impl ProviderRegistry {
             .ok_or_else(|| RagasError::Provider {
                 message: format!("missing provider: embedding '{name}'"),
             })
-    }
-}
-
-impl Default for ProviderRegistry {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -852,12 +576,8 @@ pub fn record_provider_usage(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeSet;
 
-    use crate::{
-        ChatMessage, ReleaseBlockerCategory, build_release_blocker_ledger, release_blocking_claims,
-        validate_parity_claim,
-    };
+    use crate::ChatMessage;
     use serde_json::json;
 
     #[test]
@@ -946,89 +666,9 @@ mod tests {
     }
 
     #[test]
-    fn test_18_2_1_provider_descriptors_classify_upstream_families_and_modes() {
-        // SCEN-18.2.1 / AC1 / TEST-18.2.1
-        let registry = ProviderRegistry::new();
-        let descriptors = registry.provider_descriptors();
-        let families: BTreeSet<_> = descriptors
-            .iter()
-            .map(|descriptor| descriptor.family)
-            .collect();
-
-        for expected in [
-            ProviderFamily::OpenAiCompatible,
-            ProviderFamily::AzureOpenAi,
-            ProviderFamily::LiteLlm,
-            ProviderFamily::Instructor,
-            ProviderFamily::Haystack,
-            ProviderFamily::HuggingFace,
-            ProviderFamily::Google,
-            ProviderFamily::OciGenAi,
-            ProviderFamily::Mock,
-        ] {
-            assert!(families.contains(&expected), "missing {expected:?}");
-        }
-
-        assert!(descriptors.iter().any(|descriptor| {
-            descriptor.kind == ProviderKind::Llm && descriptor.mode == ProviderMode::Live
-        }));
-        assert!(descriptors.iter().any(|descriptor| {
-            descriptor.kind == ProviderKind::Embedding && descriptor.mode == ProviderMode::Live
-        }));
-        assert!(descriptors.iter().any(|descriptor| {
-            descriptor.family == ProviderFamily::Mock
-                && descriptor.mode == ProviderMode::Deterministic
-        }));
-    }
-
-    #[test]
-    fn test_18_2_2_structured_llm_descriptors_record_system_prompt_support() {
-        // SCEN-18.2.2 / AC2 / TEST-18.2.2
-        let structured = structured_llm_descriptors();
-
-        for family in [ProviderFamily::Instructor, ProviderFamily::LiteLlm] {
-            let descriptor = structured
-                .iter()
-                .find(|descriptor| descriptor.family == family)
-                .unwrap_or_else(|| panic!("missing structured descriptor for {family:?}"));
-            assert_eq!(descriptor.mode, ProviderMode::Live);
-            assert!(descriptor.supports_system_prompt);
-            assert!(descriptor.supports_structured_output);
-        }
-    }
-
-    #[test]
-    fn test_18_2_3_live_provider_families_emit_release_ledger_claims() {
-        // SCEN-18.2.3 / AC3 / TEST-18.2.3
-        let claims = provider_parity_claims();
-        let blockers = release_blocking_claims(&claims);
-        let features: BTreeSet<_> = claims.iter().map(|claim| claim.feature.as_str()).collect();
-
-        for expected in [
-            "provider::azure-openai",
-            "provider::google",
-            "provider::haystack",
-            "provider::huggingface",
-            "provider::instructor",
-            "provider::litellm",
-            "provider::oci-genai",
-            "provider::openai-compatible",
-        ] {
-            assert!(
-                features.contains(expected),
-                "missing provider claim {expected}"
-            );
-        }
-
-        assert!(
-            blockers.is_empty(),
-            "task 26.1 closes provider release blockers with fixture-backed claims"
-        );
-    }
-
-    #[test]
     fn test_26_1_1_provider_protocol_descriptors_cover_tracked_upstream_families() {
         // SCEN-26.1.1 / AC1 / TEST-26.1.1
+        use std::collections::BTreeSet;
         let descriptors = provider_protocol_descriptors();
         let families: BTreeSet<_> = descriptors
             .iter()
@@ -1049,12 +689,7 @@ mod tests {
         }
 
         assert!(descriptors.iter().all(|descriptor| {
-            !descriptor.endpoint_template.is_empty()
-                && !descriptor.request_path.is_empty()
-                && descriptor.upstream_module_path.starts_with("src/ragas/")
-                && descriptor
-                    .fixture_path
-                    .starts_with("tests/parity/fixtures/provider_")
+            !descriptor.endpoint_template.is_empty() && !descriptor.request_path.is_empty()
         }));
         assert!(descriptors.iter().any(|descriptor| {
             descriptor.family == ProviderFamily::Google
@@ -1133,44 +768,5 @@ mod tests {
         assert_eq!(structured.body["response_model"], json!("AnswerScore"));
         assert_eq!(structured.body["messages"][0]["role"], json!("system"));
         assert_eq!(structured.protocol_mode, ProviderProtocolMode::DirectHttp);
-    }
-
-    #[test]
-    fn test_26_1_3_provider_claims_are_fixture_backed_and_not_release_blocking() {
-        // SCEN-26.1.3 / AC3 / TEST-26.1.3
-        let claims = provider_parity_claims();
-        let features: BTreeSet<_> = claims.iter().map(|claim| claim.feature.as_str()).collect();
-
-        for expected in [
-            "provider::azure-openai",
-            "provider::google",
-            "provider::haystack",
-            "provider::huggingface",
-            "provider::instructor",
-            "provider::litellm",
-            "provider::oci-genai",
-            "provider::openai-compatible",
-        ] {
-            assert!(features.contains(expected), "missing {expected}");
-        }
-
-        assert!(claims.iter().all(|claim| {
-            claim.status == ParityFeatureStatus::Complete
-                && !claim.fixtures.is_empty()
-                && validate_parity_claim(claim).is_ok()
-        }));
-        assert!(
-            release_blocking_claims(&claims).is_empty(),
-            "provider claims should not block release"
-        );
-
-        let ledger = build_release_blocker_ledger();
-        assert!(
-            !ledger
-                .entries
-                .iter()
-                .any(|entry| entry.category == ReleaseBlockerCategory::Provider),
-            "provider category should be absent from release blockers"
-        );
     }
 }
