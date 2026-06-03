@@ -310,12 +310,12 @@ struct GeneratedQuestion {
 }
 
 pub struct ContextPrecisionMetric {
-    embedding: Arc<dyn EmbeddingProvider>,
+    llm: Arc<dyn LlmProvider>,
 }
 
 impl ContextPrecisionMetric {
-    pub fn new(embedding: Arc<dyn EmbeddingProvider>) -> Self {
-        Self { embedding }
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self { llm }
     }
 }
 
@@ -328,11 +328,31 @@ impl Metric for ContextPrecisionMetric {
     fn requirements(&self) -> MetricRequirements {
         MetricRequirements::new(
             self.name(),
-            vec![SampleField::UserInput, SampleField::RetrievedContexts],
+            vec![
+                SampleField::UserInput,
+                SampleField::Reference,
+                SampleField::RetrievedContexts,
+            ],
         )
     }
 
+    /// Faithful port of ragas' LLMContextPrecisionWithReference:
+    ///   for each retrieved context, ask the LLM whether that context was useful to
+    ///   arrive at the REFERENCE answer for the user's question (verdict 1 = useful);
+    ///   then compute Average Precision@k over the contexts in their retrieval order:
+    ///   precision@k = (relevant among the first k) / k, and
+    ///   AP = sum_k (precision@k * verdict_k) / (total relevant contexts).
+    /// Returns 0.0 when no context is relevant (or there are no contexts).
     async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let reference = match sample.reference.as_deref() {
+            Some(reference) if !reference.trim().is_empty() => reference,
+            _ => {
+                return Err(RagasError::Parse {
+                    message: "context precision requires a non-empty reference".to_string(),
+                });
+            }
+        };
+
         if sample.retrieved_contexts.is_empty() {
             return Ok(
                 MetricResult::success(self.name(), MetricValue::numeric(0.0))
@@ -340,38 +360,73 @@ impl Metric for ContextPrecisionMetric {
             );
         }
 
-        let mut input = Vec::with_capacity(sample.retrieved_contexts.len() + 1);
-        input.push(sample.user_input.clone());
-        input.extend(sample.retrieved_contexts.iter().cloned());
-        let response = self.embedding.embed(EmbeddingRequest { input }).await?;
-        if response.embeddings.len() != sample.retrieved_contexts.len() + 1 {
-            return Err(RagasError::Parse {
-                message: "context precision embedding count mismatch".to_string(),
-            });
+        let verdicts = self.verify_contexts(sample, reference).await?;
+
+        let total_relevant = verdicts.iter().filter(|verdict| **verdict == 1).count();
+        if total_relevant == 0 {
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(0.0))
+                    .with_reason("no retrieved context was useful to reach the reference"),
+            );
         }
 
-        let query = &response.embeddings[0];
-        let mut relevant_count = 0usize;
+        let mut relevant_seen = 0usize;
         let mut precision_sum = 0.0f64;
-        for (rank, context_embedding) in response.embeddings.iter().skip(1).enumerate() {
-            let similarity = cosine_similarity(query, context_embedding);
-            if similarity >= 0.5 {
-                relevant_count += 1;
-                precision_sum += relevant_count as f64 / (rank + 1) as f64;
+        for (index, verdict) in verdicts.iter().enumerate() {
+            if *verdict == 1 {
+                relevant_seen += 1;
+                let rank = index + 1;
+                // precision@k weighted by verdict_k (only relevant ranks contribute).
+                precision_sum += relevant_seen as f64 / rank as f64;
             }
         }
-
-        let score = if relevant_count == 0 {
-            0.0
-        } else {
-            precision_sum / relevant_count as f64
-        };
+        let score = precision_sum / total_relevant as f64;
 
         Ok(
-            MetricResult::success(self.name(), MetricValue::numeric(score))
-                .with_reason("average precision over contexts with embedding similarity >= 0.5"),
+            MetricResult::success(self.name(), MetricValue::numeric(score)).with_reason(format!(
+                "average precision@k over {total_relevant}/{} useful context(s)",
+                verdicts.len()
+            )),
         )
     }
+}
+
+impl ContextPrecisionMetric {
+    /// Ask the LLM, once per retrieved context, whether the context helped arrive at the
+    /// reference answer. Verdicts are returned in retrieval order (one per context).
+    async fn verify_contexts(
+        &self,
+        sample: &SingleTurnSample,
+        reference: &str,
+    ) -> Result<Vec<i64>, RagasError> {
+        let mut verdicts = Vec::with_capacity(sample.retrieved_contexts.len());
+        for context in &sample.retrieved_contexts {
+            let prompt = format!(
+                "Given a QUESTION, an ANSWER, and a CONTEXT, decide whether the context was \
+useful to arrive at the answer. Use verdict 1 when the context is useful, 0 otherwise. \
+Return only JSON of the form {{\"verdict\": 0, \"reason\": \"...\"}}.\n\n\
+QUESTION: {}\nANSWER: {reference}\nCONTEXT: {context}",
+                sample.user_input,
+            );
+            let response = self
+                .llm
+                .generate(LlmRequest {
+                    messages: vec![ChatMessage::user(prompt)],
+                    temperature: Some(0.0),
+                })
+                .await?;
+            let parsed: ContextPrecisionVerdict =
+                parse_json(&response.content, "context precision verdict")?;
+            verdicts.push(parsed.verdict);
+        }
+        Ok(verdicts)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextPrecisionVerdict {
+    #[serde(default)]
+    verdict: i64,
 }
 
 pub fn cosine_similarity(left: &[f32], right: &[f32]) -> f64 {
@@ -910,30 +965,114 @@ mod tests {
         assert!(error.to_string().contains("question generation"));
     }
 
-    #[tokio::test]
-    async fn test_4_1_4_context_precision_computes_average_precision() {
-        // SCEN-4.1.4 / AC4 / TEST-4.1.4
-        let metric = ContextPrecisionMetric::new(Arc::new(MapEmbeddingProvider {
-            vectors: HashMap::from([
-                ("question".to_string(), vec![1.0, 0.0]),
-                ("ctx-a".to_string(), vec![1.0, 0.0]),
-                ("ctx-b".to_string(), vec![0.0, 1.0]),
-                ("ctx-c".to_string(), vec![0.8, 0.2]),
-            ]),
-        }));
-        let sample = SingleTurnSample::new(
-            "question",
+    fn context_precision_sample(contexts: Vec<&str>) -> SingleTurnSample {
+        SingleTurnSample::new(
+            "What is Ragas and who maintains it?",
             "answer",
-            vec![
-                "ctx-a".to_string(),
-                "ctx-b".to_string(),
-                "ctx-c".to_string(),
-            ],
-        );
+            contexts.into_iter().map(str::to_string).collect(),
+        )
+        .with_reference("Ragas evaluates LLM applications and is maintained by Exploding Gradients.")
+    }
+
+    #[tokio::test]
+    async fn test_4_1_4_context_precision_computes_average_precision_at_k() {
+        // SCEN-4.1.4 / AC4 / TEST-4.1.4
+        // Per-context LLM verdicts in retrieval order: [1, 0, 1, 1].
+        // precision@k contributes only at relevant ranks 1, 3, 4:
+        //   AP = (1/1 + 2/3 + 3/4) / 3 (3 = total relevant contexts).
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"verdict":1,"reason":"directly answers"}"#,
+            r#"{"verdict":0,"reason":"off topic"}"#,
+            r#"{"verdict":1,"reason":"supports the answer"}"#,
+            r#"{"verdict":1,"reason":"supports the answer"}"#,
+        ]));
+        let metric = ContextPrecisionMetric::new(llm.clone());
+        let sample = context_precision_sample(vec!["ctx-a", "ctx-b", "ctx-c", "ctx-d"]);
 
         let result = metric.score(&sample).await.expect("context precision");
-        let score = result.value.and_then(|value| value.as_numeric()).unwrap();
 
-        assert!((score - 0.83333333).abs() < 0.0001);
+        assert_eq!(result.metric_name, "context_precision");
+        assert!((numeric(&result) - (1.0 + 2.0 / 3.0 + 3.0 / 4.0) / 3.0).abs() < 1e-9);
+
+        // One LLM call per context, each conditioned on the reference answer (not a single ask).
+        let prompts = llm.prompts();
+        assert_eq!(prompts.len(), 4);
+        assert!(prompts[0].contains("ANSWER: Ragas evaluates LLM applications"));
+        assert!(prompts[0].contains("CONTEXT: ctx-a"));
+        assert!(prompts[2].contains("CONTEXT: ctx-c"));
+    }
+
+    #[tokio::test]
+    async fn context_precision_all_irrelevant_contexts_score_zero() {
+        // Every context judged useless -> no relevant contexts -> AP = 0.0 (discrimination: bad sample low).
+        let metric = ContextPrecisionMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"verdict":0,"reason":"unrelated"}"#,
+            r#"{"verdict":0,"reason":"unrelated"}"#,
+        ])));
+        let sample = context_precision_sample(vec!["ctx-a", "ctx-b"]);
+
+        let result = metric.score(&sample).await.expect("context precision");
+
+        assert_eq!(numeric(&result), 0.0);
+    }
+
+    #[tokio::test]
+    async fn context_precision_empty_contexts_score_zero_without_calling_llm() {
+        // No contexts -> 0.0, and the LLM must not be invoked.
+        let llm = Arc::new(ScriptedLlm::new(vec![]));
+        let metric = ContextPrecisionMetric::new(llm.clone());
+        let sample = SingleTurnSample::new("question", "answer", Vec::new())
+            .with_reference("the reference answer");
+
+        let result = metric.score(&sample).await.expect("context precision");
+
+        assert_eq!(numeric(&result), 0.0);
+        assert!(llm.prompts().is_empty());
+    }
+
+    #[tokio::test]
+    async fn context_precision_missing_reference_is_an_error_without_calling_llm() {
+        // No reference -> validation error before any LLM call.
+        let llm = Arc::new(ScriptedLlm::new(vec![]));
+        let metric = ContextPrecisionMetric::new(llm.clone());
+        // SingleTurnSample::new leaves `reference` as None.
+        let sample = SingleTurnSample::new("question", "answer", vec!["ctx-a".to_string()]);
+
+        let error = metric
+            .score(&sample)
+            .await
+            .expect_err("missing reference");
+
+        assert!(error.to_string().contains("reference"));
+        assert!(llm.prompts().is_empty());
+    }
+
+    #[tokio::test]
+    async fn context_precision_repairs_fenced_json_from_the_model() {
+        // The model wraps its verdict JSON in a markdown fence + prose; the repair path recovers it.
+        let metric = ContextPrecisionMetric::new(Arc::new(ScriptedLlm::new(vec![
+            "Sure:\n```json\n{\"verdict\":1,\"reason\":\"useful\"}\n```",
+        ])));
+        let sample = context_precision_sample(vec!["ctx-a"]);
+
+        let result = metric.score(&sample).await.expect("context precision");
+
+        // Single relevant context at rank 1 -> AP = (1/1) / 1 = 1.0.
+        assert_eq!(numeric(&result), 1.0);
+    }
+
+    #[tokio::test]
+    async fn context_precision_surfaces_unparseable_model_output_as_error() {
+        let metric = ContextPrecisionMetric::new(Arc::new(ScriptedLlm::new(vec![
+            "This context is somewhat related I think.",
+        ])));
+        let sample = context_precision_sample(vec!["ctx-a"]);
+
+        let error = metric
+            .score(&sample)
+            .await
+            .expect_err("malformed verdict output");
+
+        assert!(error.to_string().contains("context precision verdict"));
     }
 }
