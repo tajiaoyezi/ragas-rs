@@ -429,6 +429,149 @@ struct ContextPrecisionVerdict {
     verdict: i64,
 }
 
+pub struct LlmContextRecallMetric {
+    llm: Arc<dyn LlmProvider>,
+}
+
+impl LlmContextRecallMetric {
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self { llm }
+    }
+}
+
+#[async_trait]
+impl Metric for LlmContextRecallMetric {
+    fn name(&self) -> &str {
+        "context_recall"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![
+                SampleField::UserInput,
+                SampleField::Reference,
+                SampleField::RetrievedContexts,
+            ],
+        )
+    }
+
+    /// Faithful port of ragas' LLMContextRecall:
+    ///   1. split the REFERENCE answer into ordered sentences;
+    ///   2. ask the LLM, in one call, to classify each sentence as attributable to the
+    ///      retrieved contexts (verdict 1) or not (0), one classification per sentence in
+    ///      order;
+    ///   score = attributed_count / total_sentences.
+    /// An empty reference (zero sentences) yields NaN (ragas' 0/0 behaviour).
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let reference = match sample.reference.as_deref() {
+            Some(reference) if !reference.trim().is_empty() => reference,
+            _ => {
+                return Err(RagasError::Parse {
+                    message: "context recall requires a non-empty reference".to_string(),
+                });
+            }
+        };
+
+        let sentences = split_into_sentences(reference);
+        if sentences.is_empty() {
+            // No sentences -> undefined recall (ragas returns NaN for 0/0).
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(f64::NAN))
+                    .with_reason("reference contained no sentences to classify"),
+            );
+        }
+
+        let classifications = self.classify_sentences(sample, &sentences).await?;
+        let attributed = classifications
+            .iter()
+            .filter(|classification| classification.verdict == 1)
+            .count();
+        let total = sentences.len();
+        let score = attributed as f64 / total as f64;
+
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score)).with_reason(format!(
+                "{attributed}/{total} reference sentence(s) attributable to the retrieved contexts"
+            )),
+        )
+    }
+}
+
+impl LlmContextRecallMetric {
+    /// Ask the LLM, in a single call, to classify every reference sentence against the
+    /// retrieved contexts. Classifications are returned in the same order as the sentences.
+    async fn classify_sentences(
+        &self,
+        sample: &SingleTurnSample,
+        sentences: &[String],
+    ) -> Result<Vec<ContextRecallClassification>, RagasError> {
+        let numbered = sentences
+            .iter()
+            .enumerate()
+            .map(|(index, sentence)| format!("{}. {sentence}", index + 1))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let prompt = format!(
+            "Given a QUESTION, the retrieved CONTEXT, and an ANSWER split into numbered \
+sentences, decide for each sentence whether it can be attributed to the context. \
+Use verdict 1 when the sentence is supported by the context, 0 otherwise. \
+Return only JSON of the form \
+{{\"classifications\": [{{\"verdict\": 0, \"reason\": \"...\"}}]}} \
+with exactly one entry per sentence, in the same order.\n\n\
+QUESTION: {}\n\nCONTEXT:\n{}\n\nANSWER SENTENCES:\n{numbered}",
+            sample.user_input,
+            sample.retrieved_contexts.join("\n"),
+        );
+        let response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        let parsed: ContextRecallOutput =
+            parse_json(&response.content, "context recall classification")?;
+        Ok(parsed.classifications)
+    }
+}
+
+/// Split a block of text into sentences on sentence-ending punctuation (`.`, `!`, `?`).
+/// The terminator stays with its sentence; runs of whitespace and empty fragments are
+/// dropped. This is a deliberately simple heuristic (it does not handle abbreviations).
+fn split_into_sentences(text: &str) -> Vec<String> {
+    let mut sentences = Vec::new();
+    let mut current = String::new();
+    for ch in text.chars() {
+        current.push(ch);
+        if matches!(ch, '.' | '!' | '?') {
+            let trimmed = current.trim();
+            if !trimmed.is_empty() {
+                sentences.push(trimmed.to_string());
+            }
+            current.clear();
+        }
+    }
+    // Trailing text with no terminating punctuation still counts as a sentence.
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        sentences.push(trimmed.to_string());
+    }
+    sentences
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextRecallOutput {
+    #[serde(default)]
+    classifications: Vec<ContextRecallClassification>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextRecallClassification {
+    #[serde(default)]
+    verdict: i64,
+}
+
 pub fn cosine_similarity(left: &[f32], right: &[f32]) -> f64 {
     let len = left.len().min(right.len());
     if len == 0 {
@@ -1074,5 +1217,100 @@ mod tests {
             .expect_err("malformed verdict output");
 
         assert!(error.to_string().contains("context precision verdict"));
+    }
+
+    fn context_recall_sample() -> SingleTurnSample {
+        SingleTurnSample::new(
+            "What is Ragas and who maintains it?",
+            "answer",
+            vec![
+                "Ragas is a framework to evaluate LLM applications.".to_string(),
+                "Ragas is maintained by Exploding Gradients.".to_string(),
+            ],
+        )
+        // Two sentences -> two classifications.
+        .with_reference("Ragas evaluates LLM applications. Exploding Gradients maintains it.")
+    }
+
+    #[tokio::test]
+    async fn context_recall_all_attributed_sentences_score_one() {
+        // Both reference sentences attributable to the contexts -> 2/2 = 1.0.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"classifications":[{"verdict":1,"reason":"stated in context"},{"verdict":1,"reason":"stated in context"}]}"#,
+        ]));
+        let metric = LlmContextRecallMetric::new(llm.clone());
+
+        let result = metric.score(&context_recall_sample()).await.expect("recall");
+
+        assert_eq!(result.metric_name, "context_recall");
+        assert_eq!(numeric(&result), 1.0);
+
+        // A single classification call conditioned on the contexts and the ordered sentences.
+        let prompts = llm.prompts();
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("CONTEXT"));
+        assert!(prompts[0].contains("1. Ragas evaluates LLM applications."));
+        assert!(prompts[0].contains("2. Exploding Gradients maintains it."));
+    }
+
+    #[tokio::test]
+    async fn context_recall_discriminates_partial_and_unattributed_references() {
+        // 1 of 2 sentences attributed -> 0.5.
+        let half = LlmContextRecallMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"classifications":[{"verdict":1},{"verdict":0}]}"#,
+        ])));
+        assert_eq!(
+            numeric(&half.score(&context_recall_sample()).await.expect("half")),
+            0.5
+        );
+
+        // Nothing attributed -> 0.0 (a reference unsupported by context must score low).
+        let none = LlmContextRecallMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"classifications":[{"verdict":0},{"verdict":0}]}"#,
+        ])));
+        assert_eq!(
+            numeric(&none.score(&context_recall_sample()).await.expect("none")),
+            0.0
+        );
+    }
+
+    #[tokio::test]
+    async fn context_recall_empty_reference_is_nan_without_calling_llm() {
+        // A whitespace-only reference yields zero sentences -> NaN, and the LLM must not run.
+        let llm = Arc::new(ScriptedLlm::new(vec![]));
+        let metric = LlmContextRecallMetric::new(llm.clone());
+        let sample =
+            SingleTurnSample::new("question", "answer", vec!["ctx".to_string()]).with_reference("   ");
+
+        let error = metric.score(&sample).await.expect_err("empty reference");
+
+        assert!(error.to_string().contains("reference"));
+        assert!(llm.prompts().is_empty());
+    }
+
+    #[tokio::test]
+    async fn context_recall_repairs_fenced_json_from_the_model() {
+        // The model wraps its JSON in a markdown fence + prose; the repair path recovers it.
+        let metric = LlmContextRecallMetric::new(Arc::new(ScriptedLlm::new(vec![
+            "Sure:\n```json\n{\"classifications\":[{\"verdict\":1},{\"verdict\":1}]}\n```",
+        ])));
+
+        let result = metric.score(&context_recall_sample()).await.expect("repaired");
+
+        assert_eq!(numeric(&result), 1.0);
+    }
+
+    #[tokio::test]
+    async fn context_recall_surfaces_unparseable_model_output_as_error() {
+        let metric = LlmContextRecallMetric::new(Arc::new(ScriptedLlm::new(vec![
+            "I think both sentences are kind of supported.",
+        ])));
+
+        let error = metric
+            .score(&context_recall_sample())
+            .await
+            .expect_err("malformed classification output");
+
+        assert!(error.to_string().contains("context recall classification"));
     }
 }

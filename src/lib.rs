@@ -63,8 +63,8 @@ pub use llm::{
     parse_embedding_response,
 };
 pub use metric::{
-    ContextPrecisionMetric, FaithfulnessMetric, FnMetric, Metric, MetricResult, MetricValue,
-    RankingItem, ResponseRelevancyMetric, cosine_similarity,
+    ContextPrecisionMetric, FaithfulnessMetric, FnMetric, LlmContextRecallMetric, Metric,
+    MetricResult, MetricValue, RankingItem, ResponseRelevancyMetric, cosine_similarity,
 };
 pub use metrics::{
     AgentGoalOutcome, AnswerCorrectnessWeights, AspectCriticConfig, AspectCriticMode,
