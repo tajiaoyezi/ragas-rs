@@ -2,7 +2,6 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::validation::{MetricRequirements, SampleField};
 use crate::{
@@ -46,12 +45,44 @@ impl Metric for FaithfulnessMetric {
         )
     }
 
+    /// Faithful port of ragas' two-step Faithfulness:
+    ///   1. decompose the response into atomic statements;
+    ///   2. verify each statement against the retrieved contexts (NLI);
+    ///   score = supported_statements / total_statements.
     async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let statements = self.generate_statements(sample).await?;
+        if statements.is_empty() {
+            // ragas returns NaN when no statements can be extracted (0/0).
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(f64::NAN))
+                    .with_reason("no statements could be extracted from the response"),
+            );
+        }
+
+        let verdicts = self.verify_statements(sample, &statements).await?;
+        let supported = verdicts.iter().filter(|verdict| verdict.verdict == 1).count();
+        let total = statements.len();
+        let score = supported as f64 / total as f64;
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score)).with_reason(format!(
+                "{supported}/{total} statements supported by the retrieved contexts"
+            )),
+        )
+    }
+}
+
+impl FaithfulnessMetric {
+    /// Step 1 — ask the LLM to break the response into standalone atomic statements.
+    async fn generate_statements(
+        &self,
+        sample: &SingleTurnSample,
+    ) -> Result<Vec<String>, RagasError> {
         let prompt = format!(
-            "Score whether the response is faithful to the provided contexts. Return JSON with score between 0 and 1 and reason.\nQuestion: {}\nResponse: {}\nContexts:\n{}",
-            sample.user_input,
-            sample.response,
-            sample.retrieved_contexts.join("\n")
+            "Break the ANSWER into a list of standalone, atomic factual statements. \
+Each statement must be fully self-contained, resolving any pronouns using the QUESTION. \
+Return only JSON of the form {{\"statements\": [\"...\"]}}.\n\n\
+QUESTION: {}\nANSWER: {}",
+            sample.user_input, sample.response,
         );
         let response = self
             .llm
@@ -60,8 +91,83 @@ impl Metric for FaithfulnessMetric {
                 temperature: Some(0.0),
             })
             .await?;
+        let parsed: StatementGenerationOutput =
+            parse_json(&response.content, "faithfulness statement generation")?;
+        Ok(parsed
+            .statements
+            .into_iter()
+            .map(|statement| statement.trim().to_string())
+            .filter(|statement| !statement.is_empty())
+            .collect())
+    }
 
-        parse_judge_score(&response.content, self.name())
+    /// Step 2 — ask the LLM to verify each statement against the retrieved contexts.
+    async fn verify_statements(
+        &self,
+        sample: &SingleTurnSample,
+        statements: &[String],
+    ) -> Result<Vec<StatementVerdict>, RagasError> {
+        let numbered = statements
+            .iter()
+            .enumerate()
+            .map(|(index, statement)| format!("{}. {statement}", index + 1))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let prompt = format!(
+            "For each STATEMENT decide whether it can be directly inferred from the CONTEXT. \
+Use verdict 1 when the statement is supported by the context, 0 otherwise. \
+Return only JSON of the form \
+{{\"verdicts\": [{{\"statement\": \"...\", \"verdict\": 0, \"reason\": \"...\"}}]}} \
+with exactly one entry per statement, in the same order.\n\n\
+CONTEXT:\n{}\n\nSTATEMENTS:\n{numbered}",
+            sample.retrieved_contexts.join("\n"),
+        );
+        let response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        let parsed: NliOutput =
+            parse_json(&response.content, "faithfulness statement verification")?;
+        Ok(parsed.verdicts)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct StatementGenerationOutput {
+    #[serde(default)]
+    statements: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NliOutput {
+    #[serde(default)]
+    verdicts: Vec<StatementVerdict>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StatementVerdict {
+    verdict: i64,
+}
+
+/// Deserialize a JSON object from an LLM response, tolerating markdown fences or
+/// surrounding prose by extracting the outermost `{ .. }` block (repair path).
+fn parse_json<T: serde::de::DeserializeOwned>(
+    content: &str,
+    context: &str,
+) -> Result<T, RagasError> {
+    let block = extract_json_block(content);
+    serde_json::from_str(block).map_err(|error| RagasError::Parse {
+        message: format!("{context}: {error}"),
+    })
+}
+
+fn extract_json_block(content: &str) -> &str {
+    match (content.find('{'), content.rfind('}')) {
+        (Some(start), Some(end)) if end >= start => &content[start..=end],
+        _ => content.trim(),
     }
 }
 
@@ -172,23 +278,6 @@ impl Metric for ContextPrecisionMetric {
                 .with_reason("average precision over contexts with embedding similarity >= 0.5"),
         )
     }
-}
-
-fn parse_judge_score(content: &str, metric_name: &str) -> Result<MetricResult, RagasError> {
-    let parsed: Value = serde_json::from_str(content).map_err(|error| RagasError::Parse {
-        message: format!("judge JSON: {error}"),
-    })?;
-    let score = parsed
-        .get("score")
-        .and_then(Value::as_f64)
-        .ok_or_else(|| RagasError::Parse {
-            message: "judge JSON missing numeric score".to_string(),
-        })?;
-    let mut result = MetricResult::success(metric_name, MetricValue::numeric(score));
-    if let Some(reason) = parsed.get("reason").and_then(Value::as_str) {
-        result = result.with_reason(reason);
-    }
-    Ok(result)
 }
 
 pub fn cosine_similarity(left: &[f32], right: &[f32]) -> f64 {
@@ -357,7 +446,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::Mutex;
 
     use crate::{EmbeddingResponse, LlmResponse};
 
@@ -421,18 +511,65 @@ mod tests {
         assert_eq!(result.value.and_then(|value| value.as_numeric()), Some(6.0));
     }
 
-    struct StaticLlm {
-        content: String,
+    /// Mock LLM that replays scripted responses in order and records the prompts it saw,
+    /// so multi-step pipelines can be driven deterministically without a network call.
+    struct ScriptedLlm {
+        responses: Mutex<VecDeque<String>>,
+        prompts: Mutex<Vec<String>>,
+    }
+
+    impl ScriptedLlm {
+        fn new(responses: Vec<&str>) -> Self {
+            Self {
+                responses: Mutex::new(responses.into_iter().map(str::to_string).collect()),
+                prompts: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn prompts(&self) -> Vec<String> {
+            self.prompts.lock().expect("prompts").clone()
+        }
     }
 
     #[async_trait]
-    impl LlmProvider for StaticLlm {
-        async fn generate(&self, _request: LlmRequest) -> Result<LlmResponse, RagasError> {
+    impl LlmProvider for ScriptedLlm {
+        async fn generate(&self, request: LlmRequest) -> Result<LlmResponse, RagasError> {
+            let prompt = request
+                .messages
+                .iter()
+                .map(|message| message.content.clone())
+                .collect::<Vec<_>>()
+                .join("\n");
+            self.prompts.lock().expect("prompts").push(prompt);
+            let content =
+                self.responses
+                    .lock()
+                    .expect("responses")
+                    .pop_front()
+                    .ok_or_else(|| RagasError::Provider {
+                        message: "scripted LLM ran out of responses".to_string(),
+                    })?;
             Ok(LlmResponse {
-                content: self.content.clone(),
+                content,
                 usage: None,
             })
         }
+    }
+
+    fn faithfulness_sample() -> SingleTurnSample {
+        SingleTurnSample::new(
+            "What is Ragas and who maintains it?",
+            "Ragas evaluates LLM applications. It is maintained by Exploding Gradients.",
+            vec!["Ragas is a framework to evaluate LLM applications.".to_string()],
+        )
+    }
+
+    fn numeric(result: &MetricResult) -> f64 {
+        result
+            .value
+            .clone()
+            .and_then(|value| value.as_numeric())
+            .expect("numeric metric value")
     }
 
     struct MapEmbeddingProvider {
@@ -455,22 +592,87 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_4_1_2_faithfulness_parses_llm_judgement() {
-        // SCEN-4.1.2 / AC2 / TEST-4.1.2
-        let metric = FaithfulnessMetric::new(Arc::new(StaticLlm {
-            content: r#"{"score":0.7,"reason":"supported by context"}"#.to_string(),
-        }));
-        let sample = SingleTurnSample::new(
-            "What is Ragas?",
-            "Ragas evaluates LLM apps.",
-            vec!["Ragas evaluates LLM applications.".to_string()],
-        );
+    async fn faithfulness_runs_two_step_pipeline_and_scores_supported_ratio() {
+        // Step 1 extracts 2 statements; step 2 supports both -> 2/2 = 1.0.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"statements":["Ragas evaluates LLM applications.","Ragas is maintained by Exploding Gradients."]}"#,
+            r#"{"verdicts":[{"statement":"Ragas evaluates LLM applications.","verdict":1,"reason":"stated in context"},{"statement":"Ragas is maintained by Exploding Gradients.","verdict":1,"reason":"stated in context"}]}"#,
+        ]));
+        let metric = FaithfulnessMetric::new(llm.clone());
 
-        let result = metric.score(&sample).await.expect("faithfulness");
+        let result = metric.score(&faithfulness_sample()).await.expect("faithfulness");
 
         assert_eq!(result.metric_name, "faithfulness");
-        assert_eq!(result.value.and_then(|value| value.as_numeric()), Some(0.7));
-        assert_eq!(result.reason.as_deref(), Some("supported by context"));
+        assert_eq!(numeric(&result), 1.0);
+
+        // The pipeline made exactly two LLM calls and chained step 1's output into step 2's prompt.
+        let prompts = llm.prompts();
+        assert_eq!(prompts.len(), 2);
+        assert!(prompts[0].contains("ANSWER"));
+        assert!(prompts[1].contains("CONTEXT"));
+        assert!(prompts[1].contains("Ragas is maintained by Exploding Gradients."));
+    }
+
+    #[tokio::test]
+    async fn faithfulness_discriminates_partial_and_unsupported_responses() {
+        // 1 of 2 statements supported -> 0.5.
+        let partial = FaithfulnessMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"statements":["a","b"]}"#,
+            r#"{"verdicts":[{"verdict":1},{"verdict":0}]}"#,
+        ])));
+        assert_eq!(
+            numeric(&partial.score(&faithfulness_sample()).await.expect("partial")),
+            0.5
+        );
+
+        // Nothing supported -> 0.0 (an unfaithful answer must score low).
+        let unsupported = FaithfulnessMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"statements":["a","b"]}"#,
+            r#"{"verdicts":[{"verdict":0},{"verdict":0}]}"#,
+        ])));
+        assert_eq!(
+            numeric(&unsupported.score(&faithfulness_sample()).await.expect("unsupported")),
+            0.0
+        );
+    }
+
+    #[tokio::test]
+    async fn faithfulness_empty_statements_is_nan_and_skips_verification() {
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"statements":[]}"#]));
+        let metric = FaithfulnessMetric::new(llm.clone());
+
+        let result = metric.score(&faithfulness_sample()).await.expect("empty");
+
+        assert!(numeric(&result).is_nan());
+        // No statements -> the verification step must not run (only one LLM call).
+        assert_eq!(llm.prompts().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn faithfulness_repairs_fenced_json_from_the_model() {
+        // Both steps wrap their JSON in markdown fences and prose; the repair path must recover it.
+        let metric = FaithfulnessMetric::new(Arc::new(ScriptedLlm::new(vec![
+            "Sure! Here you go:\n```json\n{\"statements\":[\"a\"]}\n```",
+            "```\n{\"verdicts\":[{\"verdict\":1}]}\n```",
+        ])));
+
+        let result = metric.score(&faithfulness_sample()).await.expect("repaired");
+
+        assert_eq!(numeric(&result), 1.0);
+    }
+
+    #[tokio::test]
+    async fn faithfulness_surfaces_unparseable_model_output_as_error() {
+        let metric = FaithfulnessMetric::new(Arc::new(ScriptedLlm::new(vec![
+            "I cannot break this into statements.",
+        ])));
+
+        let error = metric
+            .score(&faithfulness_sample())
+            .await
+            .expect_err("malformed statement output");
+
+        assert!(error.to_string().contains("statement generation"));
     }
 
     #[tokio::test]
