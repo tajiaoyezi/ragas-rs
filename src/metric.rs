@@ -1363,10 +1363,24 @@ mod tests {
         OpenAiCompatibleClient::from_env(model).map(Arc::new)
     }
 
+    /// Build the live embedding client. Embeddings may live on a DIFFERENT provider
+    /// than chat (e.g. DeepSeek chat + SiliconFlow embeddings): if
+    /// `OPENAI_EMBEDDING_BASE_URL` and `OPENAI_EMBEDDING_API_KEY` are both set they are
+    /// used, otherwise it falls back to the same endpoint/key as chat (`from_env`).
     fn live_embedding_client() -> Option<Arc<OpenAiCompatibleClient>> {
         let model =
             std::env::var("OPENAI_EMBEDDING_MODEL").unwrap_or_else(|_| "text-embedding-3-small".to_string());
-        OpenAiCompatibleClient::from_env(model).map(Arc::new)
+        match (
+            std::env::var("OPENAI_EMBEDDING_BASE_URL"),
+            std::env::var("OPENAI_EMBEDDING_API_KEY"),
+        ) {
+            (Ok(base_url), Ok(api_key))
+                if !base_url.trim().is_empty() && !api_key.trim().is_empty() =>
+            {
+                Some(Arc::new(OpenAiCompatibleClient::new(base_url, api_key, model)))
+            }
+            _ => OpenAiCompatibleClient::from_env(model).map(Arc::new),
+        }
     }
 
     #[tokio::test]
