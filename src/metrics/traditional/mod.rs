@@ -1,8 +1,12 @@
 use std::collections::BTreeMap;
 
+use async_trait::async_trait;
+
+use crate::validation::{MetricRequirements, SampleField};
 use crate::{
-    DetailedMetricResult, EmbeddingProvider, EmbeddingRequest, MetricEvidence, MetricValueType,
-    RagasError, ScoreNormalizationPolicy, cosine_similarity,
+    DetailedMetricResult, EmbeddingProvider, EmbeddingRequest, Metric, MetricEvidence,
+    MetricResult, MetricValue, MetricValueType, RagasError, ScoreNormalizationPolicy,
+    SingleTurnSample, cosine_similarity,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -169,6 +173,199 @@ pub fn rouge_l_recall(candidate: &str, reference: &str) -> DetailedMetricResult 
         "ROUGE-L recall with whitespace-lowercase tokenizer",
         vec![MetricEvidence::new("lcs", format!("lcs={lcs}"))],
     )
+}
+
+/// Which ROUGE variant to compute: unigram overlap (`Rouge1`), bigram overlap
+/// (`Rouge2`), or longest-common-subsequence (`RougeL`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RougeType {
+    Rouge1,
+    Rouge2,
+    #[default]
+    RougeL,
+}
+
+impl RougeType {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Rouge1 => "rouge1",
+            Self::Rouge2 => "rouge2",
+            Self::RougeL => "rougeL",
+        }
+    }
+}
+
+/// Which component of the precision/recall/F-measure triple a [`RougeScore`] reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RougeMode {
+    Precision,
+    Recall,
+    #[default]
+    FMeasure,
+}
+
+impl RougeMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Precision => "precision",
+            Self::Recall => "recall",
+            Self::FMeasure => "fmeasure",
+        }
+    }
+}
+
+/// Precision/recall/F-measure produced by one ROUGE computation.
+///
+/// `precision = overlap / candidate_ngram_count`,
+/// `recall    = overlap / reference_ngram_count`,
+/// `fmeasure  = 2*P*R/(P+R)` (defined as `0.0` when `P+R == 0`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RougeScores {
+    pub precision: f64,
+    pub recall: f64,
+    pub fmeasure: f64,
+}
+
+impl RougeScores {
+    fn from_overlap(overlap: usize, candidate_count: usize, reference_count: usize) -> Self {
+        let precision = ratio(overlap, candidate_count);
+        let recall = ratio(overlap, reference_count);
+        let fmeasure = if precision + recall == 0.0 {
+            0.0
+        } else {
+            2.0 * precision * recall / (precision + recall)
+        };
+        Self {
+            precision,
+            recall,
+            fmeasure,
+        }
+    }
+
+    fn select(&self, mode: RougeMode) -> f64 {
+        match mode {
+            RougeMode::Precision => self.precision,
+            RougeMode::Recall => self.recall,
+            RougeMode::FMeasure => self.fmeasure,
+        }
+    }
+}
+
+/// Faithful, deterministic (provider-free) port of ragas' RougeScore metric.
+///
+/// Tokenization: text is lowercased and split on whitespace, then each token is
+/// stripped of leading/trailing non-alphanumeric characters (the crate-wide
+/// `whitespace-lowercase` tokenizer). This is a deliberate, documented choice —
+/// it is simpler than the reference `rouge_score` PTB tokenizer but agrees with
+/// it on whitespace-separated alphanumeric text.
+///
+/// For `Rouge1`/`Rouge2` the overlap is the clipped multiset intersection of the
+/// candidate and reference n-grams; for `RougeL` it is the length of the longest
+/// common subsequence of the token streams. Empty candidate or reference are
+/// handled without dividing by zero (the corresponding count is 0, so the ratio
+/// is 0.0 and the F-measure collapses to 0.0).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RougeScore {
+    pub rouge_type: RougeType,
+    pub mode: RougeMode,
+}
+
+impl RougeScore {
+    pub fn new(rouge_type: RougeType, mode: RougeMode) -> Self {
+        Self { rouge_type, mode }
+    }
+
+    pub fn with_rouge_type(mut self, rouge_type: RougeType) -> Self {
+        self.rouge_type = rouge_type;
+        self
+    }
+
+    pub fn with_mode(mut self, mode: RougeMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Compute the full precision/recall/F-measure triple for `candidate` scored
+    /// against `reference` under this metric's `rouge_type`.
+    pub fn scores(&self, candidate: &str, reference: &str) -> RougeScores {
+        let candidate_tokens = whitespace_lowercase_tokens(candidate);
+        let reference_tokens = whitespace_lowercase_tokens(reference);
+        match self.rouge_type {
+            RougeType::Rouge1 => self.ngram_scores(&candidate_tokens, &reference_tokens, 1),
+            RougeType::Rouge2 => self.ngram_scores(&candidate_tokens, &reference_tokens, 2),
+            RougeType::RougeL => {
+                let overlap = longest_common_subsequence_len(&candidate_tokens, &reference_tokens);
+                RougeScores::from_overlap(overlap, candidate_tokens.len(), reference_tokens.len())
+            }
+        }
+    }
+
+    fn ngram_scores(&self, candidate: &[String], reference: &[String], n: usize) -> RougeScores {
+        let candidate_ngrams = ngrams(candidate, n);
+        let reference_ngrams = ngrams(reference, n);
+        let overlap = multiset_overlap(&candidate_ngrams, &reference_ngrams);
+        RougeScores::from_overlap(overlap, candidate_ngrams.len(), reference_ngrams.len())
+    }
+
+    /// Score `candidate` against `reference`, returning the single component
+    /// selected by `mode` wrapped in a [`DetailedMetricResult`].
+    pub fn detailed(&self, candidate: &str, reference: &str) -> DetailedMetricResult {
+        let scores = self.scores(candidate, reference);
+        let score = scores.select(self.mode);
+        numeric_result(
+            "rouge_score",
+            score,
+            format!(
+                "{} {} with whitespace-lowercase tokenizer (P={:.4} R={:.4} F={:.4})",
+                self.rouge_type.as_str(),
+                self.mode.as_str(),
+                scores.precision,
+                scores.recall,
+                scores.fmeasure
+            ),
+            Vec::new(),
+        )
+    }
+}
+
+#[async_trait]
+impl Metric for RougeScore {
+    fn name(&self) -> &str {
+        "rouge_score"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::Response, SampleField::Reference],
+        )
+    }
+
+    /// Score the sample's `response` (candidate) against its `reference`. The
+    /// reference is required; without it ROUGE is undefined.
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let reference = match sample.reference.as_deref() {
+            Some(reference) => reference,
+            None => {
+                return Err(RagasError::Parse {
+                    message: "rouge score requires a reference".to_string(),
+                });
+            }
+        };
+
+        let scores = self.scores(&sample.response, reference);
+        let score = scores.select(self.mode);
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score)).with_reason(format!(
+                "{} {} (P={:.4} R={:.4} F={:.4})",
+                self.rouge_type.as_str(),
+                self.mode.as_str(),
+                scores.precision,
+                scores.recall,
+                scores.fmeasure
+            )),
+        )
+    }
 }
 
 pub fn chrf_score(candidate: &str, reference: &str) -> DetailedMetricResult {
@@ -477,6 +674,24 @@ fn levenshtein_distance(left: &str, right: &str) -> usize {
     previous[right.len()]
 }
 
+fn ratio(numerator: usize, denominator: usize) -> f64 {
+    if denominator == 0 {
+        0.0
+    } else {
+        numerator as f64 / denominator as f64
+    }
+}
+
+/// Build the list of contiguous `n`-grams over `tokens`, each joined by a space so
+/// it can be counted as a single multiset element. Returns empty when there are
+/// fewer than `n` tokens.
+fn ngrams(tokens: &[String], n: usize) -> Vec<String> {
+    if n == 0 || tokens.len() < n {
+        return Vec::new();
+    }
+    tokens.windows(n).map(|window| window.join(" ")).collect()
+}
+
 fn longest_common_subsequence_len(left: &[String], right: &[String]) -> usize {
     let mut table = vec![vec![0usize; right.len() + 1]; left.len() + 1];
     for left_index in 0..left.len() {
@@ -732,5 +947,177 @@ mod tests {
                 .unwrap_or("")
                 .contains("missing citations")
         );
+    }
+
+    fn close(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < 1e-9,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn rouge_defaults_to_rougel_fmeasure() {
+        let metric = RougeScore::default();
+        assert_eq!(metric.rouge_type, RougeType::RougeL);
+        assert_eq!(metric.mode, RougeMode::FMeasure);
+    }
+
+    #[test]
+    fn rouge1_precision_recall_fmeasure_match_hand_computed_values() {
+        // reference = "the cat sat on the mat" (6 unigrams),
+        // candidate = "the cat sat"            (3 unigrams).
+        // All 3 candidate unigrams appear in the reference -> overlap = 3.
+        //   precision = 3/3 = 1.0
+        //   recall    = 3/6 = 0.5
+        //   f         = 2*1.0*0.5 / (1.0 + 0.5) = 1.0 / 1.5 = 2/3
+        let scores =
+            RougeScore::new(RougeType::Rouge1, RougeMode::FMeasure).scores("the cat sat", "the cat sat on the mat");
+        close(scores.precision, 1.0);
+        close(scores.recall, 0.5);
+        close(scores.fmeasure, 2.0 / 3.0);
+
+        // The selected component follows `mode`.
+        close(
+            RougeScore::new(RougeType::Rouge1, RougeMode::Precision)
+                .scores("the cat sat", "the cat sat on the mat")
+                .precision,
+            1.0,
+        );
+        close(
+            RougeScore::new(RougeType::Rouge1, RougeMode::Recall)
+                .scores("the cat sat", "the cat sat on the mat")
+                .recall,
+            0.5,
+        );
+    }
+
+    #[test]
+    fn rouge2_uses_bigram_overlap() {
+        // candidate bigrams = {"the cat", "cat sat"} (2 bigrams),
+        // reference bigrams = {"the cat","cat sat","sat on","on the","the mat"} (5 bigrams).
+        // overlap = 2 ->
+        //   precision = 2/2 = 1.0
+        //   recall    = 2/5 = 0.4
+        //   f         = 2*1.0*0.4 / 1.4 = 0.8/1.4 = 4/7
+        let scores = RougeScore::new(RougeType::Rouge2, RougeMode::FMeasure)
+            .scores("the cat sat", "the cat sat on the mat");
+        close(scores.precision, 1.0);
+        close(scores.recall, 0.4);
+        close(scores.fmeasure, 4.0 / 7.0);
+    }
+
+    #[test]
+    fn rougel_uses_longest_common_subsequence_not_contiguous_overlap() {
+        // candidate = "a c", reference = "a b c d".
+        // LCS(["a","c"], ["a","b","c","d"]) = 2 (non-contiguous: a then c).
+        //   precision = 2/2 = 1.0
+        //   recall    = 2/4 = 0.5
+        //   f         = 2*1.0*0.5 / 1.5 = 2/3
+        // A contiguous-overlap (bigram) metric would score 0 here, proving this is LCS-based.
+        let lcs =
+            RougeScore::new(RougeType::RougeL, RougeMode::FMeasure).scores("a c", "a b c d");
+        close(lcs.precision, 1.0);
+        close(lcs.recall, 0.5);
+        close(lcs.fmeasure, 2.0 / 3.0);
+
+        let bigram = RougeScore::new(RougeType::Rouge2, RougeMode::FMeasure).scores("a c", "a b c d");
+        close(bigram.fmeasure, 0.0);
+    }
+
+    #[test]
+    fn rouge_clips_repeated_ngrams_to_reference_multiset() {
+        // candidate = "the the", reference = "the the the".
+        // candidate has "the" x2, reference has "the" x3 -> clipped overlap = 2.
+        //   precision = 2/2 = 1.0
+        //   recall    = 2/3
+        //   f         = 2*1.0*(2/3) / (1.0 + 2/3) = (4/3)/(5/3) = 4/5
+        let scores =
+            RougeScore::new(RougeType::Rouge1, RougeMode::FMeasure).scores("the the", "the the the");
+        close(scores.precision, 1.0);
+        close(scores.recall, 2.0 / 3.0);
+        close(scores.fmeasure, 0.8);
+    }
+
+    #[test]
+    fn rouge_identical_strings_score_one_disjoint_score_zero() {
+        for rouge_type in [RougeType::Rouge1, RougeType::Rouge2, RougeType::RougeL] {
+            // Discrimination: a perfect candidate scores 1.0 on every component...
+            let identical = RougeScore::new(rouge_type, RougeMode::FMeasure)
+                .scores("the cat sat down", "the cat sat down");
+            close(identical.precision, 1.0);
+            close(identical.recall, 1.0);
+            close(identical.fmeasure, 1.0);
+
+            // ...and a fully disjoint candidate scores 0.0.
+            let disjoint = RougeScore::new(rouge_type, RougeMode::FMeasure)
+                .scores("the cat sat down", "dogs run quickly outside");
+            close(disjoint.precision, 0.0);
+            close(disjoint.recall, 0.0);
+            close(disjoint.fmeasure, 0.0);
+        }
+    }
+
+    #[test]
+    fn rouge_handles_empty_candidate_and_reference_without_dividing_by_zero() {
+        for rouge_type in [RougeType::Rouge1, RougeType::Rouge2, RougeType::RougeL] {
+            let metric = RougeScore::new(rouge_type, RougeMode::FMeasure);
+
+            // Empty candidate: overlap 0, candidate count 0 -> precision 0, recall 0, f 0.
+            let empty_candidate = metric.scores("", "the cat sat");
+            assert!(empty_candidate.precision.is_finite());
+            assert!(empty_candidate.recall.is_finite());
+            assert!(empty_candidate.fmeasure.is_finite());
+            close(empty_candidate.precision, 0.0);
+            close(empty_candidate.recall, 0.0);
+            close(empty_candidate.fmeasure, 0.0);
+
+            // Empty reference: symmetric.
+            let empty_reference = metric.scores("the cat sat", "");
+            close(empty_reference.recall, 0.0);
+            close(empty_reference.fmeasure, 0.0);
+
+            // Both empty: still no panic / NaN.
+            let both_empty = metric.scores("", "");
+            close(both_empty.fmeasure, 0.0);
+        }
+    }
+
+    #[test]
+    fn rouge_detailed_result_reports_selected_component_and_tokenizer() {
+        let result = RougeScore::new(RougeType::Rouge1, RougeMode::Recall)
+            .detailed("the cat sat", "the cat sat on the mat");
+        assert_eq!(result.metric_name, "rouge_score");
+        assert_score_close(&result, 0.5);
+        let reason = result.reason.as_deref().unwrap_or("");
+        assert!(reason.contains("rouge1"));
+        assert!(reason.contains("recall"));
+        assert!(reason.contains("whitespace-lowercase"));
+    }
+
+    #[tokio::test]
+    async fn rouge_metric_scores_response_against_reference() {
+        let metric = RougeScore::new(RougeType::Rouge1, RougeMode::FMeasure);
+        let sample = SingleTurnSample::new("q", "the cat sat", vec!["ctx".to_string()])
+            .with_reference("the cat sat on the mat");
+
+        let result = metric.score(&sample).await.expect("rouge score");
+
+        assert_eq!(result.metric_name, "rouge_score");
+        close(
+            result.value.and_then(|value| value.as_numeric()).expect("numeric"),
+            2.0 / 3.0,
+        );
+    }
+
+    #[tokio::test]
+    async fn rouge_metric_requires_a_reference() {
+        let metric = RougeScore::default();
+        // SingleTurnSample::new leaves `reference` as None.
+        let sample = SingleTurnSample::new("q", "the cat sat", vec!["ctx".to_string()]);
+
+        let error = metric.score(&sample).await.expect_err("missing reference");
+
+        assert!(error.to_string().contains("reference"));
     }
 }
