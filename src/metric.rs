@@ -172,12 +172,23 @@ fn extract_json_block(content: &str) -> &str {
 }
 
 pub struct ResponseRelevancyMetric {
+    llm: Arc<dyn LlmProvider>,
     embedding: Arc<dyn EmbeddingProvider>,
+    strictness: usize,
 }
 
 impl ResponseRelevancyMetric {
-    pub fn new(embedding: Arc<dyn EmbeddingProvider>) -> Self {
-        Self { embedding }
+    pub fn new(llm: Arc<dyn LlmProvider>, embedding: Arc<dyn EmbeddingProvider>) -> Self {
+        Self {
+            llm,
+            embedding,
+            strictness: 3,
+        }
+    }
+
+    pub fn with_strictness(mut self, strictness: usize) -> Self {
+        self.strictness = strictness.max(1);
+        self
     }
 }
 
@@ -194,25 +205,108 @@ impl Metric for ResponseRelevancyMetric {
         )
     }
 
+    /// Faithful port of ragas' ResponseRelevancy / AnswerRelevancy:
+    ///   1. ask the LLM to generate `strictness` questions the RESPONSE answers,
+    ///      each tagged with a `noncommittal` flag (1 when the response is evasive);
+    ///   2. embed the original user_input and every generated question, then
+    ///      score = mean cosine(user_input, generated_question_i).
+    /// If any generated item is noncommittal the score collapses to 0.0, and when
+    /// no questions are generated the score is NaN (matching ragas' 0/0 behaviour).
     async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
-        let response = self
-            .embedding
-            .embed(EmbeddingRequest {
-                input: vec![sample.user_input.clone(), sample.response.clone()],
-            })
-            .await?;
-        if response.embeddings.len() < 2 {
+        let questions = self.generate_questions(sample).await?;
+        if questions.is_empty() {
+            // No artificial questions -> undefined relevancy (ragas returns NaN).
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(f64::NAN))
+                    .with_reason("no questions could be generated from the response"),
+            );
+        }
+
+        if questions.iter().any(|question| question.noncommittal == 1) {
+            // An evasive / non-committal answer is not relevant regardless of similarity.
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(0.0))
+                    .with_reason("response is noncommittal"),
+            );
+        }
+
+        let mut input = Vec::with_capacity(questions.len() + 1);
+        input.push(sample.user_input.clone());
+        input.extend(questions.iter().map(|question| question.question.clone()));
+        let response = self.embedding.embed(EmbeddingRequest { input }).await?;
+        if response.embeddings.len() != questions.len() + 1 {
             return Err(RagasError::Parse {
-                message: "response relevancy requires two embeddings".to_string(),
+                message: "response relevancy embedding count mismatch".to_string(),
             });
         }
 
-        let score = cosine_similarity(&response.embeddings[0], &response.embeddings[1]);
+        let user_input_embedding = &response.embeddings[0];
+        let total = questions.len();
+        let similarity_sum: f64 = response
+            .embeddings
+            .iter()
+            .skip(1)
+            .map(|question_embedding| cosine_similarity(user_input_embedding, question_embedding))
+            .sum();
+        let score = similarity_sum / total as f64;
+
         Ok(
-            MetricResult::success(self.name(), MetricValue::numeric(score))
-                .with_reason("cosine similarity between question and response embeddings"),
+            MetricResult::success(self.name(), MetricValue::numeric(score)).with_reason(format!(
+                "mean cosine similarity between user_input and {total} generated question(s)"
+            )),
         )
     }
+}
+
+impl ResponseRelevancyMetric {
+    /// Step 1 — ask the LLM to reverse-engineer the questions the response answers.
+    async fn generate_questions(
+        &self,
+        sample: &SingleTurnSample,
+    ) -> Result<Vec<GeneratedQuestion>, RagasError> {
+        let context_block = if sample.retrieved_contexts.is_empty() {
+            String::new()
+        } else {
+            format!("\nCONTEXT:\n{}", sample.retrieved_contexts.join("\n"))
+        };
+        let prompt = format!(
+            "Generate {n} question(s) that the RESPONSE below answers. \
+For each question set \"noncommittal\" to 1 when the response is evasive, vague, \
+or non-committal (for example 'I don't know' or 'I am not sure'), otherwise 0. \
+Return only JSON of the form \
+{{\"questions\": [{{\"question\": \"...\", \"noncommittal\": 0}}]}} \
+with exactly {n} entries.\n\nRESPONSE: {response}{context_block}",
+            n = self.strictness,
+            response = sample.response,
+        );
+        let response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        let parsed: QuestionGenerationOutput =
+            parse_json(&response.content, "response relevancy question generation")?;
+        Ok(parsed
+            .questions
+            .into_iter()
+            .filter(|question| !question.question.trim().is_empty())
+            .collect())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct QuestionGenerationOutput {
+    #[serde(default)]
+    questions: Vec<GeneratedQuestion>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeneratedQuestion {
+    question: String,
+    #[serde(default)]
+    noncommittal: i64,
 }
 
 pub struct ContextPrecisionMetric {
@@ -591,6 +685,17 @@ mod tests {
         }
     }
 
+    /// Embedding mock that must never be called; used to prove a pipeline short-circuits
+    /// before reaching the embedding step.
+    struct PanicEmbeddingProvider;
+
+    #[async_trait]
+    impl EmbeddingProvider for PanicEmbeddingProvider {
+        async fn embed(&self, _request: EmbeddingRequest) -> Result<EmbeddingResponse, RagasError> {
+            panic!("embedding provider must not be called");
+        }
+    }
+
     #[tokio::test]
     async fn faithfulness_runs_two_step_pipeline_and_scores_supported_ratio() {
         // Step 1 extracts 2 statements; step 2 supports both -> 2/2 = 1.0.
@@ -675,21 +780,134 @@ mod tests {
         assert!(error.to_string().contains("statement generation"));
     }
 
+    fn relevancy_sample() -> SingleTurnSample {
+        SingleTurnSample::new(
+            "user-question",
+            "Albert Einstein was born in Germany.",
+            vec!["Albert Einstein was a German-born theoretical physicist.".to_string()],
+        )
+    }
+
     #[tokio::test]
-    async fn test_4_1_3_response_relevancy_uses_cosine_similarity() {
-        // SCEN-4.1.3 / AC3 / TEST-4.1.3
-        let metric = ResponseRelevancyMetric::new(Arc::new(MapEmbeddingProvider {
+    async fn response_relevancy_scores_high_when_generated_questions_match_user_input() {
+        // Step 1: LLM reverse-engineers 2 committal questions.
+        // Step 2: both generated questions embed identically to the user_input -> mean cosine ~ 1.0.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"questions":[{"question":"q-match","noncommittal":0},{"question":"q-match","noncommittal":0}]}"#,
+        ]));
+        let metric = ResponseRelevancyMetric::new(
+            llm.clone(),
+            Arc::new(MapEmbeddingProvider {
+                vectors: HashMap::from([
+                    ("user-question".to_string(), vec![1.0, 0.0]),
+                    ("q-match".to_string(), vec![1.0, 0.0]),
+                ]),
+            }),
+        );
+
+        let result = metric.score(&relevancy_sample()).await.expect("relevancy");
+
+        assert!((numeric(&result) - 1.0).abs() < 1e-9);
+        // The question-generation prompt is conditioned on the response (not a single 0-1 ask).
+        let prompts = llm.prompts();
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("Albert Einstein was born in Germany."));
+    }
+
+    #[tokio::test]
+    async fn response_relevancy_discriminates_off_topic_questions() {
+        // Generated questions are orthogonal to the user_input -> mean cosine collapses toward 0.
+        let metric = ResponseRelevancyMetric::new(
+            Arc::new(ScriptedLlm::new(vec![
+                r#"{"questions":[{"question":"q-off","noncommittal":0},{"question":"q-off","noncommittal":0}]}"#,
+            ])),
+            Arc::new(MapEmbeddingProvider {
+                vectors: HashMap::from([
+                    ("user-question".to_string(), vec![1.0, 0.0]),
+                    ("q-off".to_string(), vec![0.0, 1.0]),
+                ]),
+            }),
+        );
+
+        let result = metric.score(&relevancy_sample()).await.expect("relevancy");
+
+        assert!(numeric(&result).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn response_relevancy_noncommittal_item_forces_zero() {
+        // Even when the (single) generated question embeds perfectly, a noncommittal flag forces 0.0.
+        let embedding = Arc::new(MapEmbeddingProvider {
             vectors: HashMap::from([
-                ("question".to_string(), vec![1.0, 0.0]),
-                ("answer".to_string(), vec![0.5, 0.5]),
+                ("user-question".to_string(), vec![1.0, 0.0]),
+                ("q-evasive".to_string(), vec![1.0, 0.0]),
             ]),
-        }));
-        let sample = SingleTurnSample::new("question", "answer", vec!["context".to_string()]);
+        });
+        let metric = ResponseRelevancyMetric::new(
+            Arc::new(ScriptedLlm::new(vec![
+                r#"{"questions":[{"question":"q-evasive","noncommittal":1}]}"#,
+            ])),
+            embedding,
+        );
 
-        let result = metric.score(&sample).await.expect("relevancy");
-        let score = result.value.and_then(|value| value.as_numeric()).unwrap();
+        let result = metric.score(&relevancy_sample()).await.expect("relevancy");
 
-        assert!((score - 0.70710678).abs() < 0.0001);
+        assert_eq!(numeric(&result), 0.0);
+        assert_eq!(result.reason.as_deref(), Some("response is noncommittal"));
+    }
+
+    #[tokio::test]
+    async fn response_relevancy_empty_questions_is_nan_and_skips_embedding() {
+        // The embedding provider would panic if asked to embed (its map is empty), proving
+        // that zero generated questions short-circuits to NaN before any embedding call.
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"questions":[]}"#]));
+        let metric = ResponseRelevancyMetric::new(
+            llm.clone(),
+            Arc::new(PanicEmbeddingProvider),
+        );
+
+        let result = metric.score(&relevancy_sample()).await.expect("relevancy");
+
+        assert!(numeric(&result).is_nan());
+        // Exactly one LLM call (generation) and no embedding call.
+        assert_eq!(llm.prompts().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn response_relevancy_repairs_fenced_json_from_the_model() {
+        // The model wraps its JSON in a markdown fence + prose; the repair path must recover it.
+        let metric = ResponseRelevancyMetric::new(
+            Arc::new(ScriptedLlm::new(vec![
+                "Here are the questions:\n```json\n{\"questions\":[{\"question\":\"q-match\",\"noncommittal\":0}]}\n```",
+            ])),
+            Arc::new(MapEmbeddingProvider {
+                vectors: HashMap::from([
+                    ("user-question".to_string(), vec![1.0, 0.0]),
+                    ("q-match".to_string(), vec![1.0, 0.0]),
+                ]),
+            }),
+        );
+
+        let result = metric.score(&relevancy_sample()).await.expect("relevancy");
+
+        assert!((numeric(&result) - 1.0).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn response_relevancy_surfaces_unparseable_model_output_as_error() {
+        let metric = ResponseRelevancyMetric::new(
+            Arc::new(ScriptedLlm::new(vec![
+                "I cannot turn this into questions.",
+            ])),
+            Arc::new(PanicEmbeddingProvider),
+        );
+
+        let error = metric
+            .score(&relevancy_sample())
+            .await
+            .expect_err("malformed question output");
+
+        assert!(error.to_string().contains("question generation"));
     }
 
     #[tokio::test]
