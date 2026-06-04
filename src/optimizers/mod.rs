@@ -168,12 +168,25 @@ impl Optimizer for GeneticOptimizer {
                         .unwrap_or(std::cmp::Ordering::Equal)
                         .then_with(|| left.0.id.cmp(&right.0.id))
                 });
-                let parent = generation_scores
+                let primary = generation_scores
                     .first()
                     .map(|(candidate, _)| candidate.clone())
                     .unwrap_or_else(|| best_candidate.clone());
+                // Second elite parent so that crossover combines text from two
+                // distinct population members; falls back to the primary when the
+                // population has only one member.
+                let secondary = generation_scores
+                    .get(1)
+                    .map(|(candidate, _)| candidate.clone())
+                    .unwrap_or_else(|| primary.clone());
                 population = (0..population_size)
-                    .map(|_| generator.mutate(&parent, next_seed(&mut rng_state)))
+                    .map(|_| {
+                        // Cross the two elites' prompt TEXT, then mutate the
+                        // recombined child via the caller's generator.
+                        let crossed =
+                            crossover_prompt_text(&primary, &secondary, next_seed(&mut rng_state));
+                        generator.mutate(&crossed, next_seed(&mut rng_state))
+                    })
                     .collect();
             }
         }
@@ -239,6 +252,42 @@ fn next_seed(state: &mut u64) -> u64 {
         .wrapping_mul(6364136223846793005)
         .wrapping_add(1442695040888963407);
     *state
+}
+
+/// Single-point crossover over prompt TEXT: split both parents into
+/// whitespace-delimited tokens and recombine a prefix of `left` with a suffix
+/// of `right` at a seeded crossover point. The child inherits `left`'s id/model
+/// metadata; the caller's `mutate` is applied afterwards. The cut point is a
+/// pure function of `seed`, so the same seed always yields the same child.
+fn crossover_prompt_text(
+    left: &OptimizationCandidate,
+    right: &OptimizationCandidate,
+    seed: u64,
+) -> OptimizationCandidate {
+    let left_tokens: Vec<&str> = left.prompt.split_whitespace().collect();
+    let right_tokens: Vec<&str> = right.prompt.split_whitespace().collect();
+
+    // Choose a cut index over the longer parent so both prefixes and suffixes
+    // are reachable; empty parents degrade gracefully to an empty prompt.
+    let span = left_tokens.len().max(right_tokens.len());
+    let prompt = if span == 0 {
+        String::new()
+    } else {
+        let cut = (seed % (span as u64 + 1)) as usize;
+        let prefix = &left_tokens[..cut.min(left_tokens.len())];
+        let suffix = &right_tokens[cut.min(right_tokens.len())..];
+        prefix
+            .iter()
+            .chain(suffix.iter())
+            .copied()
+            .collect::<Vec<&str>>()
+            .join(" ")
+    };
+
+    let mut child = OptimizationCandidate::new(format!("{}x{}", left.id, right.id), prompt);
+    child.model = left.model.clone();
+    child.parameters = left.parameters.clone();
+    child
 }
 
 #[cfg(test)]
@@ -453,5 +502,188 @@ mod tests {
                 },
             ]
         );
+    }
+
+    /// Generator that evolves prompt TEXT toward a target token. Each mutation
+    /// appends one token drawn from a tiny vocabulary (which includes the
+    /// target token), so the population can genuinely discover the token over
+    /// generations. The chosen token is a pure function of the seed, so the
+    /// generator is deterministic.
+    struct TokenRewardGenerator {
+        vocab: Vec<&'static str>,
+    }
+
+    impl CandidateGenerator for TokenRewardGenerator {
+        fn initial_candidates(&self) -> Vec<OptimizationCandidate> {
+            // Initial prompts deliberately lack the target token so the
+            // optimizer has to improve to find it.
+            vec![
+                OptimizationCandidate::new("p0", "respond clearly"),
+                OptimizationCandidate::new("p1", "be concise"),
+            ]
+        }
+
+        fn mutate(&self, candidate: &OptimizationCandidate, seed: u64) -> OptimizationCandidate {
+            let token = self.vocab[(seed as usize) % self.vocab.len()];
+            OptimizationCandidate::new(
+                format!("{}-{}", candidate.id, seed % 1000),
+                format!("{} {}", candidate.prompt, token),
+            )
+        }
+    }
+
+    /// Scores a candidate by counting occurrences of the target token in its
+    /// prompt TEXT. The score is a real function of the candidate, not a
+    /// constant, so improvements only come from better prompt text.
+    struct TokenRewardObjective {
+        target: &'static str,
+    }
+
+    impl ObjectiveMetric for TokenRewardObjective {
+        fn name(&self) -> &str {
+            "token_reward"
+        }
+
+        fn score(&self, candidate: &OptimizationCandidate) -> f64 {
+            candidate
+                .prompt
+                .split_whitespace()
+                .filter(|word| *word == self.target)
+                .count() as f64
+        }
+    }
+
+    fn initial_best_fitness(
+        objective: &dyn ObjectiveMetric,
+        generator: &dyn CandidateGenerator,
+    ) -> f64 {
+        generator
+            .initial_candidates()
+            .iter()
+            .map(|candidate| objective.score(candidate))
+            .fold(f64::NEG_INFINITY, f64::max)
+    }
+
+    #[test]
+    fn test_genetic_optimizer_improves_token_reward_fitness() {
+        // Real-behavior: with a scorer that rewards prompts containing a target
+        // token, the evolved best fitness must improve over (or hold) the best
+        // of the initial population, and the winning prompt must actually carry
+        // the token -- proving fitness drives selection, not a constant.
+        let generator = TokenRewardGenerator {
+            vocab: vec!["grounded", "filler", "noise", "extra"],
+        };
+        let objective = TokenRewardObjective { target: "grounded" };
+
+        let baseline = initial_best_fitness(&objective, &generator);
+        assert_eq!(baseline, 0.0, "initial prompts must lack the target token");
+
+        let mut optimizer = GeneticOptimizer::new(GeneticOptimizerConfig {
+            seed: 2024,
+            generations: 8,
+            population_size: 6,
+        });
+        let result = optimizer.optimize(&objective, &generator);
+
+        // (a) final best fitness >= initial best fitness.
+        assert!(
+            result.best_score >= baseline,
+            "evolved best {} should be >= initial best {}",
+            result.best_score,
+            baseline
+        );
+        // Fitness is genuinely earned by prompt text, not asserted constant.
+        assert!(
+            result.best_score > baseline,
+            "optimizer should have discovered the rewarded token"
+        );
+        assert!(
+            result.best_candidate.prompt.contains("grounded"),
+            "winning prompt {:?} must contain the rewarded token",
+            result.best_candidate.prompt
+        );
+    }
+
+    #[test]
+    fn test_genetic_optimizer_is_reproducible_for_same_seed() {
+        // Reproducibility: identical seed/config => byte-identical result and
+        // trajectory across two independent runs.
+        let generator = TokenRewardGenerator {
+            vocab: vec!["grounded", "filler", "noise", "extra"],
+        };
+        let objective = TokenRewardObjective { target: "grounded" };
+        let config = GeneticOptimizerConfig {
+            seed: 99,
+            generations: 6,
+            population_size: 5,
+        };
+
+        let first = GeneticOptimizer::new(config).optimize(&objective, &generator);
+        let second = GeneticOptimizer::new(config).optimize(&objective, &generator);
+
+        assert_eq!(first.best_candidate, second.best_candidate);
+        assert_eq!(first.best_score, second.best_score);
+        assert_eq!(first.history, second.history);
+    }
+
+    #[test]
+    fn test_genetic_optimizer_uses_different_seeds_for_distinct_trajectories() {
+        // Different seeds should be able to explore differently: the histories
+        // are not forced to match, proving the seed actually drives evolution.
+        let generator = TokenRewardGenerator {
+            vocab: vec!["grounded", "filler", "noise", "extra"],
+        };
+        let objective = TokenRewardObjective { target: "grounded" };
+
+        let run = |seed: u64| {
+            GeneticOptimizer::new(GeneticOptimizerConfig {
+                seed,
+                generations: 5,
+                population_size: 5,
+            })
+            .optimize(&objective, &generator)
+        };
+
+        let a = run(1);
+        let b = run(7);
+        assert_ne!(
+            a.history, b.history,
+            "different seeds should yield different trajectories"
+        );
+    }
+
+    #[test]
+    fn test_crossover_prompt_text_recombines_words() {
+        // The crossover helper must genuinely splice two parents' tokens, not
+        // echo one parent. With a seed that lands on an interior cut point the
+        // child carries a prefix from `left` and a suffix from `right`.
+        let left = OptimizationCandidate::new("L", "alpha beta gamma");
+        let right = OptimizationCandidate::new("R", "one two three");
+
+        // span = 3, seed % 4 picks the cut. Seed 2 -> cut 2 -> "alpha beta three".
+        let child = crossover_prompt_text(&left, &right, 2);
+        assert_eq!(child.prompt, "alpha beta three");
+        assert_eq!(child.id, "LxR");
+
+        // Cut at 0 yields the full right parent; cut at span yields full left.
+        assert_eq!(crossover_prompt_text(&left, &right, 0).prompt, "one two three");
+        assert_eq!(
+            crossover_prompt_text(&left, &right, 3).prompt,
+            "alpha beta gamma"
+        );
+    }
+
+    #[test]
+    fn test_crossover_prompt_text_handles_empty_prompts() {
+        // Adversarial: empty parents must not panic and produce an empty prompt.
+        let empty_left = OptimizationCandidate::new("L", "");
+        let empty_right = OptimizationCandidate::new("R", "");
+        assert_eq!(crossover_prompt_text(&empty_left, &empty_right, 0).prompt, "");
+        assert_eq!(crossover_prompt_text(&empty_left, &empty_right, 5).prompt, "");
+
+        // One empty parent still recombines without losing the non-empty side.
+        let filled = OptimizationCandidate::new("F", "keep this");
+        let crossed = crossover_prompt_text(&empty_left, &filled, 0);
+        assert_eq!(crossed.prompt, "keep this");
     }
 }
