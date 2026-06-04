@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{RagasError, SingleTurnSample};
+use crate::{ChatMessage, EvaluationDataset, LlmProvider, LlmRequest, RagasError, SingleTurnSample};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GraphProperty {
@@ -749,6 +750,200 @@ fn text_property<'a>(node: &'a GraphNode, key: &str) -> Option<&'a str> {
     }
 }
 
+/// One LLM-synthesized question/answer pair, parsed (with repair) from a `generate` call.
+#[derive(Debug, Deserialize)]
+struct SynthesizedQa {
+    question: String,
+    answer: String,
+}
+
+/// Deserialize a `{"question": "...", "answer": "..."}` object from an LLM response,
+/// tolerating markdown fences or surrounding prose by extracting the outermost `{ .. }`
+/// block (the JSON-repair path, mirroring `metric::parse_json`/`extract_json_block`).
+fn parse_synthesized_qa(content: &str, context: &str) -> Result<SynthesizedQa, RagasError> {
+    let block = match (content.find('{'), content.rfind('}')) {
+        (Some(start), Some(end)) if end >= start => &content[start..=end],
+        _ => content.trim(),
+    };
+    let qa: SynthesizedQa = serde_json::from_str(block).map_err(|error| RagasError::Parse {
+        message: format!("{context}: {error}"),
+    })?;
+    if qa.question.trim().is_empty() || qa.answer.trim().is_empty() {
+        return Err(RagasError::Parse {
+            message: format!("{context}: empty question or answer"),
+        });
+    }
+    Ok(qa)
+}
+
+/// Real, runnable test-set generation pipeline.
+///
+/// Given raw document text and an [`LlmProvider`], it builds the [`KnowledgeGraph`]
+/// (chunk → graph-node → `contains`/`next` edges, all reusing the existing transform
+/// code in this module) and then drives the LLM to *synthesize* question/answer pairs
+/// grounded in chunk content, returning a crate [`EvaluationDataset`].
+///
+/// Every generated sample comes from a real [`LlmProvider::generate`] call — nothing is
+/// hardcoded or pure-template. The chunk text is the retrieved context, the LLM question
+/// is `user_input`, and the LLM answer is `response`/`reference`.
+///
+/// NON-GOAL: byte/score parity with Python ragas' `np.random` / global-MT scenario and
+/// node selection. We do NOT attempt to reproduce that RNG. Instead, selection order is
+/// the deterministic document order of the knowledge graph (chunk nodes in the order they
+/// were split, then adjacent `next` pairs for multi-hop). This is an explicitly captured,
+/// reproducible order rather than a port of ragas' random sampling.
+pub struct Synthesizer {
+    llm: Arc<dyn LlmProvider>,
+    chunk_max_chars: usize,
+    multi_hop: bool,
+}
+
+impl Synthesizer {
+    /// Create a synthesizer over the given LLM provider. Defaults: ~1000-char chunks,
+    /// multi-hop enabled.
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self {
+            llm,
+            chunk_max_chars: 1000,
+            multi_hop: true,
+        }
+    }
+
+    pub fn with_chunk_max_chars(mut self, chunk_max_chars: usize) -> Self {
+        self.chunk_max_chars = chunk_max_chars.max(1);
+        self
+    }
+
+    pub fn with_multi_hop(mut self, multi_hop: bool) -> Self {
+        self.multi_hop = multi_hop;
+        self
+    }
+
+    /// Build a knowledge graph from `document_text` and synthesize an
+    /// [`EvaluationDataset`] from it using the LLM.
+    ///
+    /// Returns `Err(RagasError::EmptyDataset)` when the document has no usable text, and
+    /// propagates `Err` from the provider or from malformed LLM JSON.
+    pub async fn generate_testset(
+        &self,
+        source_id: &str,
+        document_text: &str,
+    ) -> Result<EvaluationDataset, RagasError> {
+        let chunks = split_text_into_chunks(source_id, document_text, self.chunk_max_chars);
+        if chunks.is_empty() {
+            return Err(RagasError::EmptyDataset);
+        }
+
+        // Reuse the real transform/relationship code: each chunk becomes a graph node and
+        // `contains`/`next` edges are built between them.
+        let graph = chunks.iter().fold(
+            KnowledgeGraph::new().add_node(GraphNode::new(source_id, "document")),
+            |graph, chunk| graph.add_node(chunk.to_graph_node()),
+        );
+        let graph = build_chunk_relationships(graph, source_id, &chunks);
+
+        let mut samples = Vec::new();
+
+        // Single-hop: deterministic document-order traversal of chunk nodes.
+        for chunk in &graph.nodes_by_type("chunk") {
+            let context = match text_property(chunk, "text") {
+                Some(text) if !text.trim().is_empty() => text.to_string(),
+                _ => continue,
+            };
+            let qa = self.generate_single_hop_qa(&context).await?;
+            samples.push(
+                SingleTurnSample::new(qa.question, qa.answer.clone(), vec![context])
+                    .with_reference(qa.answer)
+                    .with_metadata("synthesis_type", "single-hop")
+                    .with_metadata("source_node_ids", chunk.id.clone()),
+            );
+        }
+
+        // Multi-hop: adjacent `next`-linked chunk pairs, again in deterministic graph order.
+        if self.multi_hop {
+            for edge in graph.edges_by_relationship("next") {
+                let (Some(source), Some(target)) =
+                    (graph.node(&edge.source_id), graph.node(&edge.target_id))
+                else {
+                    continue;
+                };
+                let (Some(source_text), Some(target_text)) =
+                    (text_property(source, "text"), text_property(target, "text"))
+                else {
+                    continue;
+                };
+                if source_text.trim().is_empty() || target_text.trim().is_empty() {
+                    continue;
+                }
+                let contexts = vec![source_text.to_string(), target_text.to_string()];
+                let qa = self.generate_multi_hop_qa(source_text, target_text).await?;
+                samples.push(
+                    SingleTurnSample::new(qa.question, qa.answer.clone(), contexts)
+                        .with_reference(qa.answer)
+                        .with_metadata("synthesis_type", "multi-hop")
+                        .with_metadata(
+                            "source_node_ids",
+                            format!("{},{}", edge.source_id, edge.target_id),
+                        ),
+                );
+            }
+        }
+
+        EvaluationDataset::new(samples)
+    }
+
+    /// Ask the LLM to write a grounded single-hop Q/A pair answerable from one chunk.
+    async fn generate_single_hop_qa(&self, context: &str) -> Result<SynthesizedQa, RagasError> {
+        let prompt = format!(
+            "You generate evaluation data for a retrieval system. Read the CONTEXT below \
+and write ONE self-contained question that is fully answerable using ONLY that context, \
+together with its correct answer. Do not ask about anything not present in the context. \
+Return ONLY JSON of the form {{\"question\": \"...\", \"answer\": \"...\"}}.\n\nCONTEXT:\n{context}"
+        );
+        let response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        parse_synthesized_qa(&response.content, "single-hop testset synthesis")
+    }
+
+    /// Ask the LLM to write a multi-hop Q/A pair that requires combining two chunks.
+    async fn generate_multi_hop_qa(
+        &self,
+        first_context: &str,
+        second_context: &str,
+    ) -> Result<SynthesizedQa, RagasError> {
+        let prompt = format!(
+            "You generate evaluation data for a retrieval system. Read the TWO context \
+passages below and write ONE question whose answer requires combining information from \
+BOTH passages, together with its correct answer. Use ONLY information present in the \
+passages. Return ONLY JSON of the form {{\"question\": \"...\", \"answer\": \"...\"}}.\n\n\
+CONTEXT A:\n{first_context}\n\nCONTEXT B:\n{second_context}"
+        );
+        let response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        parse_synthesized_qa(&response.content, "multi-hop testset synthesis")
+    }
+}
+
+/// Convenience free function mirroring [`Synthesizer::generate_testset`] for callers that
+/// just have a document and a provider.
+pub async fn generate_testset(
+    llm: Arc<dyn LlmProvider>,
+    source_id: &str,
+    document_text: &str,
+) -> Result<EvaluationDataset, RagasError> {
+    Synthesizer::new(llm).generate_testset(source_id, document_text).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1322,5 +1517,224 @@ mod tests {
                 .map(String::as_str),
             Some("pre-chunked")
         );
+    }
+
+    use async_trait::async_trait;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    /// Mock LLM that replays scripted responses in order and records the prompts it saw,
+    /// so the generation pipeline can be driven deterministically without a network call.
+    /// Same shape as `metric::tests::ScriptedLlm`.
+    struct ScriptedLlm {
+        responses: Mutex<VecDeque<String>>,
+        prompts: Mutex<Vec<String>>,
+    }
+
+    impl ScriptedLlm {
+        fn new(responses: Vec<&str>) -> Self {
+            Self {
+                responses: Mutex::new(responses.into_iter().map(str::to_string).collect()),
+                prompts: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn prompts(&self) -> Vec<String> {
+            self.prompts.lock().expect("prompts").clone()
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for ScriptedLlm {
+        async fn generate(
+            &self,
+            request: LlmRequest,
+        ) -> Result<crate::LlmResponse, RagasError> {
+            let prompt = request
+                .messages
+                .iter()
+                .map(|message| message.content.clone())
+                .collect::<Vec<_>>()
+                .join("\n");
+            self.prompts.lock().expect("prompts").push(prompt);
+            let content = self
+                .responses
+                .lock()
+                .expect("responses")
+                .pop_front()
+                .ok_or_else(|| RagasError::Provider {
+                    message: "scripted LLM ran out of responses".to_string(),
+                })?;
+            Ok(crate::LlmResponse {
+                content,
+                usage: None,
+            })
+        }
+    }
+
+    const TWO_CHUNK_DOC: &str =
+        "Ragas evaluates retrieval quality with grounded metrics. Rust services compile to fast native binaries.";
+
+    #[tokio::test]
+    async fn test_31_2_1_synthesizer_invokes_llm_and_builds_grounded_dataset() {
+        // Real-behavior: the LLM is actually called and a well-formed EvaluationDataset
+        // (non-empty user_input/response, populated contexts) is produced.
+        // Two chunks (max 60 chars) -> 2 single-hop calls + 1 multi-hop call over the
+        // single `next` edge = 3 generate() invocations.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"question": "What does Ragas evaluate?", "answer": "Retrieval quality."}"#,
+            r#"{"question": "How fast are Rust binaries?", "answer": "They are fast native binaries."}"#,
+            r#"{"question": "Do Ragas and Rust both aim for quality and speed?", "answer": "Yes, Ragas evaluates quality and Rust compiles fast."}"#,
+        ]));
+
+        let dataset = Synthesizer::new(llm.clone())
+            .with_chunk_max_chars(60)
+            .generate_testset("doc-1", TWO_CHUNK_DOC)
+            .await
+            .expect("dataset");
+
+        // The LLM was genuinely invoked once per generated sample, and the prompts carried
+        // the real chunk text (proving the pipeline feeds node content to the model).
+        let prompts = llm.prompts();
+        assert_eq!(prompts.len(), 3);
+        assert!(prompts.iter().all(|prompt| prompt.contains("Ragas")
+            || prompt.contains("Rust")));
+        assert!(prompts[2].contains("CONTEXT A") && prompts[2].contains("CONTEXT B"));
+
+        assert_eq!(dataset.len(), 3);
+        for sample in dataset.iter() {
+            assert!(!sample.user_input.trim().is_empty());
+            assert!(!sample.response.trim().is_empty());
+            assert!(!sample.retrieved_contexts.is_empty());
+            assert!(sample.reference.is_some());
+        }
+
+        // The first sample carries the LLM-authored question/answer and the real chunk
+        // text as its retrieved context (not a template).
+        let single_hop = dataset
+            .iter()
+            .find(|sample| {
+                sample.metadata.get("synthesis_type").map(String::as_str) == Some("single-hop")
+            })
+            .expect("single-hop sample");
+        assert_eq!(single_hop.user_input, "What does Ragas evaluate?");
+        assert_eq!(single_hop.response, "Retrieval quality.");
+        assert_eq!(single_hop.retrieved_contexts.len(), 1);
+        assert!(single_hop.retrieved_contexts[0].contains("Ragas"));
+
+        let multi_hop = dataset
+            .iter()
+            .find(|sample| {
+                sample.metadata.get("synthesis_type").map(String::as_str) == Some("multi-hop")
+            })
+            .expect("multi-hop sample");
+        assert_eq!(multi_hop.retrieved_contexts.len(), 2);
+        assert!(multi_hop.user_input.contains("Ragas") || multi_hop.user_input.contains("Rust"));
+    }
+
+    #[tokio::test]
+    async fn test_31_2_2_synthesizer_single_hop_only_skips_multi_hop_calls() {
+        // With multi-hop disabled, only the single-hop calls are made (one per chunk).
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"question": "Q1?", "answer": "A1."}"#,
+            r#"{"question": "Q2?", "answer": "A2."}"#,
+        ]));
+
+        let dataset = Synthesizer::new(llm.clone())
+            .with_chunk_max_chars(60)
+            .with_multi_hop(false)
+            .generate_testset("doc-1", TWO_CHUNK_DOC)
+            .await
+            .expect("dataset");
+
+        assert_eq!(llm.prompts().len(), 2);
+        assert_eq!(dataset.len(), 2);
+        assert!(dataset.iter().all(|sample| {
+            sample.metadata.get("synthesis_type").map(String::as_str) == Some("single-hop")
+        }));
+    }
+
+    #[tokio::test]
+    async fn test_31_2_3_empty_document_returns_empty_dataset_error() {
+        // Adversarial: a document with no usable text yields EmptyDataset and never calls
+        // the LLM.
+        let llm = Arc::new(ScriptedLlm::new(vec![]));
+        let error = generate_testset(llm.clone(), "doc-1", "   \n  \t ")
+            .await
+            .expect_err("empty document should error");
+        assert_eq!(error, RagasError::EmptyDataset);
+        assert!(llm.prompts().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_31_2_4_malformed_llm_json_propagates_parse_error() {
+        // Adversarial: a non-JSON LLM reply surfaces as a parse error rather than a fake
+        // sample.
+        let llm = Arc::new(ScriptedLlm::new(vec!["this is not json at all"]));
+        let error = generate_testset(llm, "doc-1", "Ragas evaluates retrieval.")
+            .await
+            .expect_err("malformed JSON should error");
+        match error {
+            RagasError::Parse { message } => {
+                assert!(message.contains("single-hop testset synthesis"));
+            }
+            other => panic!("expected parse error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_31_2_5_json_repair_path_recovers_fenced_output() {
+        // The repair path extracts the outermost { .. } block from prose/markdown fences,
+        // mirroring metric::extract_json_block.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            "Sure! Here is the data:\n```json\n{\"question\": \"What is RAG?\", \"answer\": \"Retrieval augmented generation.\"}\n```\nHope that helps.",
+        ]));
+        let dataset = generate_testset(llm, "doc-1", "RAG augments generation with retrieval.")
+            .await
+            .expect("repaired dataset");
+        assert_eq!(dataset.len(), 1);
+        assert_eq!(dataset.iter().next().unwrap().user_input, "What is RAG?");
+        assert_eq!(
+            dataset.iter().next().unwrap().response,
+            "Retrieval augmented generation."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_31_2_6_empty_qa_fields_are_rejected() {
+        // A structurally-valid JSON object with blank fields must not become a sample.
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"question": "  ", "answer": ""}"#]));
+        let error = generate_testset(llm, "doc-1", "Ragas evaluates retrieval.")
+            .await
+            .expect_err("blank fields should error");
+        assert!(matches!(error, RagasError::Parse { .. }));
+    }
+
+    /// Live test against the real OpenAI-compatible model. Ignored by default and skipped
+    /// (returns early) unless OPENAI_API_KEY is set. Math/structure is verified via mocks
+    /// above; this path is real-LLM UNVERIFIED until run with a live key.
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; run with --ignored"]
+    async fn test_31_2_7_live_synthesizer_generates_from_real_model() {
+        let Some(client) = crate::OpenAiCompatibleClient::from_env("gpt-4o-mini") else {
+            eprintln!("skipping live testset synthesis: OPENAI_API_KEY not set");
+            return;
+        };
+        let llm: Arc<dyn LlmProvider> = Arc::new(client);
+        let document = "The Ragas library evaluates retrieval-augmented generation systems. \
+It provides metrics such as faithfulness and context precision to score answers \
+against retrieved evidence.";
+        let dataset = Synthesizer::new(llm)
+            .with_multi_hop(false)
+            .generate_testset("live-doc", document)
+            .await
+            .expect("live dataset");
+
+        assert!(!dataset.is_empty());
+        for sample in dataset.iter() {
+            assert!(!sample.user_input.trim().is_empty());
+            assert!(!sample.response.trim().is_empty());
+            assert!(!sample.retrieved_contexts.is_empty());
+        }
     }
 }
