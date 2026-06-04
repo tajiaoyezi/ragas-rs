@@ -1,1 +1,0 @@
-{"feature":"testset::transform::relationship_builder","upstream_commit":"298b68274234c060deacab3cf5fb52aa3a20e885","python_baseline":{"operation":"relationship_builder","relationships":["contains","next"]},"rust_output":{"operation":"relationship_builder","relationships":["contains","next"]},"tolerance":null,"known_gap":null}

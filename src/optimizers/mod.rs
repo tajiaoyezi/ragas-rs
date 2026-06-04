@@ -666,7 +666,10 @@ mod tests {
         assert_eq!(child.id, "LxR");
 
         // Cut at 0 yields the full right parent; cut at span yields full left.
-        assert_eq!(crossover_prompt_text(&left, &right, 0).prompt, "one two three");
+        assert_eq!(
+            crossover_prompt_text(&left, &right, 0).prompt,
+            "one two three"
+        );
         assert_eq!(
             crossover_prompt_text(&left, &right, 3).prompt,
             "alpha beta gamma"
@@ -678,8 +681,14 @@ mod tests {
         // Adversarial: empty parents must not panic and produce an empty prompt.
         let empty_left = OptimizationCandidate::new("L", "");
         let empty_right = OptimizationCandidate::new("R", "");
-        assert_eq!(crossover_prompt_text(&empty_left, &empty_right, 0).prompt, "");
-        assert_eq!(crossover_prompt_text(&empty_left, &empty_right, 5).prompt, "");
+        assert_eq!(
+            crossover_prompt_text(&empty_left, &empty_right, 0).prompt,
+            ""
+        );
+        assert_eq!(
+            crossover_prompt_text(&empty_left, &empty_right, 5).prompt,
+            ""
+        );
 
         // One empty parent still recombines without losing the non-empty side.
         let filled = OptimizationCandidate::new("F", "keep this");

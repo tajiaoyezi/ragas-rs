@@ -133,7 +133,10 @@ impl Metric for FaithfulnessMetric {
         }
 
         let verdicts = self.verify_statements(sample, &statements).await?;
-        let supported = verdicts.iter().filter(|verdict| verdict.verdict == 1).count();
+        let supported = verdicts
+            .iter()
+            .filter(|verdict| verdict.verdict == 1)
+            .count();
         let total = statements.len();
         let score = supported as f64 / total as f64;
         Ok(
@@ -1004,14 +1007,14 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n");
             self.prompts.lock().expect("prompts").push(prompt);
-            let content =
-                self.responses
-                    .lock()
-                    .expect("responses")
-                    .pop_front()
-                    .ok_or_else(|| RagasError::Provider {
-                        message: "scripted LLM ran out of responses".to_string(),
-                    })?;
+            let content = self
+                .responses
+                .lock()
+                .expect("responses")
+                .pop_front()
+                .ok_or_else(|| RagasError::Provider {
+                    message: "scripted LLM ran out of responses".to_string(),
+                })?;
             Ok(LlmResponse {
                 content,
                 usage: None,
@@ -1074,7 +1077,10 @@ mod tests {
         ]));
         let metric = FaithfulnessMetric::new(llm.clone());
 
-        let result = metric.score(&faithfulness_sample()).await.expect("faithfulness");
+        let result = metric
+            .score(&faithfulness_sample())
+            .await
+            .expect("faithfulness");
 
         assert_eq!(result.metric_name, "faithfulness");
         assert_eq!(numeric(&result), 1.0);
@@ -1095,7 +1101,12 @@ mod tests {
             r#"{"verdicts":[{"verdict":1},{"verdict":0}]}"#,
         ])));
         assert_eq!(
-            numeric(&partial.score(&faithfulness_sample()).await.expect("partial")),
+            numeric(
+                &partial
+                    .score(&faithfulness_sample())
+                    .await
+                    .expect("partial")
+            ),
             0.5
         );
 
@@ -1105,7 +1116,12 @@ mod tests {
             r#"{"verdicts":[{"verdict":0},{"verdict":0}]}"#,
         ])));
         assert_eq!(
-            numeric(&unsupported.score(&faithfulness_sample()).await.expect("unsupported")),
+            numeric(
+                &unsupported
+                    .score(&faithfulness_sample())
+                    .await
+                    .expect("unsupported")
+            ),
             0.0
         );
     }
@@ -1130,7 +1146,10 @@ mod tests {
             "```\n{\"verdicts\":[{\"verdict\":1}]}\n```",
         ])));
 
-        let result = metric.score(&faithfulness_sample()).await.expect("repaired");
+        let result = metric
+            .score(&faithfulness_sample())
+            .await
+            .expect("repaired");
 
         assert_eq!(numeric(&result), 1.0);
     }
@@ -1230,10 +1249,7 @@ mod tests {
         // The embedding provider would panic if asked to embed (its map is empty), proving
         // that zero generated questions short-circuits to NaN before any embedding call.
         let llm = Arc::new(ScriptedLlm::new(vec![r#"{"questions":[]}"#]));
-        let metric = ResponseRelevancyMetric::new(
-            llm.clone(),
-            Arc::new(PanicEmbeddingProvider),
-        );
+        let metric = ResponseRelevancyMetric::new(llm.clone(), Arc::new(PanicEmbeddingProvider));
 
         let result = metric.score(&relevancy_sample()).await.expect("relevancy");
 
@@ -1265,9 +1281,7 @@ mod tests {
     #[tokio::test]
     async fn response_relevancy_surfaces_unparseable_model_output_as_error() {
         let metric = ResponseRelevancyMetric::new(
-            Arc::new(ScriptedLlm::new(vec![
-                "I cannot turn this into questions.",
-            ])),
+            Arc::new(ScriptedLlm::new(vec!["I cannot turn this into questions."])),
             Arc::new(PanicEmbeddingProvider),
         );
 
@@ -1285,7 +1299,9 @@ mod tests {
             "answer",
             contexts.into_iter().map(str::to_string).collect(),
         )
-        .with_reference("Ragas evaluates LLM applications and is maintained by Exploding Gradients.")
+        .with_reference(
+            "Ragas evaluates LLM applications and is maintained by Exploding Gradients.",
+        )
     }
 
     #[tokio::test]
@@ -1352,10 +1368,7 @@ mod tests {
         // SingleTurnSample::new leaves `reference` as None.
         let sample = SingleTurnSample::new("question", "answer", vec!["ctx-a".to_string()]);
 
-        let error = metric
-            .score(&sample)
-            .await
-            .expect_err("missing reference");
+        let error = metric.score(&sample).await.expect_err("missing reference");
 
         assert!(error.to_string().contains("reference"));
         assert!(llm.prompts().is_empty());
@@ -1411,7 +1424,10 @@ mod tests {
         ]));
         let metric = LlmContextRecallMetric::new(llm.clone());
 
-        let result = metric.score(&context_recall_sample()).await.expect("recall");
+        let result = metric
+            .score(&context_recall_sample())
+            .await
+            .expect("recall");
 
         assert_eq!(result.metric_name, "context_recall");
         assert_eq!(numeric(&result), 1.0);
@@ -1450,8 +1466,8 @@ mod tests {
         // A whitespace-only reference yields zero sentences -> NaN, and the LLM must not run.
         let llm = Arc::new(ScriptedLlm::new(vec![]));
         let metric = LlmContextRecallMetric::new(llm.clone());
-        let sample =
-            SingleTurnSample::new("question", "answer", vec!["ctx".to_string()]).with_reference("   ");
+        let sample = SingleTurnSample::new("question", "answer", vec!["ctx".to_string()])
+            .with_reference("   ");
 
         let error = metric.score(&sample).await.expect_err("empty reference");
 
@@ -1466,7 +1482,10 @@ mod tests {
             "Sure:\n```json\n{\"classifications\":[{\"verdict\":1},{\"verdict\":1}]}\n```",
         ])));
 
-        let result = metric.score(&context_recall_sample()).await.expect("repaired");
+        let result = metric
+            .score(&context_recall_sample())
+            .await
+            .expect("repaired");
 
         assert_eq!(numeric(&result), 1.0);
     }
@@ -1530,7 +1549,9 @@ mod tests {
 
     /// Build the live chat client from [`crate::ProviderConfig`], or `None` to skip when no key.
     fn live_client() -> Option<Arc<OpenAiCompatibleClient>> {
-        crate::ProviderConfig::from_env().chat_client().map(Arc::new)
+        crate::ProviderConfig::from_env()
+            .chat_client()
+            .map(Arc::new)
     }
 
     /// Embeddings may live on a different provider than chat (e.g. DeepSeek chat +
@@ -1651,9 +1672,7 @@ mod tests {
             "Ragas is maintained by the Exploding Gradients team.".to_string(),
         ];
         let supported = SingleTurnSample::new("What is Ragas?", "answer", contexts.clone())
-            .with_reference(
-                "Ragas evaluates LLM applications. Exploding Gradients maintains it.",
-            );
+            .with_reference("Ragas evaluates LLM applications. Exploding Gradients maintains it.");
         let unsupported = SingleTurnSample::new("What is Ragas?", "answer", contexts)
             .with_reference("Mount Everest is the tallest mountain. The ocean is deep and blue.");
 

@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ChatMessage, EvaluationDataset, LlmProvider, LlmRequest, RagasError, SingleTurnSample};
+use crate::{
+    ChatMessage, EvaluationDataset, LlmProvider, LlmRequest, RagasError, SingleTurnSample,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GraphProperty {
@@ -941,7 +943,9 @@ pub async fn generate_testset(
     source_id: &str,
     document_text: &str,
 ) -> Result<EvaluationDataset, RagasError> {
-    Synthesizer::new(llm).generate_testset(source_id, document_text).await
+    Synthesizer::new(llm)
+        .generate_testset(source_id, document_text)
+        .await
 }
 
 #[cfg(test)]
@@ -1546,10 +1550,7 @@ mod tests {
 
     #[async_trait]
     impl LlmProvider for ScriptedLlm {
-        async fn generate(
-            &self,
-            request: LlmRequest,
-        ) -> Result<crate::LlmResponse, RagasError> {
+        async fn generate(&self, request: LlmRequest) -> Result<crate::LlmResponse, RagasError> {
             let prompt = request
                 .messages
                 .iter()
@@ -1572,8 +1573,7 @@ mod tests {
         }
     }
 
-    const TWO_CHUNK_DOC: &str =
-        "Ragas evaluates retrieval quality with grounded metrics. Rust services compile to fast native binaries.";
+    const TWO_CHUNK_DOC: &str = "Ragas evaluates retrieval quality with grounded metrics. Rust services compile to fast native binaries.";
 
     #[tokio::test]
     async fn test_31_2_1_synthesizer_invokes_llm_and_builds_grounded_dataset() {
@@ -1597,8 +1597,11 @@ mod tests {
         // the real chunk text (proving the pipeline feeds node content to the model).
         let prompts = llm.prompts();
         assert_eq!(prompts.len(), 3);
-        assert!(prompts.iter().all(|prompt| prompt.contains("Ragas")
-            || prompt.contains("Rust")));
+        assert!(
+            prompts
+                .iter()
+                .all(|prompt| prompt.contains("Ragas") || prompt.contains("Rust"))
+        );
         assert!(prompts[2].contains("CONTEXT A") && prompts[2].contains("CONTEXT B"));
 
         assert_eq!(dataset.len(), 3);
@@ -1665,9 +1668,16 @@ mod tests {
                 sample.metadata.get("synthesis_type").map(String::as_str) == Some("multi-hop")
             })
             .collect();
-        assert_eq!(multi_hop.len(), 1, "exactly one adjacent-chunk multi-hop sample");
+        assert_eq!(
+            multi_hop.len(),
+            1,
+            "exactly one adjacent-chunk multi-hop sample"
+        );
         let sample = multi_hop[0];
-        assert_eq!(sample.retrieved_contexts, vec![CHUNK_0.to_string(), CHUNK_1.to_string()]);
+        assert_eq!(
+            sample.retrieved_contexts,
+            vec![CHUNK_0.to_string(), CHUNK_1.to_string()]
+        );
         assert_eq!(
             sample.metadata.get("source_node_ids").map(String::as_str),
             Some("doc-1-chunk-0,doc-1-chunk-1")
@@ -1719,9 +1729,11 @@ mod tests {
         // `next` edge, so no prompt ever carries both chunks at once.
         let prompts = llm.prompts();
         assert_eq!(prompts.len(), 2);
-        assert!(prompts.iter().all(|prompt| {
-            !(prompt.contains("CONTEXT A") && prompt.contains("CONTEXT B"))
-        }));
+        assert!(
+            prompts
+                .iter()
+                .all(|prompt| { !(prompt.contains("CONTEXT A") && prompt.contains("CONTEXT B")) })
+        );
         assert_eq!(dataset.len(), 2);
         assert!(dataset.iter().all(|sample| {
             sample.metadata.get("synthesis_type").map(String::as_str) == Some("single-hop")
@@ -1787,7 +1799,9 @@ mod tests {
     #[tokio::test]
     async fn test_31_2_6_empty_qa_fields_are_rejected() {
         // A structurally-valid JSON object with blank fields must not become a sample.
-        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"question": "  ", "answer": ""}"#]));
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"question": "  ", "answer": ""}"#,
+        ]));
         let error = generate_testset(llm, "doc-1", "Ragas evaluates retrieval.")
             .await
             .expect_err("blank fields should error");

@@ -29,8 +29,7 @@ async fn main() {
     // makes three real `generate()` calls: one single-hop Q/A per chunk, then one
     // multi-hop Q/A over the single `next` edge connecting them. We script exactly those
     // three responses, in order.
-    const DOCUMENT: &str =
-        "Ragas evaluates retrieval quality with grounded metrics. Rust services compile to fast native binaries.";
+    const DOCUMENT: &str = "Ragas evaluates retrieval quality with grounded metrics. Rust services compile to fast native binaries.";
 
     let synth_llm = Arc::new(ScriptedLlm::new(vec![
         r#"{"question": "What does Ragas evaluate?", "answer": "Ragas evaluates retrieval quality."}"#,
@@ -71,12 +70,16 @@ async fn main() {
             let reference = reference.ok_or_else(|| RagasError::Parse {
                 message: "rouge_l requires a reference".to_string(),
             })?;
-            let score = rouge_l_recall(&response, &reference)
-                .score
-                .ok_or_else(|| RagasError::Parse {
-                    message: "rouge_l produced no score".to_string(),
-                })?;
-            Ok(MetricResult::success("rouge_l", MetricValue::numeric(score)))
+            let score =
+                rouge_l_recall(&response, &reference)
+                    .score
+                    .ok_or_else(|| RagasError::Parse {
+                        message: "rouge_l produced no score".to_string(),
+                    })?;
+            Ok(MetricResult::success(
+                "rouge_l",
+                MetricValue::numeric(score),
+            ))
         })
     }));
 
@@ -104,11 +107,17 @@ async fn main() {
     let report = evaluate(&dataset, &metrics, EvaluationOptions { concurrency: 1 }).await;
 
     // --- Step 3: print a readable per-metric summary ------------------------------------
-    println!("Evaluation report ({} metric(s)):", report.metric_names.len());
+    println!(
+        "Evaluation report ({} metric(s)):",
+        report.metric_names.len()
+    );
     for sample in &report.results {
         println!("  sample #{}", sample.sample_index);
         for result in &sample.results {
-            match (result.value.as_ref().and_then(MetricValue::as_numeric), &result.error) {
+            match (
+                result.value.as_ref().and_then(MetricValue::as_numeric),
+                &result.error,
+            ) {
                 (Some(score), _) => println!("    {} = {score:.3}", result.metric_name),
                 (None, Some(error)) => println!("    {} errored: {error}", result.metric_name),
                 (None, None) => println!("    {} = <none>", result.metric_name),
@@ -122,7 +131,12 @@ async fn main() {
         let scores: Vec<f64> = report
             .results
             .iter()
-            .filter_map(|sample| sample.results[index].value.as_ref().and_then(MetricValue::as_numeric))
+            .filter_map(|sample| {
+                sample.results[index]
+                    .value
+                    .as_ref()
+                    .and_then(MetricValue::as_numeric)
+            })
             .collect();
         if scores.is_empty() {
             println!("  {name}: no numeric scores");

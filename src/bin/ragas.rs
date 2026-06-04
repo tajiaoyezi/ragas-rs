@@ -188,7 +188,9 @@ fn cmd_testset_with(
     };
 
     if let Some(path) = out_path {
-        let jsonl = dataset.to_jsonl_string().map_err(|error| error.to_string())?;
+        let jsonl = dataset
+            .to_jsonl_string()
+            .map_err(|error| error.to_string())?;
         std::fs::write(&path, jsonl).map_err(|error| format!("cannot write '{path}': {error}"))?;
     }
 
@@ -221,9 +223,8 @@ fn cmd_benchmark(args: &[String]) -> Result<String, String> {
         None => 1,
     };
     let mut runtime = CliRuntime::new();
-    let output =
-        run_cli_command_with_provider(&mut runtime, CliCommand::Benchmark { runs }, None)
-            .map_err(|error| error.to_string())?;
+    let output = run_cli_command_with_provider(&mut runtime, CliCommand::Benchmark { runs }, None)
+        .map_err(|error| error.to_string())?;
     Ok(output.stdout)
 }
 
@@ -245,7 +246,11 @@ mod tests {
     #[test]
     fn no_args_and_help_print_usage() {
         assert!(run(&[]).unwrap().contains("USAGE"));
-        assert!(run(&args(&["help"])).unwrap().contains("evaluate --dataset"));
+        assert!(
+            run(&args(&["help"]))
+                .unwrap()
+                .contains("evaluate --dataset")
+        );
         assert!(run(&args(&["--help"])).unwrap().contains("COMMANDS"));
     }
 

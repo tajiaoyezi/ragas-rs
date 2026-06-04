@@ -1,1 +1,0 @@
-{"feature":"tool_call_accuracy","upstream_commit":"298b68274234c060deacab3cf5fb52aa3a20e885","python_baseline":{"score":0.5,"reason":"one of two strict tool calls matched"},"rust_output":{"score":0.5,"reason":"one of two strict tool calls matched"},"tolerance":1e-9,"known_gap":null}

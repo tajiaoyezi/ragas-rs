@@ -8,9 +8,8 @@ use crate::{
     DatasetBackend, EvaluationDataset, EvaluationOptions, EvaluationReport, EvaluationSample,
     ExtractionBundle, FaithfulnessMetric, FnMetric, GraphNode, InMemoryDatasetBackend,
     KnowledgeGraph, LlmContextRecallMetric, LlmProvider, Metric, MetricResult, MetricValue,
-    PersonaGenerator, RagasError, SingleTurnSample, attach_extractions,
-    build_chunk_relationships, evaluate, rouge_l_recall, split_text_into_chunks,
-    synthesize_single_hop_sample,
+    PersonaGenerator, RagasError, SingleTurnSample, attach_extractions, build_chunk_relationships,
+    evaluate, rouge_l_recall, split_text_into_chunks, synthesize_single_hop_sample,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,14 +178,15 @@ fn run_evaluate(
         let scorable = EvaluationDataset::new(single_turn)?;
         let metrics = build_evaluate_metrics(provider, any_reference);
         // Drive the async evaluation pipeline from this synchronous CLI entry point.
-        let report = run_async(evaluate(&scorable, &metrics, EvaluationOptions { concurrency: 1 }));
+        let report = run_async(evaluate(
+            &scorable,
+            &metrics,
+            EvaluationOptions { concurrency: 1 },
+        ));
         Some(report)
     };
 
-    let aggregates = evaluated
-        .as_ref()
-        .map(aggregate_report)
-        .unwrap_or_default();
+    let aggregates = evaluated.as_ref().map(aggregate_report).unwrap_or_default();
     let summary = render_summary(&aggregates);
     let aggregates_json = aggregates
         .iter()
@@ -252,7 +252,10 @@ fn build_evaluate_metrics(
             let score = detailed.score.ok_or_else(|| RagasError::Parse {
                 message: "rouge_l produced no score".to_string(),
             })?;
-            Ok(MetricResult::success("rouge_l", MetricValue::numeric(score)))
+            Ok(MetricResult::success(
+                "rouge_l",
+                MetricValue::numeric(score),
+            ))
         })
     }));
     let mut metrics: Vec<Arc<dyn Metric>> = vec![rouge];
@@ -307,8 +310,11 @@ fn aggregate_report(report: &EvaluationReport) -> Vec<MetricAggregate> {
             let std = if count == 0 {
                 0.0
             } else {
-                let variance =
-                    scores.iter().map(|score| (score - mean).powi(2)).sum::<f64>() / count as f64;
+                let variance = scores
+                    .iter()
+                    .map(|score| (score - mean).powi(2))
+                    .sum::<f64>()
+                    / count as f64;
                 variance.sqrt()
             };
             MetricAggregate {
@@ -332,11 +338,7 @@ fn render_summary(aggregates: &[MetricAggregate]) -> String {
     for aggregate in aggregates {
         lines.push(format!(
             "{:<24} {:>6} {:>10.4} {:>10.4} {:>7}",
-            aggregate.metric_name,
-            aggregate.count,
-            aggregate.mean,
-            aggregate.std,
-            aggregate.errors
+            aggregate.metric_name, aggregate.count, aggregate.mean, aggregate.std, aggregate.errors
         ));
     }
     lines.join("\n")
@@ -601,8 +603,14 @@ mod tests {
         // The rendered summary is a real table naming the metric and its hand-computed mean.
         let stdout_json: Value = serde_json::from_str(&output.stdout).expect("stdout JSON");
         let summary = stdout_json["summary"].as_str().expect("summary string");
-        assert!(summary.contains("rouge_l"), "summary missing metric: {summary}");
-        assert!(summary.contains("0.5000"), "summary missing mean: {summary}");
+        assert!(
+            summary.contains("rouge_l"),
+            "summary missing metric: {summary}"
+        );
+        assert!(
+            summary.contains("0.5000"),
+            "summary missing mean: {summary}"
+        );
 
         // The structured aggregate carries the exact count/mean/std (not a templated echo).
         let metric = &stdout_json["metrics"][0];
@@ -619,7 +627,12 @@ mod tests {
         assert_eq!(report_json["scored_samples"], 2);
         assert_eq!(report_json["skipped_samples"], 0);
         assert!(
-            (report_json["metrics"][0]["mean"].as_f64().expect("report mean") - 0.5).abs() < 1e-9
+            (report_json["metrics"][0]["mean"]
+                .as_f64()
+                .expect("report mean")
+                - 0.5)
+                .abs()
+                < 1e-9
         );
     }
 
@@ -701,7 +714,9 @@ mod tests {
         let prompts = provider.prompts();
         assert_eq!(prompts.len(), 3, "expected 3 LLM calls, saw: {prompts:#?}");
         assert!(
-            prompts.iter().any(|p| p.contains("atomic factual statements")),
+            prompts
+                .iter()
+                .any(|p| p.contains("atomic factual statements")),
             "faithfulness statement-generation prompt missing"
         );
         assert!(
@@ -715,7 +730,10 @@ mod tests {
 
         // The summary names the LLM metrics alongside the offline ROUGE metric.
         let summary = stdout_json["summary"].as_str().expect("summary string");
-        assert!(summary.contains("rouge_l"), "summary missing rouge_l: {summary}");
+        assert!(
+            summary.contains("rouge_l"),
+            "summary missing rouge_l: {summary}"
+        );
         assert!(
             summary.contains("faithfulness"),
             "summary missing faithfulness: {summary}"
@@ -746,7 +764,12 @@ mod tests {
         assert_eq!(context_recall["count"], 1);
         assert_eq!(context_recall["errors"], 0);
         assert!(
-            (context_recall["mean"].as_f64().expect("context_recall mean") - 1.0).abs() < 1e-9,
+            (context_recall["mean"]
+                .as_f64()
+                .expect("context_recall mean")
+                - 1.0)
+                .abs()
+                < 1e-9,
             "context_recall mean: {context_recall:#?}"
         );
 
@@ -756,7 +779,11 @@ mod tests {
         let report_json: Value = serde_json::from_str(report).expect("report JSON");
         let report_metrics = report_json["metrics"].as_array().expect("report metrics");
         assert!(report_metrics.iter().any(|m| m["metric"] == "faithfulness"));
-        assert!(report_metrics.iter().any(|m| m["metric"] == "context_recall"));
+        assert!(
+            report_metrics
+                .iter()
+                .any(|m| m["metric"] == "context_recall")
+        );
     }
 
     #[test]
@@ -835,8 +862,14 @@ mod tests {
             .iter()
             .find(|m| m["metric"] == "faithfulness")
             .expect("faithfulness metric present");
-        assert_eq!(faithfulness["count"], 1, "faithfulness did not score: {faithfulness:#?}");
-        assert_eq!(faithfulness["errors"], 0, "faithfulness errored: {faithfulness:#?}");
+        assert_eq!(
+            faithfulness["count"], 1,
+            "faithfulness did not score: {faithfulness:#?}"
+        );
+        assert_eq!(
+            faithfulness["errors"], 0,
+            "faithfulness errored: {faithfulness:#?}"
+        );
     }
 
     #[test]
@@ -919,7 +952,14 @@ mod tests {
         assert_eq!(snapshot.status, "ok");
         assert_eq!(
             snapshot.stdout_keys,
-            vec!["command", "metrics", "report", "sample_count", "status", "summary"]
+            vec![
+                "command",
+                "metrics",
+                "report",
+                "sample_count",
+                "status",
+                "summary"
+            ]
         );
         assert!(snapshot.stderr_empty);
         assert_eq!(snapshot.exit_code, 0);

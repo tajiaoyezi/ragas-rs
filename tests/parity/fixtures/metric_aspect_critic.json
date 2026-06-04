@@ -1,1 +1,0 @@
-{"feature":"aspect_critic","upstream_commit":"298b68274234c060deacab3cf5fb52aa3a20e885","python_baseline":{"score":1.0,"reason":"binary aspect critic passes threshold"},"rust_output":{"score":1.0,"reason":"binary aspect critic passes threshold"},"tolerance":1e-9,"known_gap":null}

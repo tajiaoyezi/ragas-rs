@@ -13,7 +13,9 @@ fn main() {
     println!();
 
     if config.has_api_key() {
-        println!("✓ chat API key is set — LLM-based metrics, testset generation and the CLI run live.");
+        println!(
+            "✓ chat API key is set — LLM-based metrics, testset generation and the CLI run live."
+        );
     } else {
         println!(
             "✗ no chat API key — LLM features stay offline.\n  Set OPENAI_API_KEY in your shell or in a .env file (see .env.example)."

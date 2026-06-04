@@ -1,1 +1,0 @@
-{"feature":"testset::transform::entity_extractor","upstream_commit":"298b68274234c060deacab3cf5fb52aa3a20e885","python_baseline":{"operation":"entity_extractor","entities":["RAG","Rust"]},"rust_output":{"operation":"entity_extractor","entities":["RAG","Rust"]},"tolerance":null,"known_gap":null}

@@ -10,11 +10,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all -- --check
       - name: Build
-        run: cargo build
-      - name: Check
-        run: cargo check
+        run: cargo build --all-targets
+      - name: Clippy
+        run: cargo clippy --all-targets
       - name: Test
         run: cargo test
-      - name: Parity gate
-        run: cargo test parity::

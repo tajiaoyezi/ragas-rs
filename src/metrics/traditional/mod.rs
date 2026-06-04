@@ -971,8 +971,8 @@ mod tests {
         //   precision = 3/3 = 1.0
         //   recall    = 3/6 = 0.5
         //   f         = 2*1.0*0.5 / (1.0 + 0.5) = 1.0 / 1.5 = 2/3
-        let scores =
-            RougeScore::new(RougeType::Rouge1, RougeMode::FMeasure).scores("the cat sat", "the cat sat on the mat");
+        let scores = RougeScore::new(RougeType::Rouge1, RougeMode::FMeasure)
+            .scores("the cat sat", "the cat sat on the mat");
         close(scores.precision, 1.0);
         close(scores.recall, 0.5);
         close(scores.fmeasure, 2.0 / 3.0);
@@ -1015,13 +1015,13 @@ mod tests {
         //   recall    = 2/4 = 0.5
         //   f         = 2*1.0*0.5 / 1.5 = 2/3
         // A contiguous-overlap (bigram) metric would score 0 here, proving this is LCS-based.
-        let lcs =
-            RougeScore::new(RougeType::RougeL, RougeMode::FMeasure).scores("a c", "a b c d");
+        let lcs = RougeScore::new(RougeType::RougeL, RougeMode::FMeasure).scores("a c", "a b c d");
         close(lcs.precision, 1.0);
         close(lcs.recall, 0.5);
         close(lcs.fmeasure, 2.0 / 3.0);
 
-        let bigram = RougeScore::new(RougeType::Rouge2, RougeMode::FMeasure).scores("a c", "a b c d");
+        let bigram =
+            RougeScore::new(RougeType::Rouge2, RougeMode::FMeasure).scores("a c", "a b c d");
         close(bigram.fmeasure, 0.0);
     }
 
@@ -1032,8 +1032,8 @@ mod tests {
         //   precision = 2/2 = 1.0
         //   recall    = 2/3
         //   f         = 2*1.0*(2/3) / (1.0 + 2/3) = (4/3)/(5/3) = 4/5
-        let scores =
-            RougeScore::new(RougeType::Rouge1, RougeMode::FMeasure).scores("the the", "the the the");
+        let scores = RougeScore::new(RougeType::Rouge1, RougeMode::FMeasure)
+            .scores("the the", "the the the");
         close(scores.precision, 1.0);
         close(scores.recall, 2.0 / 3.0);
         close(scores.fmeasure, 0.8);
@@ -1105,7 +1105,10 @@ mod tests {
 
         assert_eq!(result.metric_name, "rouge_score");
         close(
-            result.value.and_then(|value| value.as_numeric()).expect("numeric"),
+            result
+                .value
+                .and_then(|value| value.as_numeric())
+                .expect("numeric"),
             2.0 / 3.0,
         );
     }

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use ragas::{
-    EvaluationDataset, EvaluationOptions, FnMetric, LlmContextRecallMetric, Metric,
-    MetricResult, MetricValue, MockEmbeddingProvider, MockLlmProvider, ResponseRelevancyMetric,
-    SingleTurnSample, evaluate,
+    EvaluationDataset, EvaluationOptions, FnMetric, LlmContextRecallMetric, Metric, MetricResult,
+    MetricValue, MockEmbeddingProvider, MockLlmProvider, ResponseRelevancyMetric, SingleTurnSample,
+    evaluate,
 };
 
 /// Offline demonstration that the real LLM metrics are wired into `evaluate()`.
@@ -14,12 +14,14 @@ use ragas::{
 /// run the `#[ignore]`d live discrimination tests with `OPENAI_API_KEY` set.
 #[tokio::main]
 async fn main() {
-    let dataset = EvaluationDataset::new(vec![SingleTurnSample::new(
-        "What does ragas-rs evaluate?",
-        "ragas-rs evaluates RAG and LLM application quality.",
-        vec!["ragas-rs evaluates RAG and LLM applications.".to_string()],
-    )
-    .with_reference("ragas-rs evaluates RAG quality. It scores LLM applications.")])
+    let dataset = EvaluationDataset::new(vec![
+        SingleTurnSample::new(
+            "What does ragas-rs evaluate?",
+            "ragas-rs evaluates RAG and LLM application quality.",
+            vec!["ragas-rs evaluates RAG and LLM applications.".to_string()],
+        )
+        .with_reference("ragas-rs evaluates RAG quality. It scores LLM applications."),
+    ])
     .expect("example dataset");
 
     // A plain custom metric, to show user metrics and library metrics run side by side.
@@ -68,7 +70,10 @@ async fn main() {
     );
     for sample in &report.results {
         for result in &sample.results {
-            match (result.value.as_ref().and_then(MetricValue::as_numeric), &result.error) {
+            match (
+                result.value.as_ref().and_then(MetricValue::as_numeric),
+                &result.error,
+            ) {
                 (Some(score), _) => println!("  {} = {score}", result.metric_name),
                 (None, Some(error)) => println!("  {} errored: {error}", result.metric_name),
                 (None, None) => println!("  {} = <none>", result.metric_name),

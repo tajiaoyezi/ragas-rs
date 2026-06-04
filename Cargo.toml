@@ -2,8 +2,13 @@
 name = "ragas"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 license = "Apache-2.0"
 description = "Rust core for embeddable RAG/LLM evaluation."
+readme = "README.md"
+keywords = ["rag", "llm", "evaluation", "ragas", "nlp"]
+categories = ["science", "text-processing"]
+# repository = "https://github.com/<your-org>/ragas-rs"  # set this when you create the public repo
 
 [features]
 default = ["runtime-tokio"]

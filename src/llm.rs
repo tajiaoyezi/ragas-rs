@@ -292,7 +292,9 @@ impl OpenAiCompatibleClient {
     pub fn from_env(model: impl Into<String>) -> Option<Self> {
         let config = crate::ProviderConfig::from_env();
         let api_key = config.api_key?;
-        Some(Self::new(config.base_url, api_key, model).with_embedding_model(config.embedding_model))
+        Some(
+            Self::new(config.base_url, api_key, model).with_embedding_model(config.embedding_model),
+        )
     }
 
     pub fn from_config(config: OpenAiCompatibleConfig) -> Self {
