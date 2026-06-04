@@ -49,7 +49,7 @@ Honest caveats:
 ```toml
 # Cargo.toml
 [dependencies]
-ragas = { git = "https://github.com/<your-org>/ragas-rs" }
+ragas = { git = "https://github.com/tajiaoyezi/ragas-rs" }
 ```
 
 Requires a recent stable Rust toolchain (edition 2024).

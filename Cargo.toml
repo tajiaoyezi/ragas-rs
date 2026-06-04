@@ -8,7 +8,7 @@ description = "Rust core for embeddable RAG/LLM evaluation."
 readme = "README.md"
 keywords = ["rag", "llm", "evaluation", "ragas", "nlp"]
 categories = ["science", "text-processing"]
-# repository = "https://github.com/<your-org>/ragas-rs"  # set this when you create the public repo
+repository = "https://github.com/tajiaoyezi/ragas-rs"
 
 [features]
 default = ["runtime-tokio"]
