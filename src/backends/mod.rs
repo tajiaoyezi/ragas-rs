@@ -100,14 +100,12 @@ impl DiskCacheCompatibility {
 
     pub fn delete(&mut self, key: &str) -> bool {
         let removed = self.entries.remove(key).is_some();
-        if removed {
-            if let Some(directory) = &self.directory {
-                let path = disk_cache_record_path(directory, key);
-                match std::fs::remove_file(path) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(_) => {}
-                }
+        if removed && let Some(directory) = &self.directory {
+            let path = disk_cache_record_path(directory, key);
+            match std::fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => {}
             }
         }
         removed
@@ -496,10 +494,10 @@ fn gdrive_rows_to_dataset(
             sample = sample.with_reference(reference);
         }
         for (index, header) in headers.iter().enumerate() {
-            if let Some(key) = header.strip_prefix("metadata.") {
-                if let Some(value) = row.get(index).filter(|value| !value.is_empty()) {
-                    sample = sample.with_metadata(key, value);
-                }
+            if let Some(key) = header.strip_prefix("metadata.")
+                && let Some(value) = row.get(index).filter(|value| !value.is_empty())
+            {
+                sample = sample.with_metadata(key, value);
             }
         }
         samples.push(EvaluationSample::SingleTurn(sample));

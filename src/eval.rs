@@ -68,12 +68,11 @@ pub async fn evaluate(
 
     let mut cells = vec![vec![None; metrics.len()]; dataset.len()];
     for handle in handles {
-        if let Ok((sample_index, metric_index, result)) = handle.await {
-            if let Some(row) = cells.get_mut(sample_index) {
-                if let Some(cell) = row.get_mut(metric_index) {
-                    *cell = Some(result);
-                }
-            }
+        if let Ok((sample_index, metric_index, result)) = handle.await
+            && let Some(row) = cells.get_mut(sample_index)
+            && let Some(cell) = row.get_mut(metric_index)
+        {
+            *cell = Some(result);
         }
     }
 

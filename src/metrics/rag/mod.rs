@@ -44,6 +44,12 @@ impl FactualCorrectnessCounts {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FaithfulnessJudgeContract;
 
+impl Default for FaithfulnessJudgeContract {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FaithfulnessJudgeContract {
     pub fn new() -> Self {
         Self
@@ -723,7 +729,7 @@ mod tests {
     fn test_10_3_1_answer_relevancy_supports_embedding_and_llm_judge_paths() {
         // SCEN-10.3.1 / AC1 / TEST-10.3.1
         let embedding = answer_relevancy_from_embedding_similarity(&[1.0, 0.0], &[0.5, 0.5]);
-        assert_score_close(&embedding, 0.70710678);
+        assert_score_close(&embedding, std::f64::consts::FRAC_1_SQRT_2);
         assert!(
             embedding
                 .reason

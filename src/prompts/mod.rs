@@ -102,6 +102,12 @@ pub struct JudgeOutputParser {
     repair_strategy: RepairStrategy,
 }
 
+impl Default for JudgeOutputParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl JudgeOutputParser {
     pub fn new() -> Self {
         Self {

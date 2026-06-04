@@ -859,7 +859,7 @@ mod tests {
                 "a2".to_string()
             ]]
         );
-        assert_score_close(&results[0], 0.70710678);
+        assert_score_close(&results[0], std::f64::consts::FRAC_1_SQRT_2);
         assert_score_close(&results[1], 1.0);
     }
 

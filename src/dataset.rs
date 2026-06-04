@@ -144,10 +144,10 @@ impl EvaluationDataset<SingleTurnSample> {
             )?;
             let mut sample = SingleTurnSample::new(user_input, response, retrieved_contexts);
 
-            if let Some(index) = reference_idx {
-                if let Some(reference) = optional_cell(&record, index) {
-                    sample = sample.with_reference(reference);
-                }
+            if let Some(index) = reference_idx
+                && let Some(reference) = optional_cell(&record, index)
+            {
+                sample = sample.with_reference(reference);
             }
             for (index, key) in &metadata_columns {
                 if let Some(value) = optional_cell(&record, *index) {

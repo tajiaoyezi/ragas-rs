@@ -92,6 +92,12 @@ pub struct GraphAdvancedQuery {
     pub outgoing_relationship: Option<String>,
 }
 
+impl Default for GraphAdvancedQuery {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GraphAdvancedQuery {
     pub fn new() -> Self {
         Self {
