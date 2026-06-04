@@ -1633,6 +1633,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_31_2_1b_multi_hop_sample_spans_two_chunks_and_prompts_with_both() {
+        // First-class multi-hop: with multi-hop enabled, a multi-hop sample must (a) carry
+        // BOTH adjacent chunk texts as its retrieved_contexts, (b) be marked multi-hop, and
+        // (c) be produced by a real generate() call whose prompt contained BOTH chunk texts.
+        //
+        // Hand-verified chunking of TWO_CHUNK_DOC at max 60 chars (greedy, whitespace split):
+        //   chunk-0 = "Ragas evaluates retrieval quality with grounded metrics." (56 chars)
+        //   chunk-1 = "Rust services compile to fast native binaries."
+        const CHUNK_0: &str = "Ragas evaluates retrieval quality with grounded metrics.";
+        const CHUNK_1: &str = "Rust services compile to fast native binaries.";
+
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"question": "What does Ragas evaluate?", "answer": "Retrieval quality."}"#,
+            r#"{"question": "How fast are Rust binaries?", "answer": "They are fast native binaries."}"#,
+            r#"{"question": "Do Ragas and Rust both target quality and speed?", "answer": "Yes."}"#,
+        ]));
+
+        let dataset = Synthesizer::new(llm.clone())
+            .with_chunk_max_chars(60)
+            .with_multi_hop(true)
+            .generate_testset("doc-1", TWO_CHUNK_DOC)
+            .await
+            .expect("dataset");
+
+        // (a) + (b): exactly one multi-hop sample, and its contexts are the two adjacent
+        // chunk texts verbatim (distinct chunks, both present).
+        let multi_hop: Vec<_> = dataset
+            .iter()
+            .filter(|sample| {
+                sample.metadata.get("synthesis_type").map(String::as_str) == Some("multi-hop")
+            })
+            .collect();
+        assert_eq!(multi_hop.len(), 1, "exactly one adjacent-chunk multi-hop sample");
+        let sample = multi_hop[0];
+        assert_eq!(sample.retrieved_contexts, vec![CHUNK_0.to_string(), CHUNK_1.to_string()]);
+        assert_eq!(
+            sample.metadata.get("source_node_ids").map(String::as_str),
+            Some("doc-1-chunk-0,doc-1-chunk-1")
+        );
+
+        // (c): the LLM prompt that produced the multi-hop sample carried BOTH chunk texts.
+        // The multi-hop call is the third generate() invocation (after the two single-hop
+        // calls), and it is the only prompt mentioning both chunks via CONTEXT A / CONTEXT B.
+        let prompts = llm.prompts();
+        assert_eq!(prompts.len(), 3);
+        let multi_hop_prompt = prompts
+            .iter()
+            .find(|prompt| prompt.contains("CONTEXT A") && prompt.contains("CONTEXT B"))
+            .expect("a multi-hop prompt with both contexts");
+        assert!(
+            multi_hop_prompt.contains(CHUNK_0),
+            "multi-hop prompt missing chunk-0 text: {multi_hop_prompt}"
+        );
+        assert!(
+            multi_hop_prompt.contains(CHUNK_1),
+            "multi-hop prompt missing chunk-1 text: {multi_hop_prompt}"
+        );
+
+        // The single-hop prompts each carry exactly one chunk, never both -> the only place
+        // both chunks meet is the genuine multi-hop call.
+        let both_chunk_prompts = prompts
+            .iter()
+            .filter(|prompt| prompt.contains(CHUNK_0) && prompt.contains(CHUNK_1))
+            .count();
+        assert_eq!(both_chunk_prompts, 1);
+    }
+
+    #[tokio::test]
     async fn test_31_2_2_synthesizer_single_hop_only_skips_multi_hop_calls() {
         // With multi-hop disabled, only the single-hop calls are made (one per chunk).
         let llm = Arc::new(ScriptedLlm::new(vec![
@@ -1647,11 +1715,27 @@ mod tests {
             .await
             .expect("dataset");
 
-        assert_eq!(llm.prompts().len(), 2);
+        // Only the single-hop calls fire (one per chunk); no multi-hop generate() over the
+        // `next` edge, so no prompt ever carries both chunks at once.
+        let prompts = llm.prompts();
+        assert_eq!(prompts.len(), 2);
+        assert!(prompts.iter().all(|prompt| {
+            !(prompt.contains("CONTEXT A") && prompt.contains("CONTEXT B"))
+        }));
         assert_eq!(dataset.len(), 2);
         assert!(dataset.iter().all(|sample| {
             sample.metadata.get("synthesis_type").map(String::as_str) == Some("single-hop")
         }));
+        // The defining contrast vs. multi-hop enabled: zero multi-hop samples are produced.
+        assert_eq!(
+            dataset
+                .iter()
+                .filter(|sample| {
+                    sample.metadata.get("synthesis_type").map(String::as_str) == Some("multi-hop")
+                })
+                .count(),
+            0
+        );
     }
 
     #[tokio::test]
@@ -1736,6 +1820,47 @@ against retrieved evidence.";
             assert!(!sample.user_input.trim().is_empty());
             assert!(!sample.response.trim().is_empty());
             assert!(!sample.retrieved_contexts.is_empty());
+        }
+    }
+
+    /// Live multi-hop test against the real model. Ignored/env-gated like the single-hop
+    /// live test. Multi-hop structure is verified via mocks above; the real-LLM path is
+    /// UNVERIFIED until run with a live key. Reads OPENAI_MODEL (never hardcoded).
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; run with --ignored"]
+    async fn test_31_2_8_live_multi_hop_synthesizer_generates_two_context_sample() {
+        let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+        let Some(client) = crate::OpenAiCompatibleClient::from_env(model) else {
+            eprintln!("skipping live multi-hop testset synthesis: OPENAI_API_KEY not set");
+            return;
+        };
+        let llm: Arc<dyn LlmProvider> = Arc::new(client);
+        let document = "The Ragas library evaluates retrieval-augmented generation systems. \
+It provides metrics such as faithfulness and context precision to score answers \
+against retrieved evidence. Rust services compile these metrics into fast native \
+binaries that run without a Python runtime.";
+        // Small chunks force >= 2 chunks so an adjacent `next` edge exists for multi-hop.
+        let dataset = Synthesizer::new(llm)
+            .with_chunk_max_chars(120)
+            .with_multi_hop(true)
+            .generate_testset("live-multi-doc", document)
+            .await
+            .expect("live multi-hop dataset");
+
+        let multi_hop: Vec<_> = dataset
+            .iter()
+            .filter(|sample| {
+                sample.metadata.get("synthesis_type").map(String::as_str) == Some("multi-hop")
+            })
+            .collect();
+        assert!(
+            !multi_hop.is_empty(),
+            "expected at least one multi-hop sample from the real model"
+        );
+        for sample in &multi_hop {
+            assert_eq!(sample.retrieved_contexts.len(), 2);
+            assert!(!sample.user_input.trim().is_empty());
+            assert!(!sample.response.trim().is_empty());
         }
     }
 }
