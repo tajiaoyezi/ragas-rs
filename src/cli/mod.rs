@@ -1,12 +1,15 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    DatasetBackend, EvaluationDataset, EvaluationSample, ExtractionBundle, GraphNode,
-    InMemoryDatasetBackend, KnowledgeGraph, PersonaGenerator, RagasError, attach_extractions,
-    build_chunk_relationships, split_text_into_chunks, synthesize_single_hop_sample,
+    DatasetBackend, EvaluationDataset, EvaluationOptions, EvaluationReport, EvaluationSample,
+    ExtractionBundle, FnMetric, GraphNode, InMemoryDatasetBackend, KnowledgeGraph, Metric,
+    MetricResult, MetricValue, PersonaGenerator, RagasError, SingleTurnSample, attach_extractions,
+    build_chunk_relationships, evaluate, rouge_l_recall, split_text_into_chunks,
+    synthesize_single_hop_sample,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,12 +135,57 @@ fn run_evaluate(
     report: String,
 ) -> Result<CliOutput, RagasError> {
     let dataset = runtime.datasets.load(&input)?;
+    // Only single-turn samples are scorable by `Metric::score`; multi-turn samples are
+    // carried in the dataset but skipped here (reported as `skipped_samples`).
+    let total_samples = dataset.len();
+    let single_turn: Vec<SingleTurnSample> = dataset
+        .samples()
+        .iter()
+        .filter_map(|sample| match sample {
+            EvaluationSample::SingleTurn(sample) => Some(sample.clone()),
+            EvaluationSample::MultiTurn(_) => None,
+        })
+        .collect();
+    let skipped = total_samples - single_turn.len();
+
+    let evaluated = if single_turn.is_empty() {
+        None
+    } else {
+        let scorable = EvaluationDataset::new(single_turn)?;
+        let metrics = build_evaluate_metrics();
+        // Drive the async evaluation pipeline from this synchronous CLI entry point.
+        let report = run_async(evaluate(&scorable, &metrics, EvaluationOptions { concurrency: 1 }));
+        Some(report)
+    };
+
+    let aggregates = evaluated
+        .as_ref()
+        .map(aggregate_report)
+        .unwrap_or_default();
+    let summary = render_summary(&aggregates);
+    let aggregates_json = aggregates
+        .iter()
+        .map(|aggregate| {
+            json!({
+                "metric": aggregate.metric_name,
+                "count": aggregate.count,
+                "mean": aggregate.mean,
+                "std": aggregate.std,
+                "errors": aggregate.errors,
+            })
+        })
+        .collect::<Vec<_>>();
+
     let report_json = json!({
         "command": "evaluate",
         "status": "ok",
         "input": input,
         "report": report,
-        "sample_count": dataset.len(),
+        "sample_count": total_samples,
+        "scored_samples": total_samples - skipped,
+        "skipped_samples": skipped,
+        "metrics": aggregates_json,
+        "summary": summary,
     });
     let report_string = serde_json::to_string(&report_json)
         .map_err(|error| parse_error(format!("evaluate report serialization failed: {error}")))?;
@@ -147,9 +195,123 @@ fn run_evaluate(
         "command": "evaluate",
         "status": "ok",
         "report": report,
-        "sample_count": dataset.len(),
+        "sample_count": total_samples,
+        "metrics": aggregates_json,
+        "summary": summary,
     });
     cli_output(stdout)
+}
+
+/// The deterministic, offline metric set the evaluate command runs. ROUGE-L recall scores
+/// the response against the reference using real lexical overlap (no LLM, no network), so
+/// the command produces a real numeric aggregate without any provider configured.
+fn build_evaluate_metrics() -> Vec<Arc<dyn Metric>> {
+    let rouge = Arc::new(FnMetric::new("rouge_l", |sample: &SingleTurnSample| {
+        let response = sample.response.clone();
+        let reference = sample.reference.clone();
+        Box::pin(async move {
+            let Some(reference) = reference else {
+                return Err(RagasError::Parse {
+                    message: "rouge_l requires a reference".to_string(),
+                });
+            };
+            let detailed = rouge_l_recall(&response, &reference);
+            let score = detailed.score.ok_or_else(|| RagasError::Parse {
+                message: "rouge_l produced no score".to_string(),
+            })?;
+            Ok(MetricResult::success("rouge_l", MetricValue::numeric(score)))
+        })
+    }));
+    vec![rouge]
+}
+
+/// Per-metric numeric aggregate over an [`EvaluationReport`]: count of finite scores, their
+/// mean, the population standard deviation, and the number of errored/non-finite cells.
+#[derive(Debug, Clone, PartialEq)]
+struct MetricAggregate {
+    metric_name: String,
+    count: usize,
+    mean: f64,
+    std: f64,
+    errors: usize,
+}
+
+/// Collapse the per-sample/per-metric report into one aggregate row per metric, preserving
+/// the metric order. Only finite numeric scores feed mean/std; errored cells, missing values,
+/// and non-finite scores (e.g. NaN from undefined metrics) are counted under `errors`.
+fn aggregate_report(report: &EvaluationReport) -> Vec<MetricAggregate> {
+    report
+        .metric_names
+        .iter()
+        .enumerate()
+        .map(|(metric_index, metric_name)| {
+            let mut scores = Vec::new();
+            let mut errors = 0usize;
+            for sample in &report.results {
+                match sample.results.get(metric_index) {
+                    Some(result) => match result.value.as_ref().and_then(MetricValue::as_numeric) {
+                        Some(score) if score.is_finite() => scores.push(score),
+                        _ => errors += 1,
+                    },
+                    None => errors += 1,
+                }
+            }
+            let count = scores.len();
+            let mean = if count == 0 {
+                0.0
+            } else {
+                scores.iter().sum::<f64>() / count as f64
+            };
+            let std = if count == 0 {
+                0.0
+            } else {
+                let variance =
+                    scores.iter().map(|score| (score - mean).powi(2)).sum::<f64>() / count as f64;
+                variance.sqrt()
+            };
+            MetricAggregate {
+                metric_name: metric_name.clone(),
+                count,
+                mean,
+                std,
+                errors,
+            }
+        })
+        .collect()
+}
+
+/// Render the aggregates as a fixed-column text table (header + one row per metric). Numbers
+/// are formatted to four decimals so the summary is stable and human-readable.
+fn render_summary(aggregates: &[MetricAggregate]) -> String {
+    let mut lines = vec![format!(
+        "{:<24} {:>6} {:>10} {:>10} {:>7}",
+        "metric", "count", "mean", "std", "errors"
+    )];
+    for aggregate in aggregates {
+        lines.push(format!(
+            "{:<24} {:>6} {:>10.4} {:>10.4} {:>7}",
+            aggregate.metric_name,
+            aggregate.count,
+            aggregate.mean,
+            aggregate.std,
+            aggregate.errors
+        ));
+    }
+    lines.join("\n")
+}
+
+/// Drive a future to completion from the synchronous CLI. Reuses the ambient tokio runtime
+/// when the command is already invoked from within one, otherwise spins up a current-thread
+/// runtime for the duration of the evaluation.
+fn run_async<F: std::future::Future>(future: F) -> F::Output {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(future)),
+        Err(_) => tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build current-thread runtime")
+            .block_on(future),
+    }
 }
 
 fn run_testset(
@@ -294,6 +456,109 @@ mod tests {
     }
 
     #[test]
+    fn evaluate_command_computes_real_rouge_aggregate_and_renders_summary() {
+        // Two single-turn samples scored by the deterministic ROUGE-L recall metric:
+        //   sample 1 response == reference        -> LCS 4/4 = 1.0
+        //   sample 2 response disjoint from ref   -> LCS 0/4 = 0.0
+        // count = 2, mean = (1.0 + 0.0)/2 = 0.5,
+        // population std = sqrt(((1-0.5)^2 + (0-0.5)^2)/2) = 0.5.
+        let dataset = EvaluationDataset::<EvaluationSample>::from_samples(vec![
+            EvaluationSample::SingleTurn(
+                SingleTurnSample::new(
+                    "what does ragas evaluate?",
+                    "ragas evaluates rag applications",
+                    vec!["context".to_string()],
+                )
+                .with_reference("ragas evaluates rag applications"),
+            ),
+            EvaluationSample::SingleTurn(
+                SingleTurnSample::new(
+                    "what does ragas evaluate?",
+                    "the weather is cold",
+                    vec!["context".to_string()],
+                )
+                .with_reference("ragas evaluates rag applications"),
+            ),
+        ])
+        .expect("scorable dataset");
+
+        let mut runtime = CliRuntime::new();
+        runtime
+            .datasets_mut()
+            .save("datasets/scorable", &dataset)
+            .expect("save dataset");
+
+        let output = run_cli_command(
+            &mut runtime,
+            CliCommand::Evaluate {
+                input: "datasets/scorable".to_string(),
+                report: "reports/rouge".to_string(),
+            },
+        )
+        .expect("evaluate command");
+
+        // The rendered summary is a real table naming the metric and its hand-computed mean.
+        let stdout_json: Value = serde_json::from_str(&output.stdout).expect("stdout JSON");
+        let summary = stdout_json["summary"].as_str().expect("summary string");
+        assert!(summary.contains("rouge_l"), "summary missing metric: {summary}");
+        assert!(summary.contains("0.5000"), "summary missing mean: {summary}");
+
+        // The structured aggregate carries the exact count/mean/std (not a templated echo).
+        let metric = &stdout_json["metrics"][0];
+        assert_eq!(metric["metric"], "rouge_l");
+        assert_eq!(metric["count"], 2);
+        assert!((metric["mean"].as_f64().expect("mean") - 0.5).abs() < 1e-9);
+        assert!((metric["std"].as_f64().expect("std") - 0.5).abs() < 1e-9);
+        assert_eq!(metric["errors"], 0);
+        assert_eq!(stdout_json["sample_count"], 2);
+
+        // The same aggregate is persisted into the saved report.
+        let report = runtime.report("reports/rouge").expect("written report");
+        let report_json: Value = serde_json::from_str(report).expect("report JSON");
+        assert_eq!(report_json["scored_samples"], 2);
+        assert_eq!(report_json["skipped_samples"], 0);
+        assert!(
+            (report_json["metrics"][0]["mean"].as_f64().expect("report mean") - 0.5).abs() < 1e-9
+        );
+    }
+
+    #[test]
+    fn evaluate_command_marks_missing_reference_as_metric_error() {
+        // A sample with no reference cannot be ROUGE-scored: the metric returns Err, which
+        // `evaluate()` records as a per-cell failure -> counted under `errors`, not `mean`.
+        let dataset = EvaluationDataset::<EvaluationSample>::from_samples(vec![
+            EvaluationSample::SingleTurn(SingleTurnSample::new(
+                "q",
+                "a response with no reference",
+                vec!["context".to_string()],
+            )),
+        ])
+        .expect("dataset");
+
+        let mut runtime = CliRuntime::new();
+        runtime
+            .datasets_mut()
+            .save("datasets/noref", &dataset)
+            .expect("save dataset");
+
+        let output = run_cli_command(
+            &mut runtime,
+            CliCommand::Evaluate {
+                input: "datasets/noref".to_string(),
+                report: "reports/noref".to_string(),
+            },
+        )
+        .expect("evaluate command");
+
+        let stdout_json: Value = serde_json::from_str(&output.stdout).expect("stdout JSON");
+        let metric = &stdout_json["metrics"][0];
+        assert_eq!(metric["metric"], "rouge_l");
+        assert_eq!(metric["count"], 0);
+        assert_eq!(metric["errors"], 1);
+        assert_eq!(metric["mean"], 0.0);
+    }
+
+    #[test]
     fn test_14_3_2_cli_testset_invokes_synthesizer_flow() {
         // SCEN-14.3.2 / AC2 / TEST-14.3.2
         let mut runtime = CliRuntime::new();
@@ -373,7 +638,7 @@ mod tests {
         assert_eq!(snapshot.status, "ok");
         assert_eq!(
             snapshot.stdout_keys,
-            vec!["command", "report", "sample_count", "status"]
+            vec!["command", "metrics", "report", "sample_count", "status", "summary"]
         );
         assert!(snapshot.stderr_empty);
         assert_eq!(snapshot.exit_code, 0);
