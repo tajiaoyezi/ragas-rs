@@ -8,7 +8,7 @@ use crate::{
     DatasetBackend, EvaluationDataset, EvaluationOptions, EvaluationReport, EvaluationSample,
     ExtractionBundle, FaithfulnessMetric, FnMetric, GraphNode, InMemoryDatasetBackend,
     KnowledgeGraph, LlmContextRecallMetric, LlmProvider, Metric, MetricResult, MetricValue,
-    OpenAiCompatibleClient, PersonaGenerator, RagasError, SingleTurnSample, attach_extractions,
+    PersonaGenerator, RagasError, SingleTurnSample, attach_extractions,
     build_chunk_relationships, evaluate, rouge_l_recall, split_text_into_chunks,
     synthesize_single_hop_sample,
 };
@@ -111,8 +111,7 @@ pub fn run_cli_command_with_provider(
 /// Build the live LLM provider from the environment, or `None` when no API key is set.
 /// The chat model is taken from `OPENAI_MODEL`, falling back to a sane default.
 fn env_llm_provider() -> Option<Arc<dyn LlmProvider>> {
-    let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
-    OpenAiCompatibleClient::from_env(model).map(|client| Arc::new(client) as Arc<dyn LlmProvider>)
+    crate::ProviderConfig::from_env().chat_provider()
 }
 
 pub fn cli_contract_snapshot(output: &CliOutput) -> Result<CliContractSnapshot, RagasError> {

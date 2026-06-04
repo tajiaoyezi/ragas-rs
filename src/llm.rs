@@ -283,20 +283,16 @@ impl OpenAiCompatibleClient {
         }
     }
 
-    /// Build a client from environment variables, for live/integration runs.
-    ///
-    /// Reads `OPENAI_API_KEY` (required — returns `None` when unset or empty so callers
-    /// can cleanly skip live tests) and the optional `OPENAI_BASE_URL` (defaulting to the
-    /// OpenAI public endpoint). The chat/embedding model is supplied by the caller. No
-    /// secret is ever hardcoded; the key is read from the process environment.
+    /// Build a client from environment variables (and an optional `.env` file), for
+    /// live/integration runs. Configuration is resolved centrally by
+    /// [`crate::ProviderConfig`]: `OPENAI_API_KEY` (required — returns `None` when
+    /// unset/empty) and `OPENAI_BASE_URL` (default the OpenAI public endpoint). The chat
+    /// model is supplied by the caller; the embedding model comes from the config. No
+    /// secret is ever hardcoded.
     pub fn from_env(model: impl Into<String>) -> Option<Self> {
-        let api_key = std::env::var("OPENAI_API_KEY").ok()?;
-        if api_key.trim().is_empty() {
-            return None;
-        }
-        let base_url =
-            std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
-        Some(Self::new(base_url, api_key, model))
+        let config = crate::ProviderConfig::from_env();
+        let api_key = config.api_key?;
+        Some(Self::new(config.base_url, api_key, model).with_embedding_model(config.embedding_model))
     }
 
     pub fn from_config(config: OpenAiCompatibleConfig) -> Self {

@@ -1528,30 +1528,18 @@ mod tests {
     // ---------------------------------------------------------------------
     use crate::OpenAiCompatibleClient;
 
-    /// Build the live client from the environment, or `None` to skip when no key.
+    /// Build the live chat client from [`crate::ProviderConfig`], or `None` to skip when no key.
     fn live_client() -> Option<Arc<OpenAiCompatibleClient>> {
-        let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
-        OpenAiCompatibleClient::from_env(model).map(Arc::new)
+        crate::ProviderConfig::from_env().chat_client().map(Arc::new)
     }
 
-    /// Build the live embedding client. Embeddings may live on a DIFFERENT provider
-    /// than chat (e.g. DeepSeek chat + SiliconFlow embeddings): if
-    /// `OPENAI_EMBEDDING_BASE_URL` and `OPENAI_EMBEDDING_API_KEY` are both set they are
-    /// used, otherwise it falls back to the same endpoint/key as chat (`from_env`).
+    /// Embeddings may live on a different provider than chat (e.g. DeepSeek chat +
+    /// SiliconFlow embeddings) via `OPENAI_EMBEDDING_BASE_URL`/`OPENAI_EMBEDDING_API_KEY`;
+    /// [`crate::ProviderConfig`] resolves the fallback to the chat endpoint/key.
     fn live_embedding_client() -> Option<Arc<OpenAiCompatibleClient>> {
-        let model =
-            std::env::var("OPENAI_EMBEDDING_MODEL").unwrap_or_else(|_| "text-embedding-3-small".to_string());
-        match (
-            std::env::var("OPENAI_EMBEDDING_BASE_URL"),
-            std::env::var("OPENAI_EMBEDDING_API_KEY"),
-        ) {
-            (Ok(base_url), Ok(api_key))
-                if !base_url.trim().is_empty() && !api_key.trim().is_empty() =>
-            {
-                Some(Arc::new(OpenAiCompatibleClient::new(base_url, api_key, model)))
-            }
-            _ => OpenAiCompatibleClient::from_env(model).map(Arc::new),
-        }
+        crate::ProviderConfig::from_env()
+            .embedding_client()
+            .map(Arc::new)
     }
 
     #[tokio::test]

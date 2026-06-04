@@ -1,6 +1,7 @@
 pub mod backends;
 pub mod benchmarks;
 pub mod cli;
+pub mod config;
 pub mod dataset;
 pub mod error;
 pub mod eval;
@@ -29,6 +30,10 @@ pub use benchmarks::{
 pub use cli::{
     CliCommand, CliContractSnapshot, CliErrorSnapshot, CliOutput, CliRuntime, cli_contract_snapshot,
     cli_error_snapshot, run_cli_command, run_cli_command_with_provider,
+};
+pub use config::{
+    DEFAULT_BASE_URL, DEFAULT_EMBEDDING_MODEL, DEFAULT_MODEL, ENV_API_KEY, ENV_BASE_URL,
+    ENV_EMBEDDING_API_KEY, ENV_EMBEDDING_BASE_URL, ENV_EMBEDDING_MODEL, ENV_MODEL, ProviderConfig,
 };
 pub use dataset::{
     EvaluationDataset, EvaluationDatasetBuilder, EvaluationSample, SingleTurnSample,

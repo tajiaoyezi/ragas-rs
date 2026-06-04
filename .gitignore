@@ -3,6 +3,9 @@ target/
 *.tmp
 .DS_Store
 
+# Local provider secrets — never commit. Use .env.example as the template.
+.env
+
 !test/fixtures/
 !test/fixtures/**
 

@@ -1800,8 +1800,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires OPENAI_API_KEY; run with --ignored"]
     async fn test_31_2_7_live_synthesizer_generates_from_real_model() {
-        let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
-        let Some(client) = crate::OpenAiCompatibleClient::from_env(model) else {
+        let Some(client) = crate::ProviderConfig::from_env().chat_client() else {
             eprintln!("skipping live testset synthesis: OPENAI_API_KEY not set");
             return;
         };
@@ -1829,8 +1828,7 @@ against retrieved evidence.";
     #[tokio::test]
     #[ignore = "requires OPENAI_API_KEY; run with --ignored"]
     async fn test_31_2_8_live_multi_hop_synthesizer_generates_two_context_sample() {
-        let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
-        let Some(client) = crate::OpenAiCompatibleClient::from_env(model) else {
+        let Some(client) = crate::ProviderConfig::from_env().chat_client() else {
             eprintln!("skipping live multi-hop testset synthesis: OPENAI_API_KEY not set");
             return;
         };
