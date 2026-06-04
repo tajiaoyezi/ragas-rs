@@ -11,11 +11,84 @@ use crate::{
 
 pub type BoxMetricFuture = Pin<Box<dyn Future<Output = Result<MetricResult, RagasError>> + Send>>;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MetricValue {
     Discrete(String),
     Numeric(f64),
     Ranking(Vec<RankingItem>),
+}
+
+// `MetricValue` uses serde's default externally-tagged enum shape
+// (`{"Numeric": 0.5}`, `{"Discrete": "pass"}`, `{"Ranking": [...]}`).
+//
+// A non-finite `f64` (NaN / +-Inf) — e.g. Faithfulness over an empty statement
+// set returns 0/0 = NaN — is rendered as JSON `null` (`{"Numeric": null}`),
+// matching Python `json`/ragas. The in-memory value is left untouched; only the
+// JSON output becomes null.
+//
+// Note on serialization: serde_json's *own* default already emits `null` for a
+// non-finite float, so the derived `Serialize` did not error. This explicit impl
+// makes that behavior intentional and serializer-independent (a stricter
+// serializer that would reject NaN still receives `null` from us), and — more
+// importantly — pairs with the custom `Deserialize` below so the value can be
+// read back. With the derived `Deserialize`, `{"Numeric": null}` failed with
+// "invalid type: null, expected f64", so a NaN report serialized but could not
+// round-trip.
+//
+// Round-trip: finite numerics serialize and deserialize byte-for-byte as before.
+// `{"Numeric": null}` deserializes back to `MetricValue::Numeric(f64::NAN)`, so a
+// non-finite score survives a JSON round-trip as NaN (not as a finite 0).
+impl Serialize for MetricValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            MetricValue::Discrete(value) => {
+                serializer.serialize_newtype_variant("MetricValue", 0, "Discrete", value)
+            }
+            MetricValue::Numeric(value) => {
+                if value.is_finite() {
+                    serializer.serialize_newtype_variant("MetricValue", 1, "Numeric", value)
+                } else {
+                    // Non-finite -> JSON null (mirrors Python json / ragas), and
+                    // guarantees it even under serializers that would reject NaN.
+                    serializer.serialize_newtype_variant(
+                        "MetricValue",
+                        1,
+                        "Numeric",
+                        &Option::<f64>::None,
+                    )
+                }
+            }
+            MetricValue::Ranking(items) => {
+                serializer.serialize_newtype_variant("MetricValue", 2, "Ranking", items)
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for MetricValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        enum Repr {
+            Discrete(String),
+            // `Option<f64>` so that `{"Numeric": null}` (a non-finite score that
+            // was rendered as null on the way out) deserializes back to NaN.
+            Numeric(Option<f64>),
+            Ranking(Vec<RankingItem>),
+        }
+
+        Ok(match Repr::deserialize(deserializer)? {
+            Repr::Discrete(value) => MetricValue::Discrete(value),
+            Repr::Numeric(Some(value)) => MetricValue::Numeric(value),
+            Repr::Numeric(None) => MetricValue::Numeric(f64::NAN),
+            Repr::Ranking(items) => MetricValue::Ranking(items),
+        })
+    }
 }
 
 pub struct FaithfulnessMetric {
@@ -781,6 +854,104 @@ mod tests {
         assert_eq!(failure.metric_name, "faithfulness");
         assert!(failure.value.is_none());
         assert_eq!(failure.error.as_deref(), Some("provider failed"));
+    }
+
+    #[test]
+    fn test_metric_value_non_finite_score_serializes_as_json_null_and_round_trips() {
+        // Edge case: Faithfulness over an empty statement set returns 0/0 = NaN
+        // (see `FaithfulnessMetric::score`). A whole `EvaluationReport` carrying
+        // that NaN must (1) serialize, rendering the score as JSON `null`, and
+        // (2) round-trip back to a NaN numeric.
+        use crate::{EvaluationReport, SampleEvaluation};
+
+        let report = EvaluationReport {
+            metric_names: vec!["faithfulness".to_string()],
+            results: vec![SampleEvaluation {
+                sample_index: 0,
+                results: vec![
+                    MetricResult::success("faithfulness", MetricValue::numeric(f64::NAN))
+                        .with_reason("no statements could be extracted from the response"),
+                ],
+            }],
+        };
+
+        // The whole report serializes successfully and the NaN score is `null`.
+        let json = serde_json::to_string(&report).expect("report with NaN score must serialize");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+
+        let score = &value["results"][0]["results"][0]["value"]["Numeric"];
+        assert!(
+            score.is_null(),
+            "non-finite numeric score must render as JSON null, got: {score}"
+        );
+        // The textual reason and surrounding structure are untouched.
+        assert_eq!(value["metric_names"][0], "faithfulness");
+        assert_eq!(
+            value["results"][0]["results"][0]["reason"],
+            "no statements could be extracted from the response"
+        );
+
+        // The concrete gap this fix closes: with the derived `Deserialize`,
+        // reading `{"Numeric": null}` back failed with "invalid type: null,
+        // expected f64". It must now restore to a NaN numeric so the report
+        // survives a JSON round-trip.
+        let restored: EvaluationReport = serde_json::from_str(&json).expect("round-trip");
+        let restored_value = restored.results[0].results[0]
+            .value
+            .as_ref()
+            .and_then(MetricValue::as_numeric)
+            .expect("numeric value present");
+        assert!(restored_value.is_nan(), "null must restore to NaN");
+    }
+
+    #[test]
+    fn test_metric_value_null_numeric_deserializes_to_nan() {
+        // Direct guard on the deserialize gap, independent of the serializer:
+        // hand-authored `{"Numeric": null}` (as produced by Python/ragas for an
+        // undefined score) must parse back to NaN rather than erroring.
+        let restored: MetricValue =
+            serde_json::from_str("{\"Numeric\":null}").expect("null numeric must deserialize");
+        assert!(
+            restored.as_numeric().expect("numeric variant").is_nan(),
+            "null numeric must deserialize to NaN"
+        );
+    }
+
+    #[test]
+    fn test_metric_value_infinite_score_serializes_as_json_null() {
+        // +Inf and -Inf are also non-finite and must follow the same null path.
+        for value in [f64::INFINITY, f64::NEG_INFINITY] {
+            let metric = MetricValue::numeric(value);
+            let json = serde_json::to_string(&metric).expect("infinite value must serialize");
+            assert_eq!(json, "{\"Numeric\":null}");
+        }
+    }
+
+    #[test]
+    fn test_metric_value_finite_score_round_trips_unchanged() {
+        // Finite numbers must serialize exactly as the previous derived impl did
+        // (`{"Numeric": <number>}`) and deserialize back to the same value, so the
+        // NaN fix does not change the wire format for ordinary scores.
+        let cases = [
+            (MetricValue::numeric(0.0), "{\"Numeric\":0.0}"),
+            (MetricValue::numeric(0.82), "{\"Numeric\":0.82}"),
+            (MetricValue::discrete("pass"), "{\"Discrete\":\"pass\"}"),
+        ];
+        for (value, expected_json) in cases {
+            let json = serde_json::to_string(&value).expect("serialize");
+            assert_eq!(json, expected_json);
+            let restored: MetricValue = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(restored, value);
+        }
+
+        // A ranking with finite scores also round-trips byte-for-byte.
+        let ranking = MetricValue::ranking(vec![
+            RankingItem::new("ctx-a", 0.91),
+            RankingItem::new("ctx-b", 0.33),
+        ]);
+        let json = serde_json::to_string(&ranking).expect("serialize ranking");
+        let restored: MetricValue = serde_json::from_str(&json).expect("deserialize ranking");
+        assert_eq!(restored, ranking);
     }
 
     #[tokio::test]
