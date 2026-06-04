@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use ragas::{
     CliCommand, CliRuntime, DatasetBackend, EvaluationDataset, EvaluationSample, LlmProvider,
-    ProviderConfig, run_cli_command_with_provider,
+    ProviderConfig, Synthesizer, run_cli_command_with_provider,
 };
 
 const USAGE: &str = "\
@@ -30,9 +30,10 @@ COMMANDS:
     evaluate --dataset <file.jsonl> Evaluate a JSONL dataset. Runs offline ROUGE-L always, plus the
              [--report <file>]      LLM metrics (faithfulness, context recall) when an API key is
                                     configured. Optionally write the full JSON report to a file.
-    testset  --doc <file.txt>       Generate a deterministic single-hop test dataset from a text
-             --source-id <id>       document. Optionally write it out as JSONL.
-             [--out <file.jsonl>]
+    testset  --doc <file.txt>       Generate a test dataset from a text document. Uses the real LLM
+             --source-id <id>       synthesizer when an API key is configured (add --multi-hop for
+             [--multi-hop]          multi-hop), otherwise a deterministic single-hop fallback.
+             [--out <file.jsonl>]   Optionally write the dataset out as JSONL.
     benchmark [--runs <n>]          Run the provider micro-benchmark (default 1 run).
     help                            Show this help.
 
@@ -128,35 +129,88 @@ fn cmd_evaluate_with(
 }
 
 fn cmd_testset(args: &[String]) -> Result<String, String> {
+    let provider = ProviderConfig::from_env().chat_provider();
+    cmd_testset_with(args, provider)
+}
+
+fn cmd_testset_with(
+    args: &[String],
+    provider: Option<Arc<dyn LlmProvider>>,
+) -> Result<String, String> {
     let doc_path = flag(args, "--doc").ok_or("testset requires --doc <file.txt>")?;
     let source_id = flag(args, "--source-id").ok_or("testset requires --source-id <id>")?;
     let out_path = flag(args, "--out");
+    let multi_hop = args.iter().any(|arg| arg == "--multi-hop");
 
     let text = std::fs::read_to_string(&doc_path)
         .map_err(|error| format!("cannot read doc '{doc_path}': {error}"))?;
 
-    let mut runtime = CliRuntime::new();
-    let output = run_cli_command_with_provider(
-        &mut runtime,
-        CliCommand::Testset {
-            source_id,
-            text,
-            output: "testset".to_string(),
-        },
-        None,
-    )
-    .map_err(|error| error.to_string())?;
+    let (dataset, mode) = match provider {
+        // Real LLM-driven synthesis via the faithful Synthesizer pipeline.
+        Some(llm) => {
+            let generated = block_on(
+                Synthesizer::new(llm)
+                    .with_multi_hop(multi_hop)
+                    .generate_testset(&source_id, &text),
+            )
+            .map_err(|error| error.to_string())?;
+            // The synthesizer yields EvaluationDataset<SingleTurnSample>; wrap it for JSONL IO.
+            let dataset = EvaluationDataset::<EvaluationSample>::from_samples(
+                generated
+                    .samples()
+                    .iter()
+                    .cloned()
+                    .map(EvaluationSample::SingleTurn)
+                    .collect(),
+            )
+            .map_err(|error| error.to_string())?;
+            (dataset, "llm")
+        }
+        // No API key: deterministic single-hop fallback so the command still works offline.
+        None => {
+            let mut runtime = CliRuntime::new();
+            run_cli_command_with_provider(
+                &mut runtime,
+                CliCommand::Testset {
+                    source_id: source_id.clone(),
+                    text,
+                    output: "testset".to_string(),
+                },
+                None,
+            )
+            .map_err(|error| error.to_string())?;
+            let dataset = runtime
+                .datasets()
+                .load("testset")
+                .map_err(|error| error.to_string())?;
+            (dataset, "deterministic")
+        }
+    };
 
     if let Some(path) = out_path {
-        let dataset = runtime
-            .datasets()
-            .load("testset")
-            .map_err(|error| error.to_string())?;
         let jsonl = dataset.to_jsonl_string().map_err(|error| error.to_string())?;
-        std::fs::write(&path, jsonl)
-            .map_err(|error| format!("cannot write '{path}': {error}"))?;
+        std::fs::write(&path, jsonl).map_err(|error| format!("cannot write '{path}': {error}"))?;
     }
-    Ok(output.stdout)
+
+    let summary = serde_json::json!({
+        "command": "testset",
+        "status": "ok",
+        "mode": mode,
+        "multi_hop": multi_hop,
+        "source_id": source_id,
+        "sample_count": dataset.len(),
+    });
+    Ok(summary.to_string())
+}
+
+/// Block on a future from the synchronous CLI (current-thread tokio runtime), used for the
+/// LLM-driven testset path. Mirrors the library's internal `run_async`.
+fn block_on<F: std::future::Future>(future: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build tokio runtime")
+        .block_on(future)
 }
 
 fn cmd_benchmark(args: &[String]) -> Result<String, String> {
@@ -240,6 +294,21 @@ mod tests {
 
         // The offline ROUGE-L metric ran (response == reference -> recall 1.0) and is reported.
         assert!(out.contains("rouge_l"));
+        assert!(out.contains("\"sample_count\":1"));
+    }
+
+    #[test]
+    fn testset_falls_back_to_deterministic_without_a_provider() {
+        let doc = std::env::temp_dir().join("ragas_cli_testset_smoke.txt");
+        std::fs::write(&doc, "Ragas evaluates RAG systems and scores faithfulness.")
+            .expect("write doc");
+        let out = cmd_testset_with(
+            &args(&["--doc", doc.to_str().unwrap(), "--source-id", "d1"]),
+            None,
+        )
+        .expect("testset runs");
+        std::fs::remove_file(&doc).ok();
+        assert!(out.contains("\"mode\":\"deterministic\""));
         assert!(out.contains("\"sample_count\":1"));
     }
 }
