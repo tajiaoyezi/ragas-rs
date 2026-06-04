@@ -28,7 +28,7 @@ pub use benchmarks::{
 };
 pub use cli::{
     CliCommand, CliContractSnapshot, CliErrorSnapshot, CliOutput, CliRuntime, cli_contract_snapshot,
-    cli_error_snapshot, run_cli_command,
+    cli_error_snapshot, run_cli_command, run_cli_command_with_provider,
 };
 pub use dataset::{
     EvaluationDataset, EvaluationDatasetBuilder, EvaluationSample, SingleTurnSample,

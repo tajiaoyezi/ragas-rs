@@ -6,8 +6,9 @@ use serde_json::json;
 
 use crate::{
     DatasetBackend, EvaluationDataset, EvaluationOptions, EvaluationReport, EvaluationSample,
-    ExtractionBundle, FnMetric, GraphNode, InMemoryDatasetBackend, KnowledgeGraph, Metric,
-    MetricResult, MetricValue, PersonaGenerator, RagasError, SingleTurnSample, attach_extractions,
+    ExtractionBundle, FaithfulnessMetric, FnMetric, GraphNode, InMemoryDatasetBackend,
+    KnowledgeGraph, LlmContextRecallMetric, LlmProvider, Metric, MetricResult, MetricValue,
+    OpenAiCompatibleClient, PersonaGenerator, RagasError, SingleTurnSample, attach_extractions,
     build_chunk_relationships, evaluate, rouge_l_recall, split_text_into_chunks,
     synthesize_single_hop_sample,
 };
@@ -76,12 +77,28 @@ impl CliRuntime {
     }
 }
 
+/// Binary entrypoint dispatcher. Supplies the live LLM provider built from the process
+/// environment (`OPENAI_API_KEY`, optional `OPENAI_BASE_URL`, model from `OPENAI_MODEL`),
+/// so a real CLI invocation with a key configured runs the LLM-based metrics; with no key
+/// the provider is `None` and `evaluate` stays offline (deterministic ROUGE only).
 pub fn run_cli_command(
     runtime: &mut CliRuntime,
     command: CliCommand,
 ) -> Result<CliOutput, RagasError> {
+    let provider = env_llm_provider();
+    run_cli_command_with_provider(runtime, command, provider)
+}
+
+/// Dispatcher with an explicitly injected (optional) LLM provider. Tests inject a scripted
+/// mock here to drive the LLM-based metrics deterministically; the binary path goes through
+/// [`run_cli_command`], which builds the provider from the environment.
+pub fn run_cli_command_with_provider(
+    runtime: &mut CliRuntime,
+    command: CliCommand,
+    provider: Option<Arc<dyn LlmProvider>>,
+) -> Result<CliOutput, RagasError> {
     match command {
-        CliCommand::Evaluate { input, report } => run_evaluate(runtime, input, report),
+        CliCommand::Evaluate { input, report } => run_evaluate(runtime, input, report, provider),
         CliCommand::Testset {
             source_id,
             text,
@@ -89,6 +106,13 @@ pub fn run_cli_command(
         } => run_testset(runtime, source_id, text, output),
         CliCommand::Benchmark { runs } => run_benchmark(runs),
     }
+}
+
+/// Build the live LLM provider from the environment, or `None` when no API key is set.
+/// The chat model is taken from `OPENAI_MODEL`, falling back to a sane default.
+fn env_llm_provider() -> Option<Arc<dyn LlmProvider>> {
+    let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+    OpenAiCompatibleClient::from_env(model).map(|client| Arc::new(client) as Arc<dyn LlmProvider>)
 }
 
 pub fn cli_contract_snapshot(output: &CliOutput) -> Result<CliContractSnapshot, RagasError> {
@@ -133,6 +157,7 @@ fn run_evaluate(
     runtime: &mut CliRuntime,
     input: String,
     report: String,
+    provider: Option<Arc<dyn LlmProvider>>,
 ) -> Result<CliOutput, RagasError> {
     let dataset = runtime.datasets.load(&input)?;
     // Only single-turn samples are scorable by `Metric::score`; multi-turn samples are
@@ -151,8 +176,9 @@ fn run_evaluate(
     let evaluated = if single_turn.is_empty() {
         None
     } else {
+        let any_reference = single_turn.iter().any(|sample| sample.reference.is_some());
         let scorable = EvaluationDataset::new(single_turn)?;
-        let metrics = build_evaluate_metrics();
+        let metrics = build_evaluate_metrics(provider, any_reference);
         // Drive the async evaluation pipeline from this synchronous CLI entry point.
         let report = run_async(evaluate(&scorable, &metrics, EvaluationOptions { concurrency: 1 }));
         Some(report)
@@ -202,10 +228,18 @@ fn run_evaluate(
     cli_output(stdout)
 }
 
-/// The deterministic, offline metric set the evaluate command runs. ROUGE-L recall scores
-/// the response against the reference using real lexical overlap (no LLM, no network), so
-/// the command produces a real numeric aggregate without any provider configured.
-fn build_evaluate_metrics() -> Vec<Arc<dyn Metric>> {
+/// The metric set the evaluate command runs. ROUGE-L recall (deterministic, offline) always
+/// runs: it scores the response against the reference using real lexical overlap (no LLM, no
+/// network), so the command produces a real numeric aggregate without any provider configured.
+///
+/// When an [`LlmProvider`] is supplied, the genuine LLM-based metrics from `src/metric.rs` are
+/// appended and run against the same dataset through their real `.generate` pipelines:
+/// [`FaithfulnessMetric`] always, and [`LlmContextRecallMetric`] when at least one sample carries
+/// a reference (its required field). These are the actual `Metric` impls, not reimplementations.
+fn build_evaluate_metrics(
+    provider: Option<Arc<dyn LlmProvider>>,
+    any_reference: bool,
+) -> Vec<Arc<dyn Metric>> {
     let rouge = Arc::new(FnMetric::new("rouge_l", |sample: &SingleTurnSample| {
         let response = sample.response.clone();
         let reference = sample.reference.clone();
@@ -222,7 +256,16 @@ fn build_evaluate_metrics() -> Vec<Arc<dyn Metric>> {
             Ok(MetricResult::success("rouge_l", MetricValue::numeric(score)))
         })
     }));
-    vec![rouge]
+    let mut metrics: Vec<Arc<dyn Metric>> = vec![rouge];
+
+    if let Some(provider) = provider {
+        metrics.push(Arc::new(FaithfulnessMetric::new(Arc::clone(&provider))));
+        if any_reference {
+            metrics.push(Arc::new(LlmContextRecallMetric::new(provider)));
+        }
+    }
+
+    metrics
 }
 
 /// Per-metric numeric aggregate over an [`EvaluationReport`]: count of finite scores, their
@@ -409,8 +452,67 @@ fn cli_error_kind(error: &RagasError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DatasetBackend, EvaluationDataset, EvaluationSample, SingleTurnSample};
+    use crate::{
+        DatasetBackend, EvaluationDataset, EvaluationSample, LlmRequest, LlmResponse,
+        SingleTurnSample,
+    };
+    use async_trait::async_trait;
     use serde_json::Value;
+    use std::sync::Mutex;
+
+    /// Mock LLM that routes on the prompt content rather than a strict FIFO queue, because
+    /// `evaluate()` drives several metrics as concurrently-spawned tasks whose call order is
+    /// not deterministic. Each branch matches a distinct prompt from the real metric impls in
+    /// `src/metric.rs` and returns the JSON that pins a known aggregate; every prompt is also
+    /// recorded so the test can prove the real `.generate` path was exercised.
+    struct PromptRoutingLlm {
+        prompts: Mutex<Vec<String>>,
+    }
+
+    impl PromptRoutingLlm {
+        fn new() -> Self {
+            Self {
+                prompts: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn prompts(&self) -> Vec<String> {
+            self.prompts.lock().expect("prompts").clone()
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for PromptRoutingLlm {
+        async fn generate(&self, request: LlmRequest) -> Result<LlmResponse, RagasError> {
+            let prompt = request
+                .messages
+                .iter()
+                .map(|message| message.content.clone())
+                .collect::<Vec<_>>()
+                .join("\n");
+            self.prompts.lock().expect("prompts").push(prompt.clone());
+
+            // FaithfulnessMetric step 1: decompose the response into atomic statements.
+            let content = if prompt.contains("atomic factual statements") {
+                r#"{"statements":["Ragas evaluates LLM applications.","Ragas is maintained by Exploding Gradients."]}"#
+            // FaithfulnessMetric step 2: verify each statement against the context.
+            } else if prompt.contains("verdict 1 when the statement is supported") {
+                r#"{"verdicts":[{"statement":"a","verdict":1,"reason":"supported"},{"statement":"b","verdict":1,"reason":"supported"}]}"#
+            // LlmContextRecallMetric: classify each reference sentence against the context.
+            } else if prompt.contains("verdict 1 when the sentence is supported") {
+                r#"{"classifications":[{"verdict":1,"reason":"attributed"}]}"#
+            } else {
+                return Err(RagasError::Provider {
+                    message: format!("PromptRoutingLlm saw an unrecognized prompt: {prompt}"),
+                });
+            };
+
+            Ok(LlmResponse {
+                content: content.to_string(),
+                usage: None,
+            })
+        }
+    }
 
     fn fixture_dataset() -> EvaluationDataset<EvaluationSample> {
         EvaluationDataset::from_samples(vec![EvaluationSample::SingleTurn(
@@ -556,6 +658,186 @@ mod tests {
         assert_eq!(metric["count"], 0);
         assert_eq!(metric["errors"], 1);
         assert_eq!(metric["mean"], 0.0);
+    }
+
+    #[test]
+    fn evaluate_command_runs_llm_metrics_when_provider_injected() {
+        // With a provider injected, the evaluate command additionally runs the genuine
+        // LLM-based metrics from `src/metric.rs` through their real `.generate` pipelines.
+        // The scripted provider yields, for the single sample:
+        //   faithfulness   -> 2 statements, both verified supported  -> 2/2 = 1.0
+        //   context_recall -> reference is 1 sentence, attributed    -> 1/1 = 1.0
+        // (rouge_l also runs offline as before). Verified via mock; real-LLM UNVERIFIED.
+        let dataset = EvaluationDataset::<EvaluationSample>::from_samples(vec![
+            EvaluationSample::SingleTurn(
+                SingleTurnSample::new(
+                    "What is Ragas and who maintains it?",
+                    "Ragas evaluates LLM applications. It is maintained by Exploding Gradients.",
+                    vec!["Ragas is a framework to evaluate LLM applications.".to_string()],
+                )
+                .with_reference("Ragas evaluates RAG applications."),
+            ),
+        ])
+        .expect("dataset");
+
+        let mut runtime = CliRuntime::new();
+        runtime
+            .datasets_mut()
+            .save("datasets/llm", &dataset)
+            .expect("save dataset");
+
+        let provider = Arc::new(PromptRoutingLlm::new());
+        let output = run_cli_command_with_provider(
+            &mut runtime,
+            CliCommand::Evaluate {
+                input: "datasets/llm".to_string(),
+                report: "reports/llm".to_string(),
+            },
+            Some(Arc::clone(&provider) as Arc<dyn LlmProvider>),
+        )
+        .expect("evaluate command");
+
+        // The real metric impls actually invoked `.generate`: faithfulness made two calls
+        // (statement generation + verification) and context recall one classification call.
+        let prompts = provider.prompts();
+        assert_eq!(prompts.len(), 3, "expected 3 LLM calls, saw: {prompts:#?}");
+        assert!(
+            prompts.iter().any(|p| p.contains("atomic factual statements")),
+            "faithfulness statement-generation prompt missing"
+        );
+        assert!(
+            prompts
+                .iter()
+                .any(|p| p.contains("verdict 1 when the sentence is supported")),
+            "context-recall classification prompt missing"
+        );
+
+        let stdout_json: Value = serde_json::from_str(&output.stdout).expect("stdout JSON");
+
+        // The summary names the LLM metrics alongside the offline ROUGE metric.
+        let summary = stdout_json["summary"].as_str().expect("summary string");
+        assert!(summary.contains("rouge_l"), "summary missing rouge_l: {summary}");
+        assert!(
+            summary.contains("faithfulness"),
+            "summary missing faithfulness: {summary}"
+        );
+        assert!(
+            summary.contains("context_recall"),
+            "summary missing context_recall: {summary}"
+        );
+
+        // The structured aggregates carry the LLM metrics' computed means (both 1.0 here).
+        let metrics = stdout_json["metrics"].as_array().expect("metrics array");
+        let by_name = |name: &str| -> &Value {
+            metrics
+                .iter()
+                .find(|m| m["metric"] == name)
+                .unwrap_or_else(|| panic!("metric {name} missing from {metrics:#?}"))
+        };
+
+        let faithfulness = by_name("faithfulness");
+        assert_eq!(faithfulness["count"], 1);
+        assert_eq!(faithfulness["errors"], 0);
+        assert!(
+            (faithfulness["mean"].as_f64().expect("faithfulness mean") - 1.0).abs() < 1e-9,
+            "faithfulness mean: {faithfulness:#?}"
+        );
+
+        let context_recall = by_name("context_recall");
+        assert_eq!(context_recall["count"], 1);
+        assert_eq!(context_recall["errors"], 0);
+        assert!(
+            (context_recall["mean"].as_f64().expect("context_recall mean") - 1.0).abs() < 1e-9,
+            "context_recall mean: {context_recall:#?}"
+        );
+
+        // ROUGE still runs (offline) and the persisted report carries the same aggregates.
+        assert!(metrics.iter().any(|m| m["metric"] == "rouge_l"));
+        let report = runtime.report("reports/llm").expect("written report");
+        let report_json: Value = serde_json::from_str(report).expect("report JSON");
+        let report_metrics = report_json["metrics"].as_array().expect("report metrics");
+        assert!(report_metrics.iter().any(|m| m["metric"] == "faithfulness"));
+        assert!(report_metrics.iter().any(|m| m["metric"] == "context_recall"));
+    }
+
+    #[test]
+    fn evaluate_command_stays_offline_without_provider() {
+        // Without a provider, only the deterministic offline metric runs (no LLM metrics),
+        // preserving the prior CLI behavior exactly.
+        let mut runtime = CliRuntime::new();
+        runtime
+            .datasets_mut()
+            .save("datasets/offline", &fixture_dataset())
+            .expect("save dataset");
+
+        let output = run_cli_command_with_provider(
+            &mut runtime,
+            CliCommand::Evaluate {
+                input: "datasets/offline".to_string(),
+                report: "reports/offline".to_string(),
+            },
+            None,
+        )
+        .expect("evaluate command");
+
+        let stdout_json: Value = serde_json::from_str(&output.stdout).expect("stdout JSON");
+        let metrics = stdout_json["metrics"].as_array().expect("metrics array");
+        assert_eq!(metrics.len(), 1);
+        assert_eq!(metrics[0]["metric"], "rouge_l");
+    }
+
+    /// Live, real-LLM smoke test for the provider-driven CLI path. Ignored by default; run with
+    /// `OPENAI_API_KEY` set (and optionally `OPENAI_BASE_URL` / `OPENAI_MODEL`):
+    ///   cargo test --lib cli::tests::live_evaluate_command_runs_llm_metrics -- --ignored
+    /// Asserts the LLM metrics actually executed (count == 1, no error) against a real endpoint.
+    #[test]
+    #[ignore = "requires OPENAI_API_KEY; talks to a real LLM endpoint"]
+    fn live_evaluate_command_runs_llm_metrics() {
+        let Some(provider) = env_llm_provider() else {
+            eprintln!("OPENAI_API_KEY not set; skipping live CLI evaluate test");
+            return;
+        };
+
+        let dataset = EvaluationDataset::<EvaluationSample>::from_samples(vec![
+            EvaluationSample::SingleTurn(
+                SingleTurnSample::new(
+                    "What is Ragas and who maintains it?",
+                    "Ragas evaluates LLM applications. It is maintained by Exploding Gradients.",
+                    vec![
+                        "Ragas is a framework to evaluate LLM applications, maintained by \
+                         Exploding Gradients."
+                            .to_string(),
+                    ],
+                )
+                .with_reference("Ragas evaluates RAG applications."),
+            ),
+        ])
+        .expect("dataset");
+
+        let mut runtime = CliRuntime::new();
+        runtime
+            .datasets_mut()
+            .save("datasets/live", &dataset)
+            .expect("save dataset");
+
+        let output = run_cli_command_with_provider(
+            &mut runtime,
+            CliCommand::Evaluate {
+                input: "datasets/live".to_string(),
+                report: "reports/live".to_string(),
+            },
+            Some(provider),
+        )
+        .expect("evaluate command");
+
+        let stdout_json: Value = serde_json::from_str(&output.stdout).expect("stdout JSON");
+        let metrics = stdout_json["metrics"].as_array().expect("metrics array");
+        let faithfulness = metrics
+            .iter()
+            .find(|m| m["metric"] == "faithfulness")
+            .expect("faithfulness metric present");
+        assert_eq!(faithfulness["count"], 1, "faithfulness did not score: {faithfulness:#?}");
+        assert_eq!(faithfulness["errors"], 0, "faithfulness errored: {faithfulness:#?}");
     }
 
     #[test]
