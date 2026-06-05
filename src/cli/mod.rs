@@ -5,11 +5,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    DatasetBackend, EvaluationDataset, EvaluationOptions, EvaluationReport, EvaluationSample,
-    ExtractionBundle, FaithfulnessMetric, FnMetric, GraphNode, InMemoryDatasetBackend,
-    KnowledgeGraph, LlmContextRecallMetric, LlmProvider, Metric, MetricResult, MetricValue,
-    PersonaGenerator, RagasError, SingleTurnSample, attach_extractions, build_chunk_relationships,
-    evaluate, rouge_l_recall, split_text_into_chunks, synthesize_single_hop_sample,
+    ContextUtilizationMetric, DatasetBackend, EvaluationDataset, EvaluationOptions,
+    EvaluationReport, EvaluationSample, ExtractionBundle, FaithfulnessMetric, FnMetric, GraphNode,
+    InMemoryDatasetBackend, KnowledgeGraph, LlmContextRecallMetric, LlmProvider, Metric,
+    MetricResult, MetricValue, PersonaGenerator, RagasError, SingleTurnSample, attach_extractions,
+    build_chunk_relationships, evaluate, rouge_l_recall, split_text_into_chunks,
+    synthesize_single_hop_sample,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -233,8 +234,9 @@ fn run_evaluate(
 ///
 /// When an [`LlmProvider`] is supplied, the genuine LLM-based metrics from `src/metric.rs` are
 /// appended and run against the same dataset through their real `.generate` pipelines:
-/// [`FaithfulnessMetric`] always, and [`LlmContextRecallMetric`] when at least one sample carries
-/// a reference (its required field). These are the actual `Metric` impls, not reimplementations.
+/// [`FaithfulnessMetric`] and [`ContextUtilizationMetric`] (reference-free) always, and
+/// [`LlmContextRecallMetric`] when at least one sample carries a reference (its required field).
+/// These are the actual `Metric` impls, not reimplementations.
 fn build_evaluate_metrics(
     provider: Option<Arc<dyn LlmProvider>>,
     any_reference: bool,
@@ -262,6 +264,10 @@ fn build_evaluate_metrics(
 
     if let Some(provider) = provider {
         metrics.push(Arc::new(FaithfulnessMetric::new(Arc::clone(&provider))));
+        // Context utilization needs no reference (the common production case), so it always runs.
+        metrics.push(Arc::new(ContextUtilizationMetric::new(Arc::clone(
+            &provider,
+        ))));
         if any_reference {
             metrics.push(Arc::new(LlmContextRecallMetric::new(provider)));
         }
@@ -502,6 +508,9 @@ mod tests {
             // LlmContextRecallMetric: classify each reference sentence against the context.
             } else if prompt.contains("verdict 1 when the sentence is supported") {
                 r#"{"classifications":[{"verdict":1,"reason":"attributed"}]}"#
+            // ContextUtilizationMetric: per-context usefulness verdict against the response.
+            } else if prompt.contains("useful to arrive at the answer") {
+                r#"{"verdict":1,"reason":"useful"}"#
             } else {
                 return Err(RagasError::Provider {
                     message: format!("PromptRoutingLlm saw an unrecognized prompt: {prompt}"),
@@ -677,8 +686,9 @@ mod tests {
         // With a provider injected, the evaluate command additionally runs the genuine
         // LLM-based metrics from `src/metric.rs` through their real `.generate` pipelines.
         // The scripted provider yields, for the single sample:
-        //   faithfulness   -> 2 statements, both verified supported  -> 2/2 = 1.0
-        //   context_recall -> reference is 1 sentence, attributed    -> 1/1 = 1.0
+        //   faithfulness        -> 2 statements, both verified supported -> 2/2 = 1.0
+        //   context_utilization -> 1 context judged useful               -> AP@k = 1.0
+        //   context_recall      -> reference is 1 sentence, attributed   -> 1/1 = 1.0
         // (rouge_l also runs offline as before). Verified via mock; real-LLM UNVERIFIED.
         let dataset = EvaluationDataset::<EvaluationSample>::from_samples(vec![
             EvaluationSample::SingleTurn(
@@ -712,7 +722,7 @@ mod tests {
         // The real metric impls actually invoked `.generate`: faithfulness made two calls
         // (statement generation + verification) and context recall one classification call.
         let prompts = provider.prompts();
-        assert_eq!(prompts.len(), 3, "expected 3 LLM calls, saw: {prompts:#?}");
+        assert_eq!(prompts.len(), 4, "expected 4 LLM calls, saw: {prompts:#?}");
         assert!(
             prompts
                 .iter()
@@ -741,6 +751,10 @@ mod tests {
         assert!(
             summary.contains("context_recall"),
             "summary missing context_recall: {summary}"
+        );
+        assert!(
+            summary.contains("context_utilization"),
+            "summary missing context_utilization: {summary}"
         );
 
         // The structured aggregates carry the LLM metrics' computed means (both 1.0 here).
@@ -771,6 +785,19 @@ mod tests {
                 .abs()
                 < 1e-9,
             "context_recall mean: {context_recall:#?}"
+        );
+
+        let context_utilization = by_name("context_utilization");
+        assert_eq!(context_utilization["count"], 1);
+        assert_eq!(context_utilization["errors"], 0);
+        assert!(
+            (context_utilization["mean"]
+                .as_f64()
+                .expect("context_utilization mean")
+                - 1.0)
+                .abs()
+                < 1e-9,
+            "context_utilization mean: {context_utilization:#?}"
         );
 
         // ROUGE still runs (offline) and the persisted report carries the same aggregates.

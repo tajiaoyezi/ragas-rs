@@ -28,8 +28,9 @@ USAGE:
 COMMANDS:
     config                          Print the resolved provider configuration (secrets redacted).
     evaluate --dataset <file.jsonl> Evaluate a JSONL dataset. Runs offline ROUGE-L always, plus the
-             [--report <file>]      LLM metrics (faithfulness, context recall) when an API key is
-                                    configured. Optionally write the full JSON report to a file.
+             [--report <file>]      LLM metrics (faithfulness, context utilization, context recall)
+                                    when an API key is configured. Optionally write the full JSON
+                                    report to a file.
     testset  --doc <file.txt>       Generate a test dataset from a text document. Uses the real LLM
              --source-id <id>       synthesizer when an API key is configured (add --multi-hop for
              [--multi-hop]          multi-hop), otherwise a deterministic single-hop fallback.
