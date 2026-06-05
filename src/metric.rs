@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use async_trait::async_trait;
@@ -7,7 +8,7 @@ use crate::validation::{MetricRequirements, SampleField};
 use crate::{
     AnswerCorrectnessWeights, ChatMessage, EmbeddingProvider, EmbeddingRequest,
     FactualCorrectnessCounts, LlmProvider, LlmRequest, RagasError, SingleTurnSample,
-    answer_correctness,
+    answer_correctness, factual_correctness,
 };
 
 pub type BoxMetricFuture = Pin<Box<dyn Future<Output = Result<MetricResult, RagasError>> + Send>>;
@@ -1206,6 +1207,354 @@ impl Metric for AnswerAccuracyMetric {
             MetricResult::success(self.name(), MetricValue::numeric(score)).with_reason(format!(
                 "mean of two rating passes (forward={forward:.3}, swapped={swapped:.3})"
             )),
+        )
+    }
+}
+
+// ============================================================================
+// Phase 3 metrics (docs/parity-roadmap.md) — LLM metrics replacing/extending the
+// deterministic placeholders. Each is a real `impl Metric`.
+// ============================================================================
+
+/// One-call TP/FP/FN classification of response statements vs the reference, shared by the
+/// factual-correctness style metrics.
+async fn classify_tp_fp_fn(
+    llm: &Arc<dyn LlmProvider>,
+    user_input: &str,
+    response: &str,
+    reference: &str,
+) -> Result<FactualClassification, RagasError> {
+    let prompt = format!(
+        "Compare the ANSWER to the GROUND TRUTH for the QUESTION. Decompose both into atomic \
+statements and classify each into one list: \"TP\" (present in both), \"FP\" (in the answer but \
+not supported by the ground truth), or \"FN\" (in the ground truth but missing from the answer). \
+Return only JSON of the form {{\"TP\": [\"...\"], \"FP\": [\"...\"], \"FN\": [\"...\"]}}.\n\n\
+QUESTION: {user_input}\nANSWER: {response}\nGROUND TRUTH: {reference}",
+    );
+    let response_msg = llm
+        .generate(LlmRequest {
+            messages: vec![ChatMessage::user(prompt)],
+            temperature: Some(0.0),
+        })
+        .await?;
+    parse_json(&response_msg.content, "factual correctness classification")
+}
+
+/// FactualCorrectness — claim-level F1 of the response against the reference. One LLM call
+/// classifies statements into TP/FP/FN; score = 2·TP / (2·TP + FP + FN) via the tested
+/// [`crate::factual_correctness`] helper.
+pub struct FactualCorrectnessMetric {
+    llm: Arc<dyn LlmProvider>,
+}
+
+impl FactualCorrectnessMetric {
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self { llm }
+    }
+}
+
+#[async_trait]
+impl Metric for FactualCorrectnessMetric {
+    fn name(&self) -> &str {
+        "factual_correctness"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![
+                SampleField::UserInput,
+                SampleField::Response,
+                SampleField::Reference,
+            ],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let reference = require_reference(sample, self.name())?;
+        let classification =
+            classify_tp_fp_fn(&self.llm, &sample.user_input, &sample.response, reference).await?;
+        let counts = FactualCorrectnessCounts::new(
+            classification.true_positive.len(),
+            classification.false_positive.len(),
+            classification.false_negative.len(),
+        );
+        let score = factual_correctness(counts.clone()).score.unwrap_or(0.0);
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score)).with_reason(format!(
+                "factual F1 from TP={} FP={} FN={}",
+                counts.true_positive, counts.false_positive, counts.false_negative
+            )),
+        )
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct EntityExtractionOutput {
+    #[serde(default)]
+    entities: Vec<String>,
+}
+
+/// ContextEntityRecall — fraction of the reference's named entities that also appear in the
+/// retrieved contexts. Two LLM extraction calls (reference, contexts); score = |ref ∩ ctx| /
+/// |ref| over the lowercased entity sets. An empty reference-entity set yields NaN.
+pub struct ContextEntityRecallMetric {
+    llm: Arc<dyn LlmProvider>,
+}
+
+impl ContextEntityRecallMetric {
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self { llm }
+    }
+
+    async fn extract_entities(
+        &self,
+        text: &str,
+        context_label: &str,
+    ) -> Result<BTreeSet<String>, RagasError> {
+        let prompt = format!(
+            "Extract the named entities (people, places, organizations, dates, products, \
+numbers) mentioned in the TEXT. Return only JSON of the form {{\"entities\": [\"...\"]}}.\n\n\
+TEXT: {text}",
+        );
+        let response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        let parsed: EntityExtractionOutput = parse_json(&response.content, context_label)?;
+        Ok(parsed
+            .entities
+            .into_iter()
+            .map(|entity| entity.trim().to_lowercase())
+            .filter(|entity| !entity.is_empty())
+            .collect())
+    }
+}
+
+#[async_trait]
+impl Metric for ContextEntityRecallMetric {
+    fn name(&self) -> &str {
+        "context_entity_recall"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::Reference, SampleField::RetrievedContexts],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let reference = require_reference(sample, self.name())?;
+        let reference_entities = self
+            .extract_entities(reference, "context entity recall (reference)")
+            .await?;
+        if reference_entities.is_empty() {
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(f64::NAN))
+                    .with_reason("no entities found in the reference"),
+            );
+        }
+        let context_entities = self
+            .extract_entities(
+                &sample.retrieved_contexts.join("\n"),
+                "context entity recall (contexts)",
+            )
+            .await?;
+        let recalled = reference_entities
+            .iter()
+            .filter(|entity| context_entities.contains(*entity))
+            .count();
+        let score = recalled as f64 / reference_entities.len() as f64;
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score)).with_reason(format!(
+                "{recalled}/{} reference entities present in contexts",
+                reference_entities.len()
+            )),
+        )
+    }
+}
+
+/// Average of two LLM rating passes (0/2/4 -> [0, 1]) for the Nvidia-style dual-judge metrics.
+async fn dual_rating(
+    llm: &Arc<dyn LlmProvider>,
+    prompt: &str,
+    label: &str,
+) -> Result<f64, RagasError> {
+    let mut total = 0.0f64;
+    for _ in 0..2 {
+        let response = llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt.to_string())],
+                temperature: Some(0.0),
+            })
+            .await?;
+        let parsed: AnswerAccuracyRating = parse_json(&response.content, label)?;
+        total += parsed.rating.clamp(0, 4) as f64 / 4.0;
+    }
+    Ok(total / 2.0)
+}
+
+/// ContextRelevance (Nvidia `nv_context_relevance`) — dual LLM rating (0/2/4 -> [0, 1],
+/// averaged) of how relevant the retrieved contexts are to the question.
+pub struct ContextRelevanceMetric {
+    llm: Arc<dyn LlmProvider>,
+}
+
+impl ContextRelevanceMetric {
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self { llm }
+    }
+}
+
+#[async_trait]
+impl Metric for ContextRelevanceMetric {
+    fn name(&self) -> &str {
+        "context_relevance"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::UserInput, SampleField::RetrievedContexts],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        if sample.retrieved_contexts.is_empty() {
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(0.0))
+                    .with_reason("sample has no retrieved contexts"),
+            );
+        }
+        let prompt = format!(
+            "Rate how relevant the CONTEXT is for answering the QUESTION. \
+Use 4 = fully relevant, 2 = partially relevant, 0 = irrelevant. \
+Return only JSON of the form {{\"rating\": 0, \"reason\": \"...\"}}.\n\n\
+QUESTION: {}\nCONTEXT:\n{}",
+            sample.user_input,
+            sample.retrieved_contexts.join("\n"),
+        );
+        let score = dual_rating(&self.llm, &prompt, "context relevance rating").await?;
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score))
+                .with_reason("mean of two context-relevance rating passes"),
+        )
+    }
+}
+
+/// ResponseGroundedness (Nvidia `nv_response_groundedness`) — dual LLM rating (0/2/4 ->
+/// [0, 1], averaged) of how well the response is supported by the retrieved contexts.
+pub struct ResponseGroundednessMetric {
+    llm: Arc<dyn LlmProvider>,
+}
+
+impl ResponseGroundednessMetric {
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self { llm }
+    }
+}
+
+#[async_trait]
+impl Metric for ResponseGroundednessMetric {
+    fn name(&self) -> &str {
+        "response_groundedness"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::Response, SampleField::RetrievedContexts],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        if sample.retrieved_contexts.is_empty() {
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(0.0))
+                    .with_reason("sample has no retrieved contexts"),
+            );
+        }
+        let prompt = format!(
+            "Rate how well the RESPONSE is grounded in (directly supported by) the CONTEXT. \
+Use 4 = fully grounded, 2 = partially grounded, 0 = not grounded. \
+Return only JSON of the form {{\"rating\": 0, \"reason\": \"...\"}}.\n\n\
+CONTEXT:\n{}\nRESPONSE: {}",
+            sample.retrieved_contexts.join("\n"),
+            sample.response,
+        );
+        let score = dual_rating(&self.llm, &prompt, "response groundedness rating").await?;
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score))
+                .with_reason("mean of two groundedness rating passes"),
+        )
+    }
+}
+
+/// RubricsScore (DomainSpecificRubrics) — a single LLM call scores the submission against an
+/// ordered rubric (score -> description). Returns the integer rubric score as-is.
+pub struct RubricsScoreMetric {
+    llm: Arc<dyn LlmProvider>,
+    name: String,
+    rubric: Vec<(i64, String)>,
+}
+
+impl RubricsScoreMetric {
+    pub fn new(
+        name: impl Into<String>,
+        rubric: Vec<(i64, String)>,
+        llm: Arc<dyn LlmProvider>,
+    ) -> Self {
+        Self {
+            llm,
+            name: name.into(),
+            rubric,
+        }
+    }
+}
+
+#[async_trait]
+impl Metric for RubricsScoreMetric {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::UserInput, SampleField::Response],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let rubric_text = self
+            .rubric
+            .iter()
+            .map(|(score, description)| format!("score {score}: {description}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let prompt = format!(
+            "Score the SUBMISSION using the RUBRIC, returning the single best-matching integer \
+score. Return only JSON of the form {{\"score\": 0, \"feedback\": \"...\"}}.\n\n\
+RUBRIC:\n{rubric_text}\n\nQUESTION: {}\nSUBMISSION: {}{}",
+            sample.user_input,
+            sample.response,
+            optional_fields_block(sample),
+        );
+        let response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        let parsed: SimpleCriteriaOutput = parse_json(&response.content, "rubrics score")?;
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(parsed.score))
+                .with_reason(format!("rubric '{}' scored {}", self.name, parsed.score)),
         )
     }
 }
@@ -2934,5 +3283,243 @@ mod tests {
         );
         // chrF on an identical short string -> 1.0 (longer orders are skipped gracefully).
         assert!((chrf("abc", "abc").score.unwrap() - 1.0).abs() < 1e-9);
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase 3 metrics — unit discrimination (ScriptedLlm, offline).
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn factual_correctness_discriminates_via_tp_fp_fn() {
+        let sample =
+            SingleTurnSample::new("q", "resp", vec!["c".to_string()]).with_reference("ref");
+
+        // TP=2,FP=0,FN=0 -> 2*2/(4+0+0) = 1.0.
+        let correct = FactualCorrectnessMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"TP":["a","b"],"FP":[],"FN":[]}"#,
+        ])));
+        assert!((numeric(&correct.score(&sample).await.expect("correct")) - 1.0).abs() < 1e-9);
+
+        // TP=0,FP=2,FN=2 -> 0.0.
+        let wrong = FactualCorrectnessMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"TP":[],"FP":["x","y"],"FN":["a","b"]}"#,
+        ])));
+        assert_eq!(numeric(&wrong.score(&sample).await.expect("wrong")), 0.0);
+
+        // TP=1,FP=1,FN=1 -> 2/(2+1+1) = 0.5.
+        let partial = FactualCorrectnessMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"TP":["a"],"FP":["x"],"FN":["b"]}"#,
+        ])));
+        assert!((numeric(&partial.score(&sample).await.expect("partial")) - 0.5).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn context_entity_recall_scores_entity_overlap() {
+        let sample =
+            SingleTurnSample::new("q", "resp", vec!["ctx".to_string()]).with_reference("ref");
+
+        // reference {paris, france}; contexts {paris, eiffel tower} -> 1/2 = 0.5.
+        let half = ContextEntityRecallMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"entities":["Paris","France"]}"#,
+            r#"{"entities":["Paris","Eiffel Tower"]}"#,
+        ])));
+        assert!((numeric(&half.score(&sample).await.expect("half")) - 0.5).abs() < 1e-9);
+
+        // all reference entities recalled (case-insensitive) -> 1.0.
+        let full = ContextEntityRecallMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"entities":["Paris"]}"#,
+            r#"{"entities":["paris","london"]}"#,
+        ])));
+        assert_eq!(numeric(&full.score(&sample).await.expect("full")), 1.0);
+    }
+
+    #[tokio::test]
+    async fn nv_dual_raters_average_two_passes() {
+        let sample = SingleTurnSample::new("q", "resp", vec!["ctx".to_string()]);
+
+        // context_relevance: ratings 4,4 -> (1.0 + 1.0)/2 = 1.0.
+        let relevant = ContextRelevanceMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"rating":4}"#,
+            r#"{"rating":4}"#,
+        ])));
+        assert_eq!(numeric(&relevant.score(&sample).await.expect("cr")), 1.0);
+
+        // response_groundedness: ratings 0,2 -> (0.0 + 0.5)/2 = 0.25.
+        let grounded = ResponseGroundednessMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"rating":0}"#,
+            r#"{"rating":2}"#,
+        ])));
+        assert!((numeric(&grounded.score(&sample).await.expect("rg")) - 0.25).abs() < 1e-9);
+
+        // No contexts -> 0.0 without any LLM call.
+        let llm = Arc::new(ScriptedLlm::new(vec![]));
+        let empty = ContextRelevanceMetric::new(llm.clone());
+        let no_ctx = SingleTurnSample::new("q", "resp", Vec::new());
+        assert_eq!(numeric(&empty.score(&no_ctx).await.expect("empty")), 0.0);
+        assert!(llm.prompts().is_empty());
+    }
+
+    #[tokio::test]
+    async fn rubrics_score_returns_the_rubric_integer() {
+        let rubric = vec![(1, "poor".to_string()), (5, "excellent".to_string())];
+        let metric = RubricsScoreMetric::new(
+            "helpfulness",
+            rubric,
+            Arc::new(ScriptedLlm::new(vec![r#"{"score":4,"feedback":"good"}"#])),
+        );
+        let sample = SingleTurnSample::new("q", "resp", vec!["ctx".to_string()]);
+        let result = metric.score(&sample).await.expect("rubric");
+        assert_eq!(result.metric_name, "helpfulness");
+        assert_eq!(numeric(&result), 4.0);
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase 3 metrics — LIVE discrimination gates (IGNORED unless a key is set).
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_factual_correctness_scores_correct_above_incorrect() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        let metric = FactualCorrectnessMetric::new(client);
+        let correct = SingleTurnSample::new(
+            "What is the capital of France?",
+            "The capital of France is Paris, a city on the Seine.",
+            vec!["n/a".to_string()],
+        )
+        .with_reference("Paris is the capital of France and sits on the Seine river.");
+        let incorrect = SingleTurnSample::new(
+            "What is the capital of France?",
+            "The capital of France is Berlin, a city in Bavaria.",
+            vec!["n/a".to_string()],
+        )
+        .with_reference("Paris is the capital of France and sits on the Seine river.");
+
+        let correct_score = numeric(&metric.score(&correct).await.expect("correct"));
+        let incorrect_score = numeric(&metric.score(&incorrect).await.expect("incorrect"));
+        assert!(
+            correct_score > incorrect_score,
+            "correct={correct_score} incorrect={incorrect_score}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_context_entity_recall_scores_present_above_absent() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        let metric = ContextEntityRecallMetric::new(client);
+        let reference = "Albert Einstein was born in Ulm, Germany in 1879.";
+        let present = SingleTurnSample::new(
+            "q",
+            "answer",
+            vec![
+                "Albert Einstein was born in Ulm, Germany in 1879 and later moved to Switzerland."
+                    .to_string(),
+            ],
+        )
+        .with_reference(reference);
+        let absent = SingleTurnSample::new(
+            "q",
+            "answer",
+            vec![
+                "Photosynthesis is the process by which plants convert sunlight into energy."
+                    .to_string(),
+            ],
+        )
+        .with_reference(reference);
+
+        let present_score = numeric(&metric.score(&present).await.expect("present"));
+        let absent_score = numeric(&metric.score(&absent).await.expect("absent"));
+        assert!(
+            present_score > absent_score,
+            "present={present_score} absent={absent_score}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_context_relevance_scores_relevant_above_irrelevant() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        let metric = ContextRelevanceMetric::new(client);
+        let question = "What is the capital of France?";
+        let relevant = SingleTurnSample::new(
+            question,
+            "answer",
+            vec!["Paris is the capital and largest city of France.".to_string()],
+        );
+        let irrelevant = SingleTurnSample::new(
+            question,
+            "answer",
+            vec!["The blue whale is the largest animal known to have existed.".to_string()],
+        );
+
+        let relevant_score = numeric(&metric.score(&relevant).await.expect("relevant"));
+        let irrelevant_score = numeric(&metric.score(&irrelevant).await.expect("irrelevant"));
+        assert!(
+            relevant_score > irrelevant_score,
+            "relevant={relevant_score} irrelevant={irrelevant_score}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_response_groundedness_scores_grounded_above_ungrounded() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        let metric = ResponseGroundednessMetric::new(client);
+        let contexts =
+            vec!["Ragas is an open-source framework to evaluate LLM applications.".to_string()];
+        let grounded = SingleTurnSample::new(
+            "What is Ragas?",
+            "Ragas is a framework for evaluating LLM applications.",
+            contexts.clone(),
+        );
+        let ungrounded = SingleTurnSample::new(
+            "What is Ragas?",
+            "Ragas is a brand of Italian sports cars founded in 1947.",
+            contexts,
+        );
+
+        let grounded_score = numeric(&metric.score(&grounded).await.expect("grounded"));
+        let ungrounded_score = numeric(&metric.score(&ungrounded).await.expect("ungrounded"));
+        assert!(
+            grounded_score > ungrounded_score,
+            "grounded={grounded_score} ungrounded={ungrounded_score}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_rubrics_score_scores_better_answer_higher() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        let rubric = vec![
+            (1, "completely incorrect".to_string()),
+            (3, "partially correct".to_string()),
+            (5, "fully correct and complete".to_string()),
+        ];
+        let metric = RubricsScoreMetric::new("correctness", rubric, client);
+        let good = SingleTurnSample::new(
+            "What is the boiling point of water at sea level in Celsius?",
+            "Water boils at 100 degrees Celsius at sea level.",
+            vec!["n/a".to_string()],
+        );
+        let bad = SingleTurnSample::new(
+            "What is the boiling point of water at sea level in Celsius?",
+            "Water boils at 7 degrees Celsius at sea level.",
+            vec!["n/a".to_string()],
+        );
+
+        let good_score = numeric(&metric.score(&good).await.expect("good"));
+        let bad_score = numeric(&metric.score(&bad).await.expect("bad"));
+        assert!(good_score > bad_score, "good={good_score} bad={bad_score}");
     }
 }
