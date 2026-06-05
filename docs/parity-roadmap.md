@@ -7,9 +7,10 @@ A prioritized plan to maximize **functional replication** of the Python
 > ragas-rs surface read from the actual code) followed by an adversarial completeness/correctness
 > review. Baseline numbers were verified directly against the source.
 
-**Status:** Phase 1 ✅; Phase 2 🔶 (5 metrics); Phase 3 🔶 (6 of 7 metrics) — all live-verified.
-Wired metric count **5 → 22** of ~39 (as of 2026-06-05). Phases 1–2 on `main`; Phase 3 on branch
-`feat/parity-phase3`.
+**Status:** Phase 1 ✅; Phase 2 ✅ (deterministic + NonLLM context pair; only the low-value
+ID-based variant deferred); Phase 3 ✅ (7/7) — all LLM metrics live-verified vs DeepSeek. Plus
+`context_utilization` wired into the `ragas evaluate` CLI default. Wired metric count **5 → 25** of
+~39 (2026-06-05); all on `main`.
 
 ## Goal & non-goals
 
@@ -84,16 +85,15 @@ AP@k accumulator, `Metric` trait). No new subsystems.*
 | **AnswerCorrectness (orchestration)** | M | high | Math + cosine + `FactualCorrectnessCounts` already exist; add the LLM TP/FP/FN statement classifier + embedding similarity, feed the existing `answer_correctness()` formula (default 0.75/0.25). |
 | **AnswerAccuracy (Nvidia)** | M | medium | Two LLM rating passes (question swapped), normalize 0/2/4 → 0/0.5/1, average. Embedding-free. |
 
-## Phase 2 — Deterministic NLP + string-distance metrics (no provider at all) 🔶 PARTIAL
+## Phase 2 — Deterministic NLP + string-distance metrics (no provider at all) ✅ DONE
 
 *Zero provider dependency, pure arithmetic, fully offline-testable. Fast to land and verify.*
 
-> 🔶 **Shipped 2026-06-05** — `ExactMatchMetric`, `StringPresenceMetric`, `StringSimilarityMetric`,
-> `BleuScoreMetric` (real BLEU-4), `ChrfScoreMetric` (real chrF, char n-gram F-β=2) are real
-> `impl Metric` in `src/metric.rs` (BLEU/chrF math in `src/metrics/traditional`), offline
-> unit-tested. **Deferred** — items needing a `SingleTurnSample` schema addition the struct lacks
-> today (`reference_contexts` list / context-ID field): NonLLM context precision & recall,
-> IDBasedContextRecall. Do those together with the schema change.
+> ✅ **Shipped 2026-06-05** — `ExactMatchMetric`, `StringPresenceMetric`, `StringSimilarityMetric`,
+> `BleuScoreMetric` (real BLEU-4), `ChrfScoreMetric` (real chrF, char n-gram F-β=2), plus
+> `NonLlmContextPrecisionMetric` + `NonLlmContextRecallMetric` (enabled by the new
+> `SingleTurnSample.reference_contexts` field) — all real `impl Metric`, offline unit-tested.
+> **Only `IDBasedContextRecall` remains** (low value; needs a separate context-ID schema field).
 
 | Metric | Effort | Value | Approach |
 |---|---|---|---|
@@ -105,18 +105,16 @@ AP@k accumulator, `Metric` trait). No new subsystems.*
 | **IDBasedContextRecall** | S | low | `BTreeSet` intersection mirroring `id_based_context_precision`. Low value (datasets rarely carry context IDs). |
 | **ExactMatch / SemanticSimilarity / QuotedSpansAlignment `Metric` wrappers** | S | medium | Logic exists as free functions; add thin `Metric` impls so they run uniformly (closes the `exists_in_rs=partial` wrappers). |
 
-## Phase 3 — LLM metrics that REPLACE lexical placeholders 🔶 6/7 DONE
+## Phase 3 — LLM metrics that REPLACE lexical placeholders ✅ DONE
 
 *These Rust functions exist but implement weak lexical proxies, not the Python algorithm. Replacing
 them is multi-call and the bookkeeping must match Python. Keep the lexical versions as fallbacks.*
 
-> 🔶 **Shipped 2026-06-05** (real `impl Metric` in `src/metric.rs`, offline + live-verified vs
+> ✅ **Shipped 2026-06-05** (real `impl Metric` in `src/metric.rs`, offline + live-verified vs
 > DeepSeek): `FactualCorrectnessMetric`, `ContextEntityRecallMetric`, `ContextRelevanceMetric`
 > (nv dual-judge), `ResponseGroundednessMetric` (nv dual-judge), `RubricsScoreMetric`,
-> `SummarizationScoreMetric`. **Remaining: `NoiseSensitivity`** — deliberately deferred as the
-> single most intricate pipeline (response/reference claim decomposition + per-context relevance +
-> a per-claim×context attribution matrix with relevant/irrelevant modes); it needs a faithful,
-> carefully-tested implementation against the exact ragas formula rather than a rushed one.
+> `SummarizationScoreMetric`, and `NoiseSensitivityMetric` (faithful claim×context attribution
+> matrix with relevant/irrelevant modes; hand-computed offline tests + live gate). **All 7 done.**
 
 | Metric | Effort | Value | Approach |
 |---|---|---|---|
