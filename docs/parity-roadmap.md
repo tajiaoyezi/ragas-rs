@@ -7,8 +7,9 @@ A prioritized plan to maximize **functional replication** of the Python
 > ragas-rs surface read from the actual code) followed by an adversarial completeness/correctness
 > review. Baseline numbers were verified directly against the source.
 
-**Status:** Phase 1 ✅ **complete** (live-verified); Phase 2 🔶 **in progress** (2026-06-05) —
-wired metric count **5 → 16** of ~39. Work on branch `feat/parity-phase1-2` (not merged/pushed).
+**Status:** Phase 1 ✅; Phase 2 🔶 (5 metrics); Phase 3 🔶 (6 of 7 metrics) — all live-verified.
+Wired metric count **5 → 22** of ~39 (as of 2026-06-05). Phases 1–2 on `main`; Phase 3 on branch
+`feat/parity-phase3`.
 
 ## Goal & non-goals
 
@@ -104,10 +105,18 @@ AP@k accumulator, `Metric` trait). No new subsystems.*
 | **IDBasedContextRecall** | S | low | `BTreeSet` intersection mirroring `id_based_context_precision`. Low value (datasets rarely carry context IDs). |
 | **ExactMatch / SemanticSimilarity / QuotedSpansAlignment `Metric` wrappers** | S | medium | Logic exists as free functions; add thin `Metric` impls so they run uniformly (closes the `exists_in_rs=partial` wrappers). |
 
-## Phase 3 — LLM metrics that REPLACE lexical placeholders
+## Phase 3 — LLM metrics that REPLACE lexical placeholders 🔶 6/7 DONE
 
 *These Rust functions exist but implement weak lexical proxies, not the Python algorithm. Replacing
 them is multi-call and the bookkeeping must match Python. Keep the lexical versions as fallbacks.*
+
+> 🔶 **Shipped 2026-06-05** (real `impl Metric` in `src/metric.rs`, offline + live-verified vs
+> DeepSeek): `FactualCorrectnessMetric`, `ContextEntityRecallMetric`, `ContextRelevanceMetric`
+> (nv dual-judge), `ResponseGroundednessMetric` (nv dual-judge), `RubricsScoreMetric`,
+> `SummarizationScoreMetric`. **Remaining: `NoiseSensitivity`** — deliberately deferred as the
+> single most intricate pipeline (response/reference claim decomposition + per-context relevance +
+> a per-claim×context attribution matrix with relevant/irrelevant modes); it needs a faithful,
+> carefully-tested implementation against the exact ragas formula rather than a rushed one.
 
 | Metric | Effort | Value | Approach |
 |---|---|---|---|
