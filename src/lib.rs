@@ -63,7 +63,7 @@ pub use metric::{
     FnMetric, LlmContextRecallMetric, Metric, MetricResult, MetricValue, RankingItem,
     ResponseGroundednessMetric, ResponseRelevancyMetric, RubricsScoreMetric,
     SimpleCriteriaScoreMetric, SqlSemanticEquivalenceMetric, StringPresenceMetric,
-    StringSimilarityMetric, cosine_similarity,
+    StringSimilarityMetric, SummarizationScoreMetric, cosine_similarity,
 };
 pub use metrics::{
     AgentGoalOutcome, AnswerCorrectnessWeights, AspectCriticConfig, AspectCriticMode,

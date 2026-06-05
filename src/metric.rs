@@ -1559,6 +1559,131 @@ RUBRIC:\n{rubric_text}\n\nQUESTION: {}\nSUBMISSION: {}{}",
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct SummarizationQuestions {
+    #[serde(default)]
+    questions: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SummarizationAnswers {
+    #[serde(default)]
+    answers: Vec<BinaryVerdict>,
+}
+
+/// SummarizationScore — coverage of the source's key facts by the summary. Two LLM calls:
+/// (1) generate yes/no questions probing the SOURCE (retrieved contexts); (2) answer each using
+/// ONLY the SUMMARY (response). score = fraction answered yes. An empty question set yields NaN.
+/// (Functional port of ragas' keyphrase→QA→answer chain, collapsed to question→answer.)
+pub struct SummarizationScoreMetric {
+    llm: Arc<dyn LlmProvider>,
+    question_count: usize,
+}
+
+impl SummarizationScoreMetric {
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self {
+            llm,
+            question_count: 5,
+        }
+    }
+
+    pub fn with_question_count(mut self, question_count: usize) -> Self {
+        self.question_count = question_count.max(1);
+        self
+    }
+}
+
+#[async_trait]
+impl Metric for SummarizationScoreMetric {
+    fn name(&self) -> &str {
+        "summarization_score"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::Response, SampleField::RetrievedContexts],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        if sample.retrieved_contexts.is_empty() {
+            return Err(RagasError::Parse {
+                message: "summarization score requires retrieved_contexts as the source text"
+                    .to_string(),
+            });
+        }
+        let source = sample.retrieved_contexts.join("\n");
+
+        // Step 1 — generate yes/no questions probing the source's key facts.
+        let question_prompt = format!(
+            "Generate {n} yes/no questions that test whether a summary captures the key facts of \
+the SOURCE. Return only JSON of the form {{\"questions\": [\"...\"]}}.\n\nSOURCE:\n{source}",
+            n = self.question_count,
+        );
+        let question_response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(question_prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        let questions: SummarizationQuestions = parse_json(
+            &question_response.content,
+            "summarization question generation",
+        )?;
+        let questions: Vec<String> = questions
+            .questions
+            .into_iter()
+            .filter(|question| !question.trim().is_empty())
+            .collect();
+        if questions.is_empty() {
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(f64::NAN))
+                    .with_reason("no questions could be generated from the source"),
+            );
+        }
+
+        // Step 2 — answer each question using ONLY the summary (the response).
+        let numbered = questions
+            .iter()
+            .enumerate()
+            .map(|(index, question)| format!("{}. {question}", index + 1))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let answer_prompt = format!(
+            "Using ONLY the SUMMARY, answer each QUESTION with verdict 1 when the summary \
+supports a 'yes' and 0 otherwise. Return only JSON of the form \
+{{\"answers\": [{{\"verdict\": 0}}]}} with exactly one entry per question, in order.\n\n\
+SUMMARY: {}\n\nQUESTIONS:\n{numbered}",
+            sample.response,
+        );
+        let answer_response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(answer_prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        let answers: SummarizationAnswers =
+            parse_json(&answer_response.content, "summarization answering")?;
+        let covered = answers
+            .answers
+            .iter()
+            .filter(|answer| answer.verdict == 1)
+            .count();
+        let score = covered as f64 / questions.len() as f64;
+
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score)).with_reason(format!(
+                "{covered}/{} source questions answerable from the summary",
+                questions.len()
+            )),
+        )
+    }
+}
+
 // ============================================================================
 // Phase 2 metrics (docs/parity-roadmap.md) — deterministic, no provider needed.
 // Each is a real `impl Metric` wrapping a tested helper from `src/metrics`.
@@ -3516,6 +3641,62 @@ mod tests {
             "What is the boiling point of water at sea level in Celsius?",
             "Water boils at 7 degrees Celsius at sea level.",
             vec!["n/a".to_string()],
+        );
+
+        let good_score = numeric(&metric.score(&good).await.expect("good"));
+        let bad_score = numeric(&metric.score(&bad).await.expect("bad"));
+        assert!(good_score > bad_score, "good={good_score} bad={bad_score}");
+    }
+
+    #[tokio::test]
+    async fn summarization_score_covers_fraction_of_questions() {
+        let sample = SingleTurnSample::new("q", "summary text", vec!["source".to_string()]);
+
+        // 2 questions, both answerable from the summary -> 1.0.
+        let full = SummarizationScoreMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"questions":["q1","q2"]}"#,
+            r#"{"answers":[{"verdict":1},{"verdict":1}]}"#,
+        ])));
+        assert_eq!(numeric(&full.score(&sample).await.expect("full")), 1.0);
+
+        // 1 of 2 -> 0.5.
+        let half = SummarizationScoreMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"questions":["q1","q2"]}"#,
+            r#"{"answers":[{"verdict":1},{"verdict":0}]}"#,
+        ])));
+        assert_eq!(numeric(&half.score(&sample).await.expect("half")), 0.5);
+    }
+
+    #[tokio::test]
+    async fn summarization_requires_source_contexts() {
+        let no_ctx = SingleTurnSample::new("q", "summary", Vec::new());
+        let metric = SummarizationScoreMetric::new(Arc::new(ScriptedLlm::new(vec![])));
+        assert!(metric.score(&no_ctx).await.is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_summarization_score_scores_faithful_summary_above_off_topic() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        let metric = SummarizationScoreMetric::new(client);
+        let source = vec![
+            "The Apollo 11 mission landed the first humans on the Moon on July 20, 1969. Neil \
+Armstrong and Buzz Aldrin walked on the lunar surface while Michael Collins orbited above in the \
+command module."
+                .to_string(),
+        ];
+        let good = SingleTurnSample::new(
+            "Summarize the source.",
+            "Apollo 11 landed the first humans on the Moon in 1969; Armstrong and Aldrin walked on \
+the surface while Collins stayed in orbit.",
+            source.clone(),
+        );
+        let bad = SingleTurnSample::new(
+            "Summarize the source.",
+            "The recipe calls for two cups of flour and a pinch of salt.",
+            source,
         );
 
         let good_score = numeric(&metric.score(&good).await.expect("good"));
