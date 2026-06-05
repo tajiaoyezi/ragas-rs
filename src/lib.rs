@@ -58,9 +58,10 @@ pub use llm::{
 };
 pub use metric::{
     AnswerAccuracyMetric, AnswerCorrectnessMetric, AspectCriticMetric, ContextPrecisionMetric,
-    ContextUtilizationMetric, FaithfulnessMetric, FnMetric, LlmContextRecallMetric, Metric,
-    MetricResult, MetricValue, RankingItem, ResponseRelevancyMetric, SimpleCriteriaScoreMetric,
-    SqlSemanticEquivalenceMetric, cosine_similarity,
+    ContextUtilizationMetric, ExactMatchMetric, FaithfulnessMetric, FnMetric,
+    LlmContextRecallMetric, Metric, MetricResult, MetricValue, RankingItem,
+    ResponseRelevancyMetric, SimpleCriteriaScoreMetric, SqlSemanticEquivalenceMetric,
+    StringPresenceMetric, StringSimilarityMetric, cosine_similarity,
 };
 pub use metrics::{
     AgentGoalOutcome, AnswerCorrectnessWeights, AspectCriticConfig, AspectCriticMode,

@@ -1210,6 +1210,147 @@ impl Metric for AnswerAccuracyMetric {
     }
 }
 
+// ============================================================================
+// Phase 2 metrics (docs/parity-roadmap.md) — deterministic, no provider needed.
+// Each is a real `impl Metric` wrapping a tested helper from `src/metrics`.
+// ============================================================================
+
+/// Extract a non-empty trimmed reference or return a clear error. Shared by the
+/// deterministic reference-based metrics below.
+fn require_reference<'a>(
+    sample: &'a SingleTurnSample,
+    metric: &str,
+) -> Result<&'a str, RagasError> {
+    match sample.reference.as_deref() {
+        Some(reference) if !reference.trim().is_empty() => Ok(reference),
+        _ => Err(RagasError::Parse {
+            message: format!("{metric} requires a non-empty reference"),
+        }),
+    }
+}
+
+/// ExactMatch — 1.0 when the response equals the reference (after trimming), else 0.0.
+/// Deterministic; reuses the tested [`crate::exact_match`] helper.
+pub struct ExactMatchMetric;
+
+impl Default for ExactMatchMetric {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ExactMatchMetric {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl Metric for ExactMatchMetric {
+    fn name(&self) -> &str {
+        "exact_match"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::Response, SampleField::Reference],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let reference = require_reference(sample, self.name())?;
+        let score = crate::exact_match(&sample.response, reference)
+            .score
+            .unwrap_or(0.0);
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score))
+                .with_reason("deterministic exact match (trimmed)"),
+        )
+    }
+}
+
+/// StringPresence — 1.0 when the reference appears as a substring of the response, else 0.0.
+/// Deterministic; no provider needed.
+pub struct StringPresenceMetric;
+
+impl Default for StringPresenceMetric {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StringPresenceMetric {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl Metric for StringPresenceMetric {
+    fn name(&self) -> &str {
+        "string_presence"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::Response, SampleField::Reference],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let reference = require_reference(sample, self.name())?;
+        let present = sample.response.contains(reference.trim());
+        Ok(MetricResult::success(
+            self.name(),
+            MetricValue::numeric(if present { 1.0 } else { 0.0 }),
+        )
+        .with_reason("reference substring presence in response"))
+    }
+}
+
+/// StringSimilarity — normalized Levenshtein edit similarity in [0, 1] between the response
+/// and reference. Deterministic; reuses [`crate::string_distance_similarity`].
+pub struct StringSimilarityMetric;
+
+impl Default for StringSimilarityMetric {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StringSimilarityMetric {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl Metric for StringSimilarityMetric {
+    fn name(&self) -> &str {
+        "string_similarity"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::Response, SampleField::Reference],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let reference = require_reference(sample, self.name())?;
+        let score = crate::string_distance_similarity(&sample.response, reference)
+            .score
+            .unwrap_or(0.0);
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score))
+                .with_reason("normalized edit-distance similarity"),
+        )
+    }
+}
+
 pub fn cosine_similarity(left: &[f32], right: &[f32]) -> f64 {
     let len = left.len().min(right.len());
     if len == 0 {
@@ -2618,5 +2759,49 @@ mod tests {
             correct_score > incorrect_score,
             "correct={correct_score} incorrect={incorrect_score}"
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase 2 deterministic metrics — fully offline (no provider, no key).
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn deterministic_string_metrics_discriminate_match_from_mismatch() {
+        let matching = SingleTurnSample::new("q", "the quick brown fox", vec!["c".to_string()])
+            .with_reference("the quick brown fox");
+        let different = SingleTurnSample::new("q", "totally unrelated text", vec!["c".to_string()])
+            .with_reference("the quick brown fox");
+
+        // ExactMatch: identical -> 1.0, different -> 0.0.
+        let em = ExactMatchMetric::new();
+        assert_eq!(em.name(), "exact_match");
+        assert_eq!(numeric(&em.score(&matching).await.expect("em match")), 1.0);
+        assert_eq!(numeric(&em.score(&different).await.expect("em diff")), 0.0);
+
+        // StringPresence: reference substring present -> 1.0; absent -> 0.0.
+        let sp = StringPresenceMetric::new();
+        let contains = SingleTurnSample::new(
+            "q",
+            "well, the quick brown fox jumped",
+            vec!["c".to_string()],
+        )
+        .with_reference("quick brown fox");
+        assert_eq!(numeric(&sp.score(&contains).await.expect("sp yes")), 1.0);
+        assert_eq!(numeric(&sp.score(&different).await.expect("sp no")), 0.0);
+
+        // StringSimilarity: identical -> 1.0; very different -> strictly lower.
+        let ss = StringSimilarityMetric::new();
+        let id_score = numeric(&ss.score(&matching).await.expect("ss identical"));
+        let diff_score = numeric(&ss.score(&different).await.expect("ss different"));
+        assert!((id_score - 1.0).abs() < 1e-9);
+        assert!(diff_score < id_score);
+    }
+
+    #[tokio::test]
+    async fn deterministic_metrics_require_a_reference() {
+        let no_ref = SingleTurnSample::new("q", "resp", vec!["c".to_string()]);
+        assert!(ExactMatchMetric::new().score(&no_ref).await.is_err());
+        assert!(StringPresenceMetric::new().score(&no_ref).await.is_err());
+        assert!(StringSimilarityMetric::new().score(&no_ref).await.is_err());
     }
 }
