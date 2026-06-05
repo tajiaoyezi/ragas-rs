@@ -1684,6 +1684,248 @@ SUMMARY: {}\n\nQUESTIONS:\n{numbered}",
     }
 }
 
+/// Decompose a text into atomic statements (shared Faithfulness-style step).
+async fn decompose_statements(
+    llm: &Arc<dyn LlmProvider>,
+    question: &str,
+    answer: &str,
+    label: &str,
+) -> Result<Vec<String>, RagasError> {
+    let prompt = format!(
+        "Break the ANSWER into a list of standalone, atomic factual statements. \
+Each statement must be fully self-contained, resolving any pronouns using the QUESTION. \
+Return only JSON of the form {{\"statements\": [\"...\"]}}.\n\n\
+QUESTION: {question}\nANSWER: {answer}",
+    );
+    let response = llm
+        .generate(LlmRequest {
+            messages: vec![ChatMessage::user(prompt)],
+            temperature: Some(0.0),
+        })
+        .await?;
+    let parsed: StatementGenerationOutput = parse_json(&response.content, label)?;
+    Ok(parsed
+        .statements
+        .into_iter()
+        .map(|statement| statement.trim().to_string())
+        .filter(|statement| !statement.is_empty())
+        .collect())
+}
+
+/// Verify each statement against a context block, returning a 1/0 verdict per statement, in order.
+async fn verify_statements_against(
+    llm: &Arc<dyn LlmProvider>,
+    context: &str,
+    statements: &[String],
+    label: &str,
+) -> Result<Vec<i64>, RagasError> {
+    let numbered = statements
+        .iter()
+        .enumerate()
+        .map(|(index, statement)| format!("{}. {statement}", index + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let prompt = format!(
+        "For each STATEMENT decide whether it can be directly inferred from the CONTEXT. \
+Use verdict 1 when the statement is supported by the context, 0 otherwise. \
+Return only JSON of the form {{\"verdicts\": [{{\"verdict\": 0}}]}} with exactly one entry per \
+statement, in order.\n\nCONTEXT:\n{context}\n\nSTATEMENTS:\n{numbered}",
+    );
+    let response = llm
+        .generate(LlmRequest {
+            messages: vec![ChatMessage::user(prompt)],
+            temperature: Some(0.0),
+        })
+        .await?;
+    let parsed: NliOutput = parse_json(&response.content, label)?;
+    Ok(parsed
+        .verdicts
+        .iter()
+        .map(|verdict| verdict.verdict)
+        .collect())
+}
+
+/// Which retrieved contexts a [`NoiseSensitivityMetric`] attributes incorrect claims to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoiseSensitivityMode {
+    /// Incorrect claims grounded in contexts that DO support the reference (relevant noise).
+    Relevant,
+    /// Incorrect claims grounded in contexts that do NOT support the reference (irrelevant noise).
+    Irrelevant,
+}
+
+/// NoiseSensitivity — the fraction of response claims that are (a) incorrect (not attributable to
+/// the reference) AND (b) grounded in the target subset of retrieved contexts. In `Relevant` mode
+/// the target is the contexts that support the reference; in `Irrelevant` mode the others. Lower
+/// is better. Faithful port of ragas' claim × context attribution pipeline.
+pub struct NoiseSensitivityMetric {
+    llm: Arc<dyn LlmProvider>,
+    mode: NoiseSensitivityMode,
+}
+
+impl NoiseSensitivityMetric {
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self {
+            llm,
+            mode: NoiseSensitivityMode::Relevant,
+        }
+    }
+
+    pub fn with_mode(mut self, mode: NoiseSensitivityMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Per-context verdict: is the reference (ground truth) attributable to that context?
+    async fn classify_context_relevance(
+        &self,
+        reference: &str,
+        contexts: &[String],
+    ) -> Result<Vec<i64>, RagasError> {
+        let numbered = contexts
+            .iter()
+            .enumerate()
+            .map(|(index, context)| format!("{}. {context}", index + 1))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let prompt = format!(
+            "For each CONTEXT decide whether the GROUND TRUTH answer can be attributed to \
+(inferred from) it. Use verdict 1 when the ground truth is supported by that context, 0 \
+otherwise. Return only JSON of the form {{\"verdicts\": [{{\"verdict\": 0}}]}} with exactly one \
+entry per context, in order.\n\nGROUND TRUTH: {reference}\n\nCONTEXTS:\n{numbered}",
+        );
+        let response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        let parsed: NliOutput =
+            parse_json(&response.content, "noise sensitivity context relevance")?;
+        Ok(parsed
+            .verdicts
+            .iter()
+            .map(|verdict| verdict.verdict)
+            .collect())
+    }
+}
+
+#[async_trait]
+impl Metric for NoiseSensitivityMetric {
+    fn name(&self) -> &str {
+        match self.mode {
+            NoiseSensitivityMode::Relevant => "noise_sensitivity_relevant",
+            NoiseSensitivityMode::Irrelevant => "noise_sensitivity_irrelevant",
+        }
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![
+                SampleField::UserInput,
+                SampleField::Response,
+                SampleField::Reference,
+                SampleField::RetrievedContexts,
+            ],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let reference = require_reference(sample, self.name())?;
+        if sample.retrieved_contexts.is_empty() {
+            // No retrieved contexts -> no retrieval noise.
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(0.0))
+                    .with_reason("sample has no retrieved contexts"),
+            );
+        }
+
+        // 1. Decompose the response into atomic claims.
+        let statements = decompose_statements(
+            &self.llm,
+            &sample.user_input,
+            &sample.response,
+            "noise sensitivity statement generation",
+        )
+        .await?;
+        if statements.is_empty() {
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(f64::NAN))
+                    .with_reason("no statements could be extracted from the response"),
+            );
+        }
+
+        // 2. Correctness: is each response claim attributable to the reference?
+        let correctness = verify_statements_against(
+            &self.llm,
+            reference,
+            &statements,
+            "noise sensitivity correctness",
+        )
+        .await?;
+
+        // 3. Per-context relevance, then the target subset for this mode.
+        let relevance = self
+            .classify_context_relevance(reference, &sample.retrieved_contexts)
+            .await?;
+        let target_contexts: Vec<String> = sample
+            .retrieved_contexts
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                let is_relevant = relevance.get(*index).copied().unwrap_or(0) == 1;
+                match self.mode {
+                    NoiseSensitivityMode::Relevant => is_relevant,
+                    NoiseSensitivityMode::Irrelevant => !is_relevant,
+                }
+            })
+            .map(|(_, context)| context.clone())
+            .collect();
+
+        if target_contexts.is_empty() {
+            // No contexts in the target subset -> no claim can be grounded there -> 0 noise.
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(0.0)).with_reason(format!(
+                    "no {} contexts to attribute incorrect claims to",
+                    match self.mode {
+                        NoiseSensitivityMode::Relevant => "relevant",
+                        NoiseSensitivityMode::Irrelevant => "irrelevant",
+                    }
+                )),
+            );
+        }
+
+        // 4. Is each claim grounded in the target context subset?
+        let grounded = verify_statements_against(
+            &self.llm,
+            &target_contexts.join("\n"),
+            &statements,
+            "noise sensitivity grounding",
+        )
+        .await?;
+
+        // 5. Noise = fraction of claims that are incorrect AND grounded in the target subset.
+        let total = statements.len();
+        let mut noisy = 0usize;
+        for index in 0..total {
+            let incorrect = correctness.get(index).copied().unwrap_or(0) == 0;
+            let is_grounded = grounded.get(index).copied().unwrap_or(0) == 1;
+            if incorrect && is_grounded {
+                noisy += 1;
+            }
+        }
+        let score = noisy as f64 / total as f64;
+
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score)).with_reason(format!(
+                "{noisy}/{total} response claims are incorrect yet grounded in the target contexts"
+            )),
+        )
+    }
+}
+
 // ============================================================================
 // Phase 2 metrics (docs/parity-roadmap.md) — deterministic, no provider needed.
 // Each is a real `impl Metric` wrapping a tested helper from `src/metrics`.
@@ -3702,5 +3944,73 @@ the surface while Collins stayed in orbit.",
         let good_score = numeric(&metric.score(&good).await.expect("good"));
         let bad_score = numeric(&metric.score(&bad).await.expect("bad"));
         assert!(good_score > bad_score, "good={good_score} bad={bad_score}");
+    }
+
+    #[tokio::test]
+    async fn noise_sensitivity_counts_incorrect_claims_grounded_in_relevant_contexts() {
+        let sample =
+            SingleTurnSample::new("q", "resp", vec!["ctx1".to_string(), "ctx2".to_string()])
+                .with_reference("ref");
+        // statements [a,b]; correctness [1,0]; relevance [1,0] (ctx1 relevant);
+        // grounded vs relevant ctx [0,1] -> only statement b is incorrect AND grounded -> 1/2 = 0.5.
+        let metric = NoiseSensitivityMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"statements":["a","b"]}"#,
+            r#"{"verdicts":[{"verdict":1},{"verdict":0}]}"#,
+            r#"{"verdicts":[{"verdict":1},{"verdict":0}]}"#,
+            r#"{"verdicts":[{"verdict":0},{"verdict":1}]}"#,
+        ])));
+        assert_eq!(metric.name(), "noise_sensitivity_relevant");
+        assert!((numeric(&metric.score(&sample).await.expect("ns")) - 0.5).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn noise_sensitivity_zero_when_no_target_contexts() {
+        let sample =
+            SingleTurnSample::new("q", "resp", vec!["ctx1".to_string(), "ctx2".to_string()])
+                .with_reference("ref");
+        // All contexts irrelevant -> Relevant mode has an empty target subset -> 0, and the
+        // grounding call is skipped (only decompose + correctness + relevance run).
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"statements":["a","b"]}"#,
+            r#"{"verdicts":[{"verdict":0},{"verdict":0}]}"#,
+            r#"{"verdicts":[{"verdict":0},{"verdict":0}]}"#,
+        ]));
+        let metric = NoiseSensitivityMetric::new(llm.clone());
+        assert_eq!(numeric(&metric.score(&sample).await.expect("ns")), 0.0);
+        assert_eq!(llm.prompts().len(), 3);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_noise_sensitivity_flags_noisy_response_above_clean() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        let metric =
+            NoiseSensitivityMetric::new(client).with_mode(NoiseSensitivityMode::Irrelevant);
+        let reference = "The Eiffel Tower is located in Paris.";
+        let contexts = vec![
+            "The Eiffel Tower is located in Paris, France.".to_string(),
+            "The Statue of Liberty is located in New York, USA.".to_string(),
+        ];
+        let clean = SingleTurnSample::new(
+            "Where is the Eiffel Tower?",
+            "The Eiffel Tower is in Paris.",
+            contexts.clone(),
+        )
+        .with_reference(reference);
+        let noisy = SingleTurnSample::new(
+            "Where is the Eiffel Tower?",
+            "The Eiffel Tower is in Paris. The Statue of Liberty is in New York.",
+            contexts,
+        )
+        .with_reference(reference);
+
+        let clean_score = numeric(&metric.score(&clean).await.expect("clean"));
+        let noisy_score = numeric(&metric.score(&noisy).await.expect("noisy"));
+        assert!(
+            noisy_score > clean_score,
+            "noisy={noisy_score} clean={clean_score}"
+        );
     }
 }

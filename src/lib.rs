@@ -60,10 +60,10 @@ pub use metric::{
     AnswerAccuracyMetric, AnswerCorrectnessMetric, AspectCriticMetric, BleuScoreMetric,
     ChrfScoreMetric, ContextEntityRecallMetric, ContextPrecisionMetric, ContextRelevanceMetric,
     ContextUtilizationMetric, ExactMatchMetric, FactualCorrectnessMetric, FaithfulnessMetric,
-    FnMetric, LlmContextRecallMetric, Metric, MetricResult, MetricValue, RankingItem,
-    ResponseGroundednessMetric, ResponseRelevancyMetric, RubricsScoreMetric,
-    SimpleCriteriaScoreMetric, SqlSemanticEquivalenceMetric, StringPresenceMetric,
-    StringSimilarityMetric, SummarizationScoreMetric, cosine_similarity,
+    FnMetric, LlmContextRecallMetric, Metric, MetricResult, MetricValue, NoiseSensitivityMetric,
+    NoiseSensitivityMode, RankingItem, ResponseGroundednessMetric, ResponseRelevancyMetric,
+    RubricsScoreMetric, SimpleCriteriaScoreMetric, SqlSemanticEquivalenceMetric,
+    StringPresenceMetric, StringSimilarityMetric, SummarizationScoreMetric, cosine_similarity,
 };
 pub use metrics::{
     AgentGoalOutcome, AnswerCorrectnessWeights, AspectCriticConfig, AspectCriticMode,
