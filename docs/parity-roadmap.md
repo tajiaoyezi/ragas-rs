@@ -7,8 +7,8 @@ A prioritized plan to maximize **functional replication** of the Python
 > ragas-rs surface read from the actual code) followed by an adversarial completeness/correctness
 > review. Baseline numbers were verified directly against the source.
 
-**Status:** Phase 1 ✅ **complete** (2026-06-04) — 6 metrics shipped as real `impl Metric`,
-live-verified; wired metric count **5 → 11** of ~39.
+**Status:** Phase 1 ✅ **complete** (live-verified); Phase 2 🔶 **in progress** (2026-06-05) —
+wired metric count **5 → 16** of ~39. Work on branch `feat/parity-phase1-2` (not merged/pushed).
 
 ## Goal & non-goals
 
@@ -83,9 +83,16 @@ AP@k accumulator, `Metric` trait). No new subsystems.*
 | **AnswerCorrectness (orchestration)** | M | high | Math + cosine + `FactualCorrectnessCounts` already exist; add the LLM TP/FP/FN statement classifier + embedding similarity, feed the existing `answer_correctness()` formula (default 0.75/0.25). |
 | **AnswerAccuracy (Nvidia)** | M | medium | Two LLM rating passes (question swapped), normalize 0/2/4 → 0/0.5/1, average. Embedding-free. |
 
-## Phase 2 — Deterministic NLP + string-distance metrics (no provider at all)
+## Phase 2 — Deterministic NLP + string-distance metrics (no provider at all) 🔶 PARTIAL
 
 *Zero provider dependency, pure arithmetic, fully offline-testable. Fast to land and verify.*
+
+> 🔶 **Shipped 2026-06-05** — `ExactMatchMetric`, `StringPresenceMetric`, `StringSimilarityMetric`,
+> `BleuScoreMetric` (real BLEU-4), `ChrfScoreMetric` (real chrF, char n-gram F-β=2) are real
+> `impl Metric` in `src/metric.rs` (BLEU/chrF math in `src/metrics/traditional`), offline
+> unit-tested. **Deferred** — items needing a `SingleTurnSample` schema addition the struct lacks
+> today (`reference_contexts` list / context-ID field): NonLLM context precision & recall,
+> IDBasedContextRecall. Do those together with the schema change.
 
 | Metric | Effort | Value | Approach |
 |---|---|---|---|
