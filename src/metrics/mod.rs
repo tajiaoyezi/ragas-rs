@@ -28,8 +28,9 @@ pub use result::{
     ScoreNormalizationPolicy, normalize_score,
 };
 pub use traditional::{
-    QuotedSpan, RougeMode, RougeScore, RougeScores, RougeType, SemanticThresholdPolicy,
-    bleu_unigram, chrf_score, exact_match, extract_quoted_spans, lexical_tokenizer_assumptions,
-    quoted_citation_coverage, quoted_span_overlap, rouge_l_recall, semantic_similarity_batch,
-    semantic_similarity_from_vectors, string_distance_similarity, threshold_semantic_similarity,
+    QuotedSpan, RougeMode, RougeScore, RougeScores, RougeType, SemanticThresholdPolicy, bleu_score,
+    bleu_unigram, chrf, chrf_score, exact_match, extract_quoted_spans,
+    lexical_tokenizer_assumptions, quoted_citation_coverage, quoted_span_overlap, rouge_l_recall,
+    semantic_similarity_batch, semantic_similarity_from_vectors, string_distance_similarity,
+    threshold_semantic_similarity,
 };

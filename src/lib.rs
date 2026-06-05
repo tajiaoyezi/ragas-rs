@@ -57,10 +57,10 @@ pub use llm::{
     parse_embedding_response,
 };
 pub use metric::{
-    AnswerAccuracyMetric, AnswerCorrectnessMetric, AspectCriticMetric, ContextPrecisionMetric,
-    ContextUtilizationMetric, ExactMatchMetric, FaithfulnessMetric, FnMetric,
-    LlmContextRecallMetric, Metric, MetricResult, MetricValue, RankingItem,
-    ResponseRelevancyMetric, SimpleCriteriaScoreMetric, SqlSemanticEquivalenceMetric,
+    AnswerAccuracyMetric, AnswerCorrectnessMetric, AspectCriticMetric, BleuScoreMetric,
+    ChrfScoreMetric, ContextPrecisionMetric, ContextUtilizationMetric, ExactMatchMetric,
+    FaithfulnessMetric, FnMetric, LlmContextRecallMetric, Metric, MetricResult, MetricValue,
+    RankingItem, ResponseRelevancyMetric, SimpleCriteriaScoreMetric, SqlSemanticEquivalenceMetric,
     StringPresenceMetric, StringSimilarityMetric, cosine_similarity,
 };
 pub use metrics::{
@@ -73,9 +73,9 @@ pub use metrics::{
     ScoreNormalizationPolicy, SemanticThresholdPolicy, SingleTurnMetric, SqlJudgeVerdict,
     SummarizationSignals, ToolCallOrderPolicy, TopicAdherence, agent_goal_accuracy,
     answer_correctness, answer_relevancy_from_embedding_similarity,
-    answer_relevancy_from_judge_output, bleu_unigram, chrf_score, context_entity_recall,
-    context_precision_from_relevance, context_recall, context_relevance, exact_match,
-    extract_quoted_spans, factual_correctness, id_based_context_precision,
+    answer_relevancy_from_judge_output, bleu_score, bleu_unigram, chrf, chrf_score,
+    context_entity_recall, context_precision_from_relevance, context_recall, context_relevance,
+    exact_match, extract_quoted_spans, factual_correctness, id_based_context_precision,
     lexical_tokenizer_assumptions, multimodal_metric_from_prompt, noise_sensitivity,
     normalize_score, quoted_citation_coverage, quoted_span_overlap, response_groundedness,
     rouge_l_recall, score_aspect_critic, semantic_similarity_batch,

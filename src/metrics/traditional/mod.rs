@@ -590,6 +590,131 @@ pub fn quoted_citation_coverage(answer: &str, sources: &[String]) -> DetailedMet
     )
 }
 
+/// Build the contiguous character `n`-grams of `chars` as joined strings (multiset elements).
+fn char_ngrams(chars: &[char], n: usize) -> Vec<String> {
+    if n == 0 || chars.len() < n {
+        return Vec::new();
+    }
+    chars
+        .windows(n)
+        .map(|window| window.iter().collect::<String>())
+        .collect()
+}
+
+/// BLEU-4 (functional, not sacrebleu byte-parity): the geometric mean of modified n-gram
+/// precisions for n = 1..=4 with a brevity penalty, over the whitespace+lowercase tokenizer.
+/// With no smoothing a zero match at any order yields 0.0 (plain sentence BLEU).
+pub fn bleu_score(candidate: &str, reference: &str) -> DetailedMetricResult {
+    let candidate_tokens = whitespace_lowercase_tokens(candidate);
+    let reference_tokens = whitespace_lowercase_tokens(reference);
+
+    if candidate_tokens.is_empty() && reference_tokens.is_empty() {
+        return numeric_result(
+            "bleu",
+            1.0,
+            "both strings empty under whitespace-lowercase tokenizer",
+            Vec::new(),
+        );
+    }
+    if candidate_tokens.is_empty() || reference_tokens.is_empty() {
+        return numeric_result("bleu", 0.0, "one side has no tokens", Vec::new());
+    }
+
+    const MAX_N: usize = 4;
+    let mut log_precision_sum = 0.0f64;
+    for n in 1..=MAX_N {
+        let candidate_ngrams = ngrams(&candidate_tokens, n);
+        if candidate_ngrams.is_empty() {
+            return numeric_result(
+                "bleu",
+                0.0,
+                format!("candidate shorter than the {n}-gram order"),
+                Vec::new(),
+            );
+        }
+        let clipped = multiset_overlap(&candidate_ngrams, &ngrams(&reference_tokens, n));
+        if clipped == 0 {
+            return numeric_result("bleu", 0.0, format!("no overlapping {n}-grams"), Vec::new());
+        }
+        log_precision_sum += (clipped as f64 / candidate_ngrams.len() as f64).ln();
+    }
+    let geometric_mean = (log_precision_sum / MAX_N as f64).exp();
+
+    let candidate_len = candidate_tokens.len() as f64;
+    let reference_len = reference_tokens.len() as f64;
+    let brevity_penalty = if candidate_len > reference_len {
+        1.0
+    } else {
+        (1.0 - reference_len / candidate_len).exp()
+    };
+
+    numeric_result(
+        "bleu",
+        (brevity_penalty * geometric_mean).clamp(0.0, 1.0),
+        format!("BLEU-4 (bp={brevity_penalty:.4}, geo_mean={geometric_mean:.4})"),
+        Vec::new(),
+    )
+}
+
+/// chrF (functional): the character n-gram F-beta score (beta = 2) averaged over n = 1..=6 —
+/// the standard chrF configuration. Whitespace is ignored and characters are lowercased.
+pub fn chrf(candidate: &str, reference: &str) -> DetailedMetricResult {
+    let candidate_chars = character_unigrams(candidate);
+    let reference_chars = character_unigrams(reference);
+
+    if candidate_chars.is_empty() && reference_chars.is_empty() {
+        return numeric_result(
+            "chrf",
+            1.0,
+            "both strings empty under the character tokenizer",
+            Vec::new(),
+        );
+    }
+    if candidate_chars.is_empty() || reference_chars.is_empty() {
+        return numeric_result("chrf", 0.0, "one side has no characters", Vec::new());
+    }
+
+    const MAX_N: usize = 6;
+    const BETA_SQUARED: f64 = 4.0; // beta = 2
+    let mut precision_sum = 0.0f64;
+    let mut recall_sum = 0.0f64;
+    let mut orders = 0usize;
+    for n in 1..=MAX_N {
+        let candidate_ngrams = char_ngrams(&candidate_chars, n);
+        let reference_ngrams = char_ngrams(&reference_chars, n);
+        if candidate_ngrams.is_empty() || reference_ngrams.is_empty() {
+            continue;
+        }
+        let overlap = multiset_overlap(&candidate_ngrams, &reference_ngrams) as f64;
+        precision_sum += overlap / candidate_ngrams.len() as f64;
+        recall_sum += overlap / reference_ngrams.len() as f64;
+        orders += 1;
+    }
+    if orders == 0 {
+        return numeric_result(
+            "chrf",
+            0.0,
+            "no comparable character n-gram orders",
+            Vec::new(),
+        );
+    }
+    let precision = precision_sum / orders as f64;
+    let recall = recall_sum / orders as f64;
+    let denominator = BETA_SQUARED * precision + recall;
+    let score = if denominator == 0.0 {
+        0.0
+    } else {
+        (1.0 + BETA_SQUARED) * precision * recall / denominator
+    };
+
+    numeric_result(
+        "chrf",
+        score.clamp(0.0, 1.0),
+        format!("chrF (beta=2, n<=6, precision={precision:.4}, recall={recall:.4})"),
+        Vec::new(),
+    )
+}
+
 fn numeric_result(
     metric_name: &str,
     score: f64,

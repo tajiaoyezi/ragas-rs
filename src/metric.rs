@@ -1351,6 +1351,87 @@ impl Metric for StringSimilarityMetric {
     }
 }
 
+/// BleuScore — deterministic BLEU-4 between response and reference. Reuses [`crate::bleu_score`].
+pub struct BleuScoreMetric;
+
+impl Default for BleuScoreMetric {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BleuScoreMetric {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl Metric for BleuScoreMetric {
+    fn name(&self) -> &str {
+        "bleu_score"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::Response, SampleField::Reference],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let reference = require_reference(sample, self.name())?;
+        let score = crate::bleu_score(&sample.response, reference)
+            .score
+            .unwrap_or(0.0);
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score))
+                .with_reason("BLEU-4 (deterministic, functional)"),
+        )
+    }
+}
+
+/// ChrfScore — deterministic chrF (character n-gram F-beta, beta=2) between response and
+/// reference. Reuses [`crate::chrf`].
+pub struct ChrfScoreMetric;
+
+impl Default for ChrfScoreMetric {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ChrfScoreMetric {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl Metric for ChrfScoreMetric {
+    fn name(&self) -> &str {
+        "chrf"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::Response, SampleField::Reference],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let reference = require_reference(sample, self.name())?;
+        let score = crate::chrf(&sample.response, reference)
+            .score
+            .unwrap_or(0.0);
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score))
+                .with_reason("chrF (deterministic, functional)"),
+        )
+    }
+}
+
 pub fn cosine_similarity(left: &[f32], right: &[f32]) -> f64 {
     let len = left.len().min(right.len());
     if len == 0 {
@@ -2803,5 +2884,55 @@ mod tests {
         assert!(ExactMatchMetric::new().score(&no_ref).await.is_err());
         assert!(StringPresenceMetric::new().score(&no_ref).await.is_err());
         assert!(StringSimilarityMetric::new().score(&no_ref).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn bleu_and_chrf_metrics_discriminate_match_from_mismatch() {
+        let identical =
+            SingleTurnSample::new("q", "the quick brown fox jumps", vec!["c".to_string()])
+                .with_reference("the quick brown fox jumps");
+        let disjoint =
+            SingleTurnSample::new("q", "alpha beta gamma delta epsilon", vec!["c".to_string()])
+                .with_reference("the quick brown fox jumps");
+
+        // BLEU-4: identical multi-token text -> 1.0; disjoint -> 0.0.
+        let bleu = BleuScoreMetric::new();
+        assert_eq!(bleu.name(), "bleu_score");
+        assert!((numeric(&bleu.score(&identical).await.expect("bleu id")) - 1.0).abs() < 1e-9);
+        assert_eq!(
+            numeric(&bleu.score(&disjoint).await.expect("bleu disjoint")),
+            0.0
+        );
+
+        // chrF: identical -> 1.0; a near string scores strictly higher than a disjoint one.
+        let chrf = ChrfScoreMetric::new();
+        assert_eq!(chrf.name(), "chrf");
+        assert!((numeric(&chrf.score(&identical).await.expect("chrf id")) - 1.0).abs() < 1e-9);
+        let near = SingleTurnSample::new("q", "the quick brown fox", vec!["c".to_string()])
+            .with_reference("the quick brown fox jumps");
+        let far = SingleTurnSample::new("q", "zzzzzzzz", vec!["c".to_string()])
+            .with_reference("the quick brown fox jumps");
+        let near_score = numeric(&chrf.score(&near).await.expect("chrf near"));
+        let far_score = numeric(&chrf.score(&far).await.expect("chrf far"));
+        assert!(near_score > far_score, "near={near_score} far={far_score}");
+    }
+
+    #[test]
+    fn bleu_and_chrf_functions_handle_edges() {
+        use crate::{bleu_score, chrf};
+        // Both empty -> 1.0 (perfect match of nothing); one empty -> 0.0.
+        assert_eq!(bleu_score("", "").score.unwrap(), 1.0);
+        assert_eq!(chrf("", "").score.unwrap(), 1.0);
+        assert_eq!(bleu_score("hello world", "").score.unwrap(), 0.0);
+        assert_eq!(chrf("hello", "").score.unwrap(), 0.0);
+        // Candidate shorter than the 4-gram order -> BLEU-4 is 0 (no smoothing).
+        assert_eq!(
+            bleu_score("two tokens", "two tokens only here")
+                .score
+                .unwrap(),
+            0.0
+        );
+        // chrF on an identical short string -> 1.0 (longer orders are skipped gracefully).
+        assert!((chrf("abc", "abc").score.unwrap() - 1.0).abs() < 1e-9);
     }
 }
