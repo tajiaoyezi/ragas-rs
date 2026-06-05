@@ -8,9 +8,10 @@ A prioritized plan to maximize **functional replication** of the Python
 > review. Baseline numbers were verified directly against the source.
 
 **Status:** Phase 1 ✅; Phase 2 ✅ (deterministic + NonLLM context pair; only the low-value
-ID-based variant deferred); Phase 3 ✅ (7/7) — all LLM metrics live-verified vs DeepSeek. Plus
-`context_utilization` wired into the `ragas evaluate` CLI default. Wired metric count **5 → 25** of
-~39 (2026-06-05); all on `main`.
+ID-based variant deferred); Phase 3 ✅ (7/7) — all LLM metrics live-verified vs DeepSeek;
+`context_utilization` wired into the `ragas evaluate` CLI default. Phase 5 🔶 (retry/timeout +
+caching decorators shipped; 2 of 3 critical bugs fixed). Wired metric count **5 → 25** of ~39
+(2026-06-05); all on `main`.
 
 ## Goal & non-goals
 
@@ -141,10 +142,21 @@ additions (`reference_topics`) + transcript renderers. Share a transcript render
 | **TopicAdherenceScore** | L | medium | 3-stage pipeline (topic extraction, refusal detection, in-scope classification) + P/R/F1, plus `reference_topics` on `MultiTurnSample`. |
 | **DataCompyScore** | M | medium | Parse reference/response as CSV strings, on-index row equality + per-column unequal count, P/R/F1 modes. Needs a `csv` crate (already a dep). |
 
-## Phase 5 — Runtime/backend hardening + prompt-system fidelity
+## Phase 5 — Runtime/backend hardening + prompt-system fidelity 🔶 IN PROGRESS
 
 *Makes the existing pipeline robust and faithful rather than adding metrics. Several are **CRITICAL
 latent bugs** — high value because they affect every metric.*
+
+> 🔶 **Shipped 2026-06-05** — `src/resilience.rs`: `ResilientLlmProvider` /
+> `ResilientEmbeddingProvider` (retry w/ exponential backoff + per-operation timeout, built from
+> `RetryConfig`/`TimeoutConfig` or a `RunConfig`) and `CachingLlmProvider` /
+> `CachingEmbeddingProvider` (in-memory memoization) — composable, opt-in, deterministically
+> tested. This makes the previously-dead `RunConfig.retry`/`timeout` take effect and adds the
+> caching layer nothing wired before (2 of the 3 critical bugs). **Remaining:** FixOutputFormat
+> LLM-repair on parse failure + typed `LLMDidNotFinishException` (a parse-path change touching the
+> metrics' `parse_json` calls — deferred for a careful refactor), `evaluate()` options
+> (column_map / raise_exceptions / token parser / init), per-provider TokenUsageParser + cost on
+> report, tiktoken-rs tokenizer, and the PydanticPrompt renderer + Loss foundation.
 
 | Item | Effort | Value | Approach |
 |---|---|---|---|
