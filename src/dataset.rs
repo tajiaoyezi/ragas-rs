@@ -10,6 +10,10 @@ pub struct SingleTurnSample {
     pub response: String,
     pub retrieved_contexts: Vec<String>,
     pub reference: Option<String>,
+    /// Ground-truth reference contexts (used by the non-LLM context precision/recall metrics).
+    /// Optional: omitted from JSONL when empty, so existing datasets are unaffected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reference_contexts: Vec<String>,
     pub metadata: HashMap<String, String>,
 }
 
@@ -24,12 +28,18 @@ impl SingleTurnSample {
             response: response.into(),
             retrieved_contexts,
             reference: None,
+            reference_contexts: Vec::new(),
             metadata: HashMap::new(),
         }
     }
 
     pub fn with_reference(mut self, reference: impl Into<String>) -> Self {
         self.reference = Some(reference.into());
+        self
+    }
+
+    pub fn with_reference_contexts(mut self, reference_contexts: Vec<String>) -> Self {
+        self.reference_contexts = reference_contexts;
         self
     }
 
@@ -377,6 +387,32 @@ mod tests {
             sample.metadata.get("source").map(String::as_str),
             Some("unit-test")
         );
+    }
+
+    #[test]
+    fn reference_contexts_round_trip_through_jsonl_and_default_when_absent() {
+        let sample = SingleTurnSample::new("q", "a", vec!["ctx".to_string()])
+            .with_reference_contexts(vec!["ref-ctx-1".to_string(), "ref-ctx-2".to_string()]);
+        assert_eq!(sample.reference_contexts.len(), 2);
+
+        let dataset = EvaluationDatasetBuilder::new()
+            .add_single_turn(sample)
+            .build()
+            .expect("dataset");
+        let jsonl = dataset.to_jsonl_string().expect("jsonl");
+        assert!(jsonl.contains("reference_contexts"));
+        let restored =
+            EvaluationDataset::<EvaluationSample>::from_jsonl_str(&jsonl).expect("read jsonl");
+        assert_eq!(restored.samples(), dataset.samples());
+
+        // A line WITHOUT reference_contexts deserializes to an empty vec (backward compatible).
+        let legacy = r#"{"sample_type":"single_turn","user_input":"q","response":"a","retrieved_contexts":["c"],"metadata":{}}"#;
+        let legacy_dataset =
+            EvaluationDataset::<EvaluationSample>::from_jsonl_str(legacy).expect("legacy");
+        match &legacy_dataset.samples()[0] {
+            EvaluationSample::SingleTurn(single) => assert!(single.reference_contexts.is_empty()),
+            other => panic!("expected single turn, got {other:?}"),
+        }
     }
 
     #[test]

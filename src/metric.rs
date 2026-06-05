@@ -2148,6 +2148,147 @@ impl Metric for ChrfScoreMetric {
     }
 }
 
+/// Maximum normalized string-distance similarity of `text` against any of `candidates`.
+fn max_string_similarity(text: &str, candidates: &[String]) -> f64 {
+    candidates
+        .iter()
+        .map(|candidate| {
+            crate::string_distance_similarity(text, candidate)
+                .score
+                .unwrap_or(0.0)
+        })
+        .fold(0.0f64, f64::max)
+}
+
+const NON_LLM_CONTEXT_THRESHOLD: f64 = 0.5;
+
+/// NonLLMContextPrecisionWithReference — deterministic Average Precision@k. A retrieved context
+/// is "relevant" when its normalized string similarity to ANY `reference_contexts` entry is at
+/// least `threshold` (default 0.5). No provider needed.
+pub struct NonLlmContextPrecisionMetric {
+    threshold: f64,
+}
+
+impl Default for NonLlmContextPrecisionMetric {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NonLlmContextPrecisionMetric {
+    pub fn new() -> Self {
+        Self {
+            threshold: NON_LLM_CONTEXT_THRESHOLD,
+        }
+    }
+
+    pub fn with_threshold(mut self, threshold: f64) -> Self {
+        self.threshold = threshold;
+        self
+    }
+}
+
+#[async_trait]
+impl Metric for NonLlmContextPrecisionMetric {
+    fn name(&self) -> &str {
+        "non_llm_context_precision"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(self.name(), vec![SampleField::RetrievedContexts])
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        if sample.reference_contexts.is_empty() {
+            return Err(RagasError::Parse {
+                message: "non_llm_context_precision requires reference_contexts".to_string(),
+            });
+        }
+        if sample.retrieved_contexts.is_empty() {
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(0.0))
+                    .with_reason("sample has no retrieved contexts"),
+            );
+        }
+        let verdicts: Vec<i64> = sample
+            .retrieved_contexts
+            .iter()
+            .map(|retrieved| {
+                let similar =
+                    max_string_similarity(retrieved, &sample.reference_contexts) >= self.threshold;
+                i64::from(similar)
+            })
+            .collect();
+        let relevant = verdicts.iter().filter(|verdict| **verdict == 1).count();
+        Ok(MetricResult::success(
+            self.name(),
+            MetricValue::numeric(average_precision_at_k(&verdicts)),
+        )
+        .with_reason(format!(
+            "average precision@k over {relevant}/{} relevant context(s)",
+            verdicts.len()
+        )))
+    }
+}
+
+/// NonLLMContextRecall — fraction of `reference_contexts` that are covered by some retrieved
+/// context (normalized string similarity >= `threshold`, default 0.5). Deterministic.
+pub struct NonLlmContextRecallMetric {
+    threshold: f64,
+}
+
+impl Default for NonLlmContextRecallMetric {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NonLlmContextRecallMetric {
+    pub fn new() -> Self {
+        Self {
+            threshold: NON_LLM_CONTEXT_THRESHOLD,
+        }
+    }
+
+    pub fn with_threshold(mut self, threshold: f64) -> Self {
+        self.threshold = threshold;
+        self
+    }
+}
+
+#[async_trait]
+impl Metric for NonLlmContextRecallMetric {
+    fn name(&self) -> &str {
+        "non_llm_context_recall"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(self.name(), vec![SampleField::RetrievedContexts])
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        if sample.reference_contexts.is_empty() {
+            return Err(RagasError::Parse {
+                message: "non_llm_context_recall requires reference_contexts".to_string(),
+            });
+        }
+        let covered = sample
+            .reference_contexts
+            .iter()
+            .filter(|reference| {
+                max_string_similarity(reference, &sample.retrieved_contexts) >= self.threshold
+            })
+            .count();
+        let total = sample.reference_contexts.len();
+        let score = covered as f64 / total as f64;
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score)).with_reason(format!(
+                "{covered}/{total} reference contexts covered by the retrieved contexts"
+            )),
+        )
+    }
+}
+
 pub fn cosine_similarity(left: &[f32], right: &[f32]) -> f64 {
     let len = left.len().min(right.len());
     if len == 0 {
@@ -4011,6 +4152,74 @@ the surface while Collins stayed in orbit.",
         assert!(
             noisy_score > clean_score,
             "noisy={noisy_score} clean={clean_score}"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // NonLLM context precision/recall — deterministic, use reference_contexts.
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn non_llm_context_precision_and_recall_use_string_similarity() {
+        let sample = SingleTurnSample::new(
+            "q",
+            "resp",
+            vec![
+                "the quick brown fox".to_string(),
+                "totally unrelated content here".to_string(),
+            ],
+        )
+        .with_reference_contexts(vec!["the quick brown fox".to_string()]);
+
+        // retrieved[0] matches the reference (sim 1.0), retrieved[1] does not -> [1,0] -> AP = 1.0.
+        let precision = NonLlmContextPrecisionMetric::new();
+        assert_eq!(
+            numeric(&precision.score(&sample).await.expect("precision")),
+            1.0
+        );
+
+        // the single reference context is covered by retrieved[0] -> recall 1/1 = 1.0.
+        let recall = NonLlmContextRecallMetric::new();
+        assert_eq!(numeric(&recall.score(&sample).await.expect("recall")), 1.0);
+    }
+
+    #[tokio::test]
+    async fn non_llm_context_metrics_discriminate_and_require_reference_contexts() {
+        // No reference_contexts -> error.
+        let no_ref = SingleTurnSample::new("q", "resp", vec!["c".to_string()]);
+        assert!(
+            NonLlmContextPrecisionMetric::new()
+                .score(&no_ref)
+                .await
+                .is_err()
+        );
+        assert!(
+            NonLlmContextRecallMetric::new()
+                .score(&no_ref)
+                .await
+                .is_err()
+        );
+
+        // Retrieved context unrelated to the reference -> precision and recall both 0.
+        let miss = SingleTurnSample::new("q", "resp", vec!["apples and oranges".to_string()])
+            .with_reference_contexts(vec!["the quick brown fox".to_string()]);
+        assert_eq!(
+            numeric(
+                &NonLlmContextPrecisionMetric::new()
+                    .score(&miss)
+                    .await
+                    .expect("p")
+            ),
+            0.0
+        );
+        assert_eq!(
+            numeric(
+                &NonLlmContextRecallMetric::new()
+                    .score(&miss)
+                    .await
+                    .expect("r")
+            ),
+            0.0
         );
     }
 }
