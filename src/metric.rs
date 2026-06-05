@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::validation::{MetricRequirements, SampleField};
 use crate::{
-    ChatMessage, EmbeddingProvider, EmbeddingRequest, LlmProvider, LlmRequest, RagasError,
-    SingleTurnSample,
+    AnswerCorrectnessWeights, ChatMessage, EmbeddingProvider, EmbeddingRequest,
+    FactualCorrectnessCounts, LlmProvider, LlmRequest, RagasError, SingleTurnSample,
+    answer_correctness,
 };
 
 pub type BoxMetricFuture = Pin<Box<dyn Future<Output = Result<MetricResult, RagasError>> + Send>>;
@@ -646,6 +647,567 @@ struct ContextRecallOutput {
 struct ContextRecallClassification {
     #[serde(default)]
     verdict: i64,
+}
+
+// ============================================================================
+// Phase 1 metrics (docs/parity-roadmap.md) — LLM-judged variants that reuse the
+// scaffolding above. Each is a real `impl Metric`, usable in `evaluate()`.
+// ============================================================================
+
+/// Average Precision@k over per-context relevance verdicts in retrieval order:
+/// `precision@k` is accumulated only at relevant ranks and divided by the total
+/// number of relevant contexts. Returns 0.0 when nothing is relevant.
+fn average_precision_at_k(verdicts: &[i64]) -> f64 {
+    let total_relevant = verdicts.iter().filter(|verdict| **verdict == 1).count();
+    if total_relevant == 0 {
+        return 0.0;
+    }
+    let mut relevant_seen = 0usize;
+    let mut precision_sum = 0.0f64;
+    for (index, verdict) in verdicts.iter().enumerate() {
+        if *verdict == 1 {
+            relevant_seen += 1;
+            precision_sum += relevant_seen as f64 / (index + 1) as f64;
+        }
+    }
+    precision_sum / total_relevant as f64
+}
+
+/// Append the optional CONTEXT / REFERENCE fields to a judge prompt when present.
+fn optional_fields_block(sample: &SingleTurnSample) -> String {
+    let mut block = String::new();
+    if !sample.retrieved_contexts.is_empty() {
+        block.push_str(&format!(
+            "\nCONTEXT:\n{}",
+            sample.retrieved_contexts.join("\n")
+        ));
+    }
+    if let Some(reference) = sample.reference.as_deref()
+        && !reference.trim().is_empty()
+    {
+        block.push_str(&format!("\nREFERENCE: {reference}"));
+    }
+    block
+}
+
+#[derive(Debug, Deserialize)]
+struct BinaryVerdict {
+    #[serde(default)]
+    verdict: i64,
+}
+
+/// LLMContextPrecisionWithoutReference / ContextUtilization.
+///
+/// Like [`ContextPrecisionMetric`] but needs no ground-truth reference: each retrieved
+/// context is judged for usefulness against the RESPONSE, then scored with Average
+/// Precision@k in retrieval order. This is the common production case (no labels).
+pub struct ContextUtilizationMetric {
+    llm: Arc<dyn LlmProvider>,
+}
+
+impl ContextUtilizationMetric {
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self { llm }
+    }
+
+    /// Ask the LLM, once per retrieved context, whether it helped reach the response.
+    async fn verify_contexts(&self, sample: &SingleTurnSample) -> Result<Vec<i64>, RagasError> {
+        let mut verdicts = Vec::with_capacity(sample.retrieved_contexts.len());
+        for context in &sample.retrieved_contexts {
+            let prompt = format!(
+                "Given a QUESTION, an ANSWER, and a CONTEXT, decide whether the context was \
+useful to arrive at the answer. Use verdict 1 when the context is useful, 0 otherwise. \
+Return only JSON of the form {{\"verdict\": 0, \"reason\": \"...\"}}.\n\n\
+QUESTION: {}\nANSWER: {}\nCONTEXT: {context}",
+                sample.user_input, sample.response,
+            );
+            let response = self
+                .llm
+                .generate(LlmRequest {
+                    messages: vec![ChatMessage::user(prompt)],
+                    temperature: Some(0.0),
+                })
+                .await?;
+            let parsed: BinaryVerdict =
+                parse_json(&response.content, "context utilization verdict")?;
+            verdicts.push(parsed.verdict);
+        }
+        Ok(verdicts)
+    }
+}
+
+#[async_trait]
+impl Metric for ContextUtilizationMetric {
+    fn name(&self) -> &str {
+        "context_utilization"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![
+                SampleField::UserInput,
+                SampleField::Response,
+                SampleField::RetrievedContexts,
+            ],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        if sample.retrieved_contexts.is_empty() {
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(0.0))
+                    .with_reason("sample has no retrieved contexts"),
+            );
+        }
+        let verdicts = self.verify_contexts(sample).await?;
+        let useful = verdicts.iter().filter(|verdict| **verdict == 1).count();
+        Ok(MetricResult::success(
+            self.name(),
+            MetricValue::numeric(average_precision_at_k(&verdicts)),
+        )
+        .with_reason(format!(
+            "average precision@k over {useful}/{} useful context(s)",
+            verdicts.len()
+        )))
+    }
+}
+
+/// AspectCritic — a binary LLM judge over a user-defined CRITERION. With `strictness > 1`
+/// the criterion is judged multiple times and the majority verdict is taken. Score is 1.0
+/// when the submission meets the criterion, 0.0 otherwise.
+pub struct AspectCriticMetric {
+    llm: Arc<dyn LlmProvider>,
+    name: String,
+    definition: String,
+    strictness: usize,
+}
+
+impl AspectCriticMetric {
+    pub fn new(
+        name: impl Into<String>,
+        definition: impl Into<String>,
+        llm: Arc<dyn LlmProvider>,
+    ) -> Self {
+        Self {
+            llm,
+            name: name.into(),
+            definition: definition.into(),
+            strictness: 1,
+        }
+    }
+
+    pub fn with_strictness(mut self, strictness: usize) -> Self {
+        self.strictness = strictness.max(1);
+        self
+    }
+
+    async fn judge_once(&self, sample: &SingleTurnSample) -> Result<i64, RagasError> {
+        let prompt = format!(
+            "Evaluate whether the SUBMISSION meets the CRITERION. \
+Use verdict 1 when it meets the criterion, 0 otherwise. \
+Return only JSON of the form {{\"verdict\": 0, \"reason\": \"...\"}}.\n\n\
+CRITERION: {}\n\nQUESTION: {}\nSUBMISSION: {}{}",
+            self.definition,
+            sample.user_input,
+            sample.response,
+            optional_fields_block(sample),
+        );
+        let response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        let parsed: BinaryVerdict = parse_json(&response.content, "aspect critic verdict")?;
+        Ok(parsed.verdict)
+    }
+}
+
+#[async_trait]
+impl Metric for AspectCriticMetric {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::UserInput, SampleField::Response],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let mut positive = 0usize;
+        for _ in 0..self.strictness {
+            if self.judge_once(sample).await? == 1 {
+                positive += 1;
+            }
+        }
+        // Strict majority across `strictness` calls (ties resolve to 0).
+        let verdict = if positive * 2 > self.strictness {
+            1.0
+        } else {
+            0.0
+        };
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(verdict)).with_reason(format!(
+                "{positive}/{} judge call(s) returned a positive verdict",
+                self.strictness
+            )),
+        )
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SimpleCriteriaOutput {
+    #[serde(default)]
+    score: f64,
+}
+
+/// SimpleCriteriaScore — a single-call LLM judge that returns an integer score on a
+/// user-defined scale (e.g. 0–5). Unlike AspectCritic the score is the raw rating, not a
+/// normalized 0/1 (it is stored as-is).
+pub struct SimpleCriteriaScoreMetric {
+    llm: Arc<dyn LlmProvider>,
+    name: String,
+    definition: String,
+}
+
+impl SimpleCriteriaScoreMetric {
+    pub fn new(
+        name: impl Into<String>,
+        definition: impl Into<String>,
+        llm: Arc<dyn LlmProvider>,
+    ) -> Self {
+        Self {
+            llm,
+            name: name.into(),
+            definition: definition.into(),
+        }
+    }
+}
+
+#[async_trait]
+impl Metric for SimpleCriteriaScoreMetric {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::UserInput, SampleField::Response],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let prompt = format!(
+            "Score the SUBMISSION against the CRITERION. \
+Return only JSON of the form {{\"score\": 0, \"reason\": \"...\"}} \
+where score is an integer that follows the criterion's scale.\n\n\
+CRITERION: {}\n\nQUESTION: {}\nSUBMISSION: {}{}",
+            self.definition,
+            sample.user_input,
+            sample.response,
+            optional_fields_block(sample),
+        );
+        let response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        let parsed: SimpleCriteriaOutput = parse_json(&response.content, "simple criteria score")?;
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(parsed.score))
+                .with_reason(format!("criterion '{}' scored {}", self.name, parsed.score)),
+        )
+    }
+}
+
+/// SQL semantic equivalence (LLM judge). The RESPONSE is the produced SQL and the
+/// REFERENCE the expected SQL; any retrieved contexts are treated as the database schema.
+/// Normalized exact-match short-circuits to 1.0 without an LLM call; otherwise the LLM
+/// judges whether the two queries are semantically equivalent (verdict 1 / 0).
+pub struct SqlSemanticEquivalenceMetric {
+    llm: Arc<dyn LlmProvider>,
+}
+
+impl SqlSemanticEquivalenceMetric {
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self { llm }
+    }
+}
+
+/// Cheap normalization for the exact-match pre-check: lowercase, collapse whitespace,
+/// and drop a trailing semicolon. Not a full SQL parser — just a fast equivalence gate.
+fn normalize_sql(sql: &str) -> String {
+    let lowered = sql.to_lowercase();
+    let collapsed = lowered.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed.trim().trim_end_matches(';').trim().to_string()
+}
+
+#[async_trait]
+impl Metric for SqlSemanticEquivalenceMetric {
+    fn name(&self) -> &str {
+        "sql_semantic_equivalence"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::Response, SampleField::Reference],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let reference = match sample.reference.as_deref() {
+            Some(reference) if !reference.trim().is_empty() => reference,
+            _ => {
+                return Err(RagasError::Parse {
+                    message: "sql semantic equivalence requires a non-empty reference".to_string(),
+                });
+            }
+        };
+
+        // Exact match on normalized SQL: equivalent without spending an LLM call.
+        if normalize_sql(&sample.response) == normalize_sql(reference) {
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(1.0))
+                    .with_reason("normalized SQL exact match"),
+            );
+        }
+
+        let schema = if sample.retrieved_contexts.is_empty() {
+            "(no schema provided)".to_string()
+        } else {
+            sample.retrieved_contexts.join("\n")
+        };
+        let prompt = format!(
+            "Decide whether the ACTUAL SQL query is semantically equivalent to the EXPECTED SQL \
+query for the given DATABASE SCHEMA. They may differ in formatting, aliases, or column order \
+but must return the same result set. Use verdict 1 when equivalent, 0 otherwise. \
+Return only JSON of the form {{\"verdict\": 0, \"reason\": \"...\"}}.\n\n\
+DATABASE SCHEMA:\n{schema}\n\nEXPECTED SQL: {reference}\nACTUAL SQL: {}",
+            sample.response,
+        );
+        let response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        let parsed: BinaryVerdict = parse_json(&response.content, "sql equivalence verdict")?;
+        let score = if parsed.verdict == 1 { 1.0 } else { 0.0 };
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score))
+                .with_reason("LLM judged SQL semantic equivalence"),
+        )
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct FactualClassification {
+    #[serde(rename = "TP", default)]
+    true_positive: Vec<String>,
+    #[serde(rename = "FP", default)]
+    false_positive: Vec<String>,
+    #[serde(rename = "FN", default)]
+    false_negative: Vec<String>,
+}
+
+/// AnswerCorrectness — a weighted blend of factual F1 and semantic similarity against a
+/// reference answer. Step 1: the LLM classifies statements into TP/FP/FN (claims shared,
+/// claims only in the answer, claims only in the reference). Step 2: embeddings give the
+/// cosine similarity between response and reference. The two are combined by the tested
+/// [`answer_correctness`] formula (default weights: factual 0.75, semantic 0.25).
+pub struct AnswerCorrectnessMetric {
+    llm: Arc<dyn LlmProvider>,
+    embedding: Arc<dyn EmbeddingProvider>,
+}
+
+impl AnswerCorrectnessMetric {
+    pub fn new(llm: Arc<dyn LlmProvider>, embedding: Arc<dyn EmbeddingProvider>) -> Self {
+        Self { llm, embedding }
+    }
+
+    async fn classify(
+        &self,
+        sample: &SingleTurnSample,
+        reference: &str,
+    ) -> Result<FactualClassification, RagasError> {
+        let prompt = format!(
+            "Compare the ANSWER to the GROUND TRUTH for the QUESTION. Decompose both into atomic \
+statements and classify each statement into one list: \"TP\" (present in both the answer and the \
+ground truth), \"FP\" (present in the answer but not supported by the ground truth), or \"FN\" \
+(present in the ground truth but missing from the answer). Return only JSON of the form \
+{{\"TP\": [\"...\"], \"FP\": [\"...\"], \"FN\": [\"...\"]}}.\n\n\
+QUESTION: {}\nANSWER: {}\nGROUND TRUTH: {reference}",
+            sample.user_input, sample.response,
+        );
+        let response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        parse_json(&response.content, "answer correctness classification")
+    }
+}
+
+#[async_trait]
+impl Metric for AnswerCorrectnessMetric {
+    fn name(&self) -> &str {
+        "answer_correctness"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![
+                SampleField::UserInput,
+                SampleField::Response,
+                SampleField::Reference,
+            ],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let reference = match sample.reference.as_deref() {
+            Some(reference) if !reference.trim().is_empty() => reference,
+            _ => {
+                return Err(RagasError::Parse {
+                    message: "answer correctness requires a non-empty reference".to_string(),
+                });
+            }
+        };
+
+        // Step 1 — claim-level TP/FP/FN classification.
+        let classification = self.classify(sample, reference).await?;
+        let counts = FactualCorrectnessCounts::new(
+            classification.true_positive.len(),
+            classification.false_positive.len(),
+            classification.false_negative.len(),
+        );
+
+        // Step 2 — semantic similarity between response and reference.
+        let embedded = self
+            .embedding
+            .embed(EmbeddingRequest {
+                input: vec![sample.response.clone(), reference.to_string()],
+            })
+            .await?;
+        if embedded.embeddings.len() != 2 {
+            return Err(RagasError::Parse {
+                message: "answer correctness embedding count mismatch".to_string(),
+            });
+        }
+        let semantic =
+            cosine_similarity(&embedded.embeddings[0], &embedded.embeddings[1]).clamp(0.0, 1.0);
+
+        // Combine via the tested weighting formula (factual 0.75 / semantic 0.25).
+        let score = answer_correctness(
+            semantic,
+            counts.clone(),
+            AnswerCorrectnessWeights::new(0.25, 0.75),
+        )
+        .score
+        .unwrap_or(0.0);
+
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score)).with_reason(format!(
+                "TP={} FP={} FN={}, semantic={semantic:.3}",
+                counts.true_positive, counts.false_positive, counts.false_negative
+            )),
+        )
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AnswerAccuracyRating {
+    #[serde(default)]
+    rating: i64,
+}
+
+/// AnswerAccuracy (Nvidia `nv_accuracy`) — two LLM rating passes with the answer and
+/// reference swapped between them (to reduce position bias). Each pass rates 0/2/4, is
+/// normalized to [0, 1] (rating / 4), and the two are averaged. Embedding-free.
+pub struct AnswerAccuracyMetric {
+    llm: Arc<dyn LlmProvider>,
+}
+
+impl AnswerAccuracyMetric {
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self { llm }
+    }
+
+    /// One rating pass: how well does `answer` match `reference` for `question`?
+    async fn rate(&self, question: &str, answer: &str, reference: &str) -> Result<f64, RagasError> {
+        let prompt = format!(
+            "Rate how well the ANSWER matches the REFERENCE for the QUESTION. \
+Use 4 = fully correct/equivalent, 2 = partially correct, 0 = incorrect. \
+Return only JSON of the form {{\"rating\": 0, \"reason\": \"...\"}}.\n\n\
+QUESTION: {question}\nREFERENCE: {reference}\nANSWER: {answer}",
+        );
+        let response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        let parsed: AnswerAccuracyRating = parse_json(&response.content, "answer accuracy rating")?;
+        Ok(parsed.rating.clamp(0, 4) as f64 / 4.0)
+    }
+}
+
+#[async_trait]
+impl Metric for AnswerAccuracyMetric {
+    fn name(&self) -> &str {
+        "answer_accuracy"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![
+                SampleField::UserInput,
+                SampleField::Response,
+                SampleField::Reference,
+            ],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let reference = match sample.reference.as_deref() {
+            Some(reference) if !reference.trim().is_empty() => reference,
+            _ => {
+                return Err(RagasError::Parse {
+                    message: "answer accuracy requires a non-empty reference".to_string(),
+                });
+            }
+        };
+
+        // Two passes with answer/reference swapped, then averaged.
+        let forward = self
+            .rate(&sample.user_input, &sample.response, reference)
+            .await?;
+        let swapped = self
+            .rate(&sample.user_input, reference, &sample.response)
+            .await?;
+        let score = (forward + swapped) / 2.0;
+
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score)).with_reason(format!(
+                "mean of two rating passes (forward={forward:.3}, swapped={swapped:.3})"
+            )),
+        )
+    }
 }
 
 pub fn cosine_similarity(left: &[f32], right: &[f32]) -> f64 {
@@ -1682,6 +2244,379 @@ mod tests {
         assert!(
             supported_score > unsupported_score,
             "supported={supported_score} must exceed unsupported={unsupported_score}"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase 1 metrics — unit discrimination (ScriptedLlm, offline).
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn context_utilization_scores_average_precision_without_a_reference() {
+        // Per-context verdicts [1, 0, 1] -> AP = (1/1 + 2/3) / 2 (2 relevant).
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"verdict":1}"#,
+            r#"{"verdict":0}"#,
+            r#"{"verdict":1}"#,
+        ]));
+        let metric = ContextUtilizationMetric::new(llm.clone());
+        let sample = SingleTurnSample::new(
+            "What is Ragas?",
+            "Ragas evaluates LLM applications.",
+            vec!["a".to_string(), "b".to_string(), "c".to_string()],
+        );
+
+        let result = metric.score(&sample).await.expect("context utilization");
+
+        assert_eq!(result.metric_name, "context_utilization");
+        assert!((numeric(&result) - (1.0 + 2.0 / 3.0) / 2.0).abs() < 1e-9);
+        // Judges each context against the RESPONSE (no reference involved).
+        let prompts = llm.prompts();
+        assert_eq!(prompts.len(), 3);
+        assert!(prompts[0].contains("ANSWER: Ragas evaluates LLM applications."));
+    }
+
+    #[tokio::test]
+    async fn context_utilization_all_useless_is_zero_and_empty_skips_llm() {
+        let useless = ContextUtilizationMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"verdict":0}"#,
+            r#"{"verdict":0}"#,
+        ])));
+        let sample = SingleTurnSample::new("q", "resp", vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(
+            numeric(&useless.score(&sample).await.expect("useless")),
+            0.0
+        );
+
+        let llm = Arc::new(ScriptedLlm::new(vec![]));
+        let empty = ContextUtilizationMetric::new(llm.clone());
+        let no_ctx = SingleTurnSample::new("q", "resp", Vec::new());
+        assert_eq!(numeric(&empty.score(&no_ctx).await.expect("empty")), 0.0);
+        assert!(llm.prompts().is_empty());
+    }
+
+    #[tokio::test]
+    async fn aspect_critic_emits_binary_verdict_under_its_configured_name() {
+        let sample = SingleTurnSample::new("q", "resp", vec!["ctx".to_string()]);
+
+        let positive = AspectCriticMetric::new(
+            "on_topic",
+            "Does the submission answer the question?",
+            Arc::new(ScriptedLlm::new(vec![r#"{"verdict":1,"reason":"yes"}"#])),
+        );
+        let result = positive.score(&sample).await.expect("aspect");
+        assert_eq!(result.metric_name, "on_topic");
+        assert_eq!(numeric(&result), 1.0);
+
+        let negative = AspectCriticMetric::new(
+            "on_topic",
+            "Does the submission answer the question?",
+            Arc::new(ScriptedLlm::new(vec![r#"{"verdict":0}"#])),
+        );
+        assert_eq!(
+            numeric(&negative.score(&sample).await.expect("aspect")),
+            0.0
+        );
+    }
+
+    #[tokio::test]
+    async fn aspect_critic_strictness_takes_majority_vote() {
+        // Three calls -> [1, 1, 0] -> majority 1.
+        let metric = AspectCriticMetric::new(
+            "c",
+            "def",
+            Arc::new(ScriptedLlm::new(vec![
+                r#"{"verdict":1}"#,
+                r#"{"verdict":1}"#,
+                r#"{"verdict":0}"#,
+            ])),
+        )
+        .with_strictness(3);
+        let sample = SingleTurnSample::new("q", "resp", vec!["ctx".to_string()]);
+        assert_eq!(numeric(&metric.score(&sample).await.expect("strict")), 1.0);
+    }
+
+    #[tokio::test]
+    async fn simple_criteria_returns_the_raw_integer_score() {
+        let metric = SimpleCriteriaScoreMetric::new(
+            "helpfulness",
+            "Score from 0 to 5 how helpful the answer is.",
+            Arc::new(ScriptedLlm::new(vec![r#"{"score":4,"reason":"good"}"#])),
+        );
+        let sample = SingleTurnSample::new("q", "resp", vec!["ctx".to_string()]);
+        let result = metric.score(&sample).await.expect("simple criteria");
+        assert_eq!(result.metric_name, "helpfulness");
+        assert_eq!(numeric(&result), 4.0);
+    }
+
+    #[tokio::test]
+    async fn sql_equivalence_exact_match_short_circuits_without_llm() {
+        let llm = Arc::new(ScriptedLlm::new(vec![]));
+        let metric = SqlSemanticEquivalenceMetric::new(llm.clone());
+        let sample = SingleTurnSample::new(
+            "q",
+            "SELECT  id, name  FROM users;",
+            vec!["schema".to_string()],
+        )
+        .with_reference("select id, name from users");
+
+        let result = metric.score(&sample).await.expect("sql exact");
+
+        assert_eq!(numeric(&result), 1.0);
+        assert!(
+            llm.prompts().is_empty(),
+            "exact match must not call the LLM"
+        );
+    }
+
+    #[tokio::test]
+    async fn sql_equivalence_falls_back_to_the_llm_judge() {
+        let sample = SingleTurnSample::new(
+            "q",
+            "SELECT name, id FROM users",
+            vec!["schema".to_string()],
+        )
+        .with_reference("SELECT id, name FROM users");
+
+        let equivalent = SqlSemanticEquivalenceMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"verdict":1,"reason":"same result"}"#,
+        ])));
+        assert_eq!(
+            numeric(&equivalent.score(&sample).await.expect("equiv")),
+            1.0
+        );
+
+        let different = SqlSemanticEquivalenceMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"verdict":0,"reason":"different"}"#,
+        ])));
+        assert_eq!(numeric(&different.score(&sample).await.expect("diff")), 0.0);
+    }
+
+    #[tokio::test]
+    async fn sql_equivalence_missing_reference_is_an_error() {
+        let metric = SqlSemanticEquivalenceMetric::new(Arc::new(ScriptedLlm::new(vec![])));
+        let sample = SingleTurnSample::new("q", "SELECT 1", vec!["s".to_string()]);
+        let error = metric.score(&sample).await.expect_err("missing reference");
+        assert!(error.to_string().contains("reference"));
+    }
+
+    #[tokio::test]
+    async fn answer_correctness_discriminates_correct_from_incorrect() {
+        let sample = SingleTurnSample::new("q", "the response", vec!["ctx".to_string()])
+            .with_reference("the reference");
+
+        // TP=2, FP=0, FN=0 -> factual 1.0; identical embeddings -> semantic 1.0 -> 1.0.
+        let correct = AnswerCorrectnessMetric::new(
+            Arc::new(ScriptedLlm::new(vec![
+                r#"{"TP":["a","b"],"FP":[],"FN":[]}"#,
+            ])),
+            Arc::new(MapEmbeddingProvider {
+                vectors: HashMap::from([
+                    ("the response".to_string(), vec![1.0, 0.0]),
+                    ("the reference".to_string(), vec![1.0, 0.0]),
+                ]),
+            }),
+        );
+        let correct_score = numeric(&correct.score(&sample).await.expect("correct"));
+        assert!((correct_score - 1.0).abs() < 1e-9);
+
+        // TP=0, FP=2, FN=2 -> factual 0.0; orthogonal embeddings -> semantic 0.0 -> 0.0.
+        let incorrect = AnswerCorrectnessMetric::new(
+            Arc::new(ScriptedLlm::new(vec![
+                r#"{"TP":[],"FP":["x","y"],"FN":["a","b"]}"#,
+            ])),
+            Arc::new(MapEmbeddingProvider {
+                vectors: HashMap::from([
+                    ("the response".to_string(), vec![1.0, 0.0]),
+                    ("the reference".to_string(), vec![0.0, 1.0]),
+                ]),
+            }),
+        );
+        let incorrect_score = numeric(&incorrect.score(&sample).await.expect("incorrect"));
+        assert!(incorrect_score.abs() < 1e-9);
+        assert!(incorrect_score < correct_score);
+    }
+
+    #[tokio::test]
+    async fn answer_accuracy_averages_two_swapped_rating_passes() {
+        let sample =
+            SingleTurnSample::new("q", "resp", vec!["ctx".to_string()]).with_reference("ref");
+
+        // Both passes rate 4 -> (1.0 + 1.0) / 2 = 1.0.
+        let high = AnswerAccuracyMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"rating":4}"#,
+            r#"{"rating":4}"#,
+        ])));
+        assert_eq!(numeric(&high.score(&sample).await.expect("high")), 1.0);
+
+        // Both passes rate 0 -> 0.0 (discrimination: low).
+        let low = AnswerAccuracyMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"rating":0}"#,
+            r#"{"rating":0}"#,
+        ])));
+        assert_eq!(numeric(&low.score(&sample).await.expect("low")), 0.0);
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase 1 metrics — LIVE discrimination gates (IGNORED unless a key is set).
+    //   OPENAI_API_KEY=... cargo test --lib -- --ignored
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_context_utilization_ranks_useful_context_above_useless() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        let metric = ContextUtilizationMetric::new(client);
+        let response = "Ragas evaluates LLM applications.";
+        let useful_first = SingleTurnSample::new(
+            "What is Ragas?",
+            response,
+            vec![
+                "Ragas is a framework to evaluate LLM applications.".to_string(),
+                "The Eiffel Tower is located in Paris, France.".to_string(),
+            ],
+        );
+        let useful_last = SingleTurnSample::new(
+            "What is Ragas?",
+            response,
+            vec![
+                "The Eiffel Tower is located in Paris, France.".to_string(),
+                "Ragas is a framework to evaluate LLM applications.".to_string(),
+            ],
+        );
+
+        let first = numeric(&metric.score(&useful_first).await.expect("useful first"));
+        let last = numeric(&metric.score(&useful_last).await.expect("useful last"));
+        assert!(
+            first > last,
+            "useful-first={first} must exceed useful-last={last}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_aspect_critic_discriminates_on_topic_answers() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        let metric = AspectCriticMetric::new(
+            "on_topic",
+            "Does the submission directly and correctly answer the question?",
+            client,
+        );
+        let good = SingleTurnSample::new(
+            "What is the capital of France?",
+            "The capital of France is Paris.",
+            vec!["n/a".to_string()],
+        );
+        let bad = SingleTurnSample::new(
+            "What is the capital of France?",
+            "I really enjoy hiking on the weekends.",
+            vec!["n/a".to_string()],
+        );
+
+        let good_score = numeric(&metric.score(&good).await.expect("good"));
+        let bad_score = numeric(&metric.score(&bad).await.expect("bad"));
+        assert!(good_score > bad_score, "good={good_score} bad={bad_score}");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_simple_criteria_scores_better_answer_higher() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        let metric = SimpleCriteriaScoreMetric::new(
+            "correctness",
+            "Score from 0 to 5 how factually correct the submission is.",
+            client,
+        );
+        let good = SingleTurnSample::new("What is 2+2?", "2 + 2 = 4.", vec!["n/a".to_string()]);
+        let bad = SingleTurnSample::new("What is 2+2?", "2 + 2 = 17.", vec!["n/a".to_string()]);
+
+        let good_score = numeric(&metric.score(&good).await.expect("good"));
+        let bad_score = numeric(&metric.score(&bad).await.expect("bad"));
+        assert!(good_score > bad_score, "good={good_score} bad={bad_score}");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_sql_equivalence_scores_equivalent_above_different() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        let metric = SqlSemanticEquivalenceMetric::new(client);
+        let schema = vec!["Table users(id INT, name TEXT, age INT)".to_string()];
+        let equivalent = SingleTurnSample::new(
+            "Get all user names",
+            "SELECT name FROM users",
+            schema.clone(),
+        )
+        .with_reference("SELECT users.name FROM users");
+        let different =
+            SingleTurnSample::new("Get all user names", "SELECT age FROM users", schema)
+                .with_reference("SELECT users.name FROM users");
+
+        let eq = numeric(&metric.score(&equivalent).await.expect("equivalent"));
+        let df = numeric(&metric.score(&different).await.expect("different"));
+        assert!(eq > df, "equivalent={eq} different={df}");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_answer_correctness_scores_correct_above_incorrect() {
+        let (Some(llm), Some(embedding)) = (live_client(), live_embedding_client()) else {
+            return;
+        };
+        let metric = AnswerCorrectnessMetric::new(llm, embedding);
+        let correct = SingleTurnSample::new(
+            "What is the capital of France?",
+            "The capital of France is Paris.",
+            vec!["n/a".to_string()],
+        )
+        .with_reference("Paris is the capital of France.");
+        let incorrect = SingleTurnSample::new(
+            "What is the capital of France?",
+            "The capital of France is Berlin.",
+            vec!["n/a".to_string()],
+        )
+        .with_reference("Paris is the capital of France.");
+
+        let correct_score = numeric(&metric.score(&correct).await.expect("correct"));
+        let incorrect_score = numeric(&metric.score(&incorrect).await.expect("incorrect"));
+        assert!(
+            correct_score > incorrect_score,
+            "correct={correct_score} incorrect={incorrect_score}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_answer_accuracy_scores_correct_above_incorrect() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        let metric = AnswerAccuracyMetric::new(client);
+        let correct = SingleTurnSample::new(
+            "What is the capital of France?",
+            "Paris.",
+            vec!["n/a".to_string()],
+        )
+        .with_reference("The capital of France is Paris.");
+        let incorrect = SingleTurnSample::new(
+            "What is the capital of France?",
+            "Berlin.",
+            vec!["n/a".to_string()],
+        )
+        .with_reference("The capital of France is Paris.");
+
+        let correct_score = numeric(&metric.score(&correct).await.expect("correct"));
+        let incorrect_score = numeric(&metric.score(&incorrect).await.expect("incorrect"));
+        assert!(
+            correct_score > incorrect_score,
+            "correct={correct_score} incorrect={incorrect_score}"
         );
     }
 }
