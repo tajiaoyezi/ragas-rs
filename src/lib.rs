@@ -13,6 +13,7 @@ pub mod metrics;
 pub mod optimizers;
 pub mod prompts;
 pub mod providers;
+pub mod resilience;
 pub mod runtime;
 pub mod schema;
 pub mod testset;
@@ -101,6 +102,9 @@ pub use providers::{
     ProviderProtocolDescriptor, ProviderProtocolInput, ProviderProtocolMode, ProviderRegistry,
     ProviderRequestPlan, plan_provider_request, provider_protocol_descriptors,
     record_provider_usage,
+};
+pub use resilience::{
+    CachingEmbeddingProvider, CachingLlmProvider, ResilientEmbeddingProvider, ResilientLlmProvider,
 };
 pub use runtime::{
     AsyncExecutor, CacheKey, CallbackManager, CancellationConfig, ExecutorJobResult,
