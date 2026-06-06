@@ -104,6 +104,10 @@ pub struct MultiTurnSample {
     /// when empty (backward compatible).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reference_tool_calls: Vec<ToolCall>,
+    /// Allowed/in-scope reference topics for the topic-adherence metric. Optional; omitted from
+    /// JSON when empty (backward compatible).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reference_topics: Vec<String>,
     pub metadata: HashMap<String, String>,
 }
 
@@ -114,6 +118,7 @@ impl MultiTurnSample {
             reference: None,
             rubrics: Vec::new(),
             reference_tool_calls: Vec::new(),
+            reference_topics: Vec::new(),
             metadata: HashMap::new(),
         }
     }
@@ -130,6 +135,11 @@ impl MultiTurnSample {
 
     pub fn with_reference_tool_calls(mut self, reference_tool_calls: Vec<ToolCall>) -> Self {
         self.reference_tool_calls = reference_tool_calls;
+        self
+    }
+
+    pub fn with_reference_topics(mut self, reference_topics: Vec<String>) -> Self {
+        self.reference_topics = reference_topics;
         self
     }
 
@@ -197,5 +207,22 @@ mod tests {
         assert!(roundtrip.messages[0].tool_calls.is_empty());
         assert_eq!(roundtrip.reference, None);
         assert_eq!(roundtrip.rubrics[0].weight, None);
+    }
+
+    #[test]
+    fn reference_topics_round_trip_and_omit_when_empty() {
+        let with_topics = MultiTurnSample::new(vec![Message::user("hi")])
+            .with_reference_topics(vec!["billing".to_string(), "refunds".to_string()]);
+        let json = serde_json::to_string(&with_topics).expect("serialize");
+        assert!(json.contains("reference_topics"));
+        let restored: MultiTurnSample = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.reference_topics, vec!["billing", "refunds"]);
+
+        // Empty -> omitted from JSON, so legacy datasets are unaffected.
+        let without = MultiTurnSample::new(vec![Message::user("hi")]);
+        let json = serde_json::to_string(&without).expect("serialize");
+        assert!(!json.contains("reference_topics"));
+        let restored: MultiTurnSample = serde_json::from_str(&json).expect("deserialize");
+        assert!(restored.reference_topics.is_empty());
     }
 }

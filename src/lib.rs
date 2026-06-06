@@ -20,7 +20,10 @@ pub mod schema;
 pub mod testset;
 pub mod validation;
 
-pub use agentic::{ToolCallAccuracyMetric, ToolCallF1Metric};
+pub use agentic::{
+    AgentGoalAccuracyWithReferenceMetric, AgentGoalAccuracyWithoutReferenceMetric,
+    ToolCallAccuracyMetric, ToolCallF1Metric, TopicAdherenceMetric, TopicAdherenceMode,
+};
 pub use backends::{
     CsvDatasetBackend, DatasetBackend, DiskCacheCompatibility, GDriveAuthMode, GDriveBackendConfig,
     GDriveSheetTransport, GoogleDriveDatasetBackend, InMemoryDatasetBackend,
@@ -64,11 +67,12 @@ pub use metric::{
     ChrfScoreMetric, ContextEntityRecallMetric, ContextPrecisionMetric, ContextRelevanceMetric,
     ContextUtilizationMetric, DataCompyMode, DataCompyScoreMetric, ExactMatchMetric,
     FactualCorrectnessMetric, FaithfulnessMetric, FnMetric, IdBasedContextPrecisionMetric,
-    IdBasedContextRecallMetric, LlmContextRecallMetric, Metric, MetricResult, MetricValue,
-    NoiseSensitivityMetric, NoiseSensitivityMode, NonLlmContextPrecisionMetric,
-    NonLlmContextRecallMetric, RankingItem, ResponseGroundednessMetric, ResponseRelevancyMetric,
-    RubricsScoreMetric, SimpleCriteriaScoreMetric, SqlSemanticEquivalenceMetric,
-    StringPresenceMetric, StringSimilarityMetric, SummarizationScoreMetric, cosine_similarity,
+    IdBasedContextRecallMetric, InstanceSpecificRubricsMetric, LlmContextRecallMetric, Metric,
+    MetricResult, MetricValue, NoiseSensitivityMetric, NoiseSensitivityMode,
+    NonLlmContextPrecisionMetric, NonLlmContextRecallMetric, RankingItem,
+    ResponseGroundednessMetric, ResponseRelevancyMetric, RubricsScoreMetric,
+    SimpleCriteriaScoreMetric, SqlSemanticEquivalenceMetric, StringPresenceMetric,
+    StringSimilarityMetric, SummarizationScoreMetric, cosine_similarity,
 };
 pub use metrics::{
     AgentGoalOutcome, AnswerCorrectnessWeights, AspectCriticConfig, AspectCriticMode,

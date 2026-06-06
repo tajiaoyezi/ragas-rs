@@ -20,6 +20,10 @@ pub struct SingleTurnSample {
     pub retrieved_context_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reference_context_ids: Vec<String>,
+    /// Per-sample scoring rubric (ordered `score -> description`) for the instance-specific
+    /// rubrics metric. Optional; omitted from JSONL when empty (backward compatible).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rubrics: Vec<(i64, String)>,
     pub metadata: HashMap<String, String>,
 }
 
@@ -37,6 +41,7 @@ impl SingleTurnSample {
             reference_contexts: Vec::new(),
             retrieved_context_ids: Vec::new(),
             reference_context_ids: Vec::new(),
+            rubrics: Vec::new(),
             metadata: HashMap::new(),
         }
     }
@@ -58,6 +63,11 @@ impl SingleTurnSample {
     ) -> Self {
         self.retrieved_context_ids = retrieved_context_ids;
         self.reference_context_ids = reference_context_ids;
+        self
+    }
+
+    pub fn with_rubrics(mut self, rubrics: Vec<(i64, String)>) -> Self {
+        self.rubrics = rubrics;
         self
     }
 
@@ -449,6 +459,32 @@ mod tests {
         let restored =
             EvaluationDataset::<EvaluationSample>::from_jsonl_str(&jsonl).expect("read jsonl");
         assert_eq!(restored.samples(), dataset.samples());
+    }
+
+    #[test]
+    fn rubrics_round_trip_through_jsonl() {
+        let sample = SingleTurnSample::new("q", "a", vec!["ctx".to_string()])
+            .with_rubrics(vec![(1, "wrong".to_string()), (5, "correct".to_string())]);
+        let dataset = EvaluationDatasetBuilder::new()
+            .add_single_turn(sample)
+            .build()
+            .expect("dataset");
+        let jsonl = dataset.to_jsonl_string().expect("jsonl");
+        assert!(jsonl.contains("rubrics"));
+        let restored =
+            EvaluationDataset::<EvaluationSample>::from_jsonl_str(&jsonl).expect("read jsonl");
+        assert_eq!(restored.samples(), dataset.samples());
+    }
+
+    #[test]
+    fn rubrics_omitted_from_jsonl_when_empty() {
+        let sample = SingleTurnSample::new("q", "a", vec!["ctx".to_string()]);
+        let dataset = EvaluationDatasetBuilder::new()
+            .add_single_turn(sample)
+            .build()
+            .expect("dataset");
+        let jsonl = dataset.to_jsonl_string().expect("jsonl");
+        assert!(!jsonl.contains("rubrics"));
     }
 
     #[test]

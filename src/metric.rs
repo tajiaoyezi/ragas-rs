@@ -232,7 +232,7 @@ struct StatementVerdict {
 
 /// Deserialize a JSON object from an LLM response, tolerating markdown fences or
 /// surrounding prose by extracting the outermost `{ .. }` block (repair path).
-fn parse_json<T: serde::de::DeserializeOwned>(
+pub(crate) fn parse_json<T: serde::de::DeserializeOwned>(
     content: &str,
     context: &str,
 ) -> Result<T, RagasError> {
@@ -1555,6 +1555,79 @@ RUBRIC:\n{rubric_text}\n\nQUESTION: {}\nSUBMISSION: {}{}",
         Ok(
             MetricResult::success(self.name(), MetricValue::numeric(parsed.score))
                 .with_reason(format!("rubric '{}' scored {}", self.name, parsed.score)),
+        )
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct InstanceRubricOutput {
+    #[serde(default)]
+    score: f64,
+    #[serde(default)]
+    feedback: String,
+}
+
+/// InstanceSpecificRubrics — like [`RubricsScoreMetric`] (DomainSpecificRubrics) but the rubric is
+/// carried per-sample (`SingleTurnSample.rubrics`) instead of fixed on the metric, so every
+/// instance can be judged against its own criteria. One LLM call returns `{score, feedback}`; the
+/// raw integer score is returned as-is (no normalization/clamping) and the feedback becomes the
+/// reason.
+pub struct InstanceSpecificRubricsMetric {
+    llm: Arc<dyn LlmProvider>,
+}
+
+impl InstanceSpecificRubricsMetric {
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self { llm }
+    }
+}
+
+#[async_trait]
+impl Metric for InstanceSpecificRubricsMetric {
+    fn name(&self) -> &str {
+        "instance_specific_rubrics"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::UserInput, SampleField::Response],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        if sample.rubrics.is_empty() {
+            return Err(RagasError::Parse {
+                message: "instance_specific_rubrics requires a per-sample rubric (sample.rubrics)"
+                    .to_string(),
+            });
+        }
+        let rubric_text = sample
+            .rubrics
+            .iter()
+            .map(|(score, description)| format!("score {score}: {description}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let prompt = format!(
+            "Assign an appropriate score and provide feedback to the inputs based solely on the \
+scoring criteria (RUBRIC). Return only JSON of the form {{\"score\": 0, \"feedback\": \"...\"}}.\n\n\
+RUBRIC:\n{rubric_text}\n\nQUESTION: {}\nSUBMISSION: {}{}",
+            sample.user_input,
+            sample.response,
+            optional_fields_block(sample),
+        );
+        let response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        let parsed: InstanceRubricOutput =
+            parse_json(&response.content, "instance specific rubrics")?;
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(parsed.score))
+                .with_reason(parsed.feedback),
         )
     }
 }
@@ -4279,6 +4352,58 @@ mod tests {
             "Water boils at 7 degrees Celsius at sea level.",
             vec!["n/a".to_string()],
         );
+
+        let good_score = numeric(&metric.score(&good).await.expect("good"));
+        let bad_score = numeric(&metric.score(&bad).await.expect("bad"));
+        assert!(good_score > bad_score, "good={good_score} bad={bad_score}");
+    }
+
+    #[tokio::test]
+    async fn instance_specific_rubrics_scores_from_per_sample_rubric() {
+        let sample = SingleTurnSample::new("What is 2 + 2?", "4", vec![]).with_rubrics(vec![
+            (1, "incorrect".to_string()),
+            (5, "correct".to_string()),
+        ]);
+        let metric = InstanceSpecificRubricsMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"score":5,"feedback":"the answer is correct"}"#,
+        ])));
+        let result = metric.score(&sample).await.expect("score");
+        assert_eq!(result.metric_name, "instance_specific_rubrics");
+        assert_eq!(numeric(&result), 5.0);
+        assert_eq!(result.reason.as_deref(), Some("the answer is correct"));
+    }
+
+    #[tokio::test]
+    async fn instance_specific_rubrics_requires_a_per_sample_rubric() {
+        let no_rubric = SingleTurnSample::new("q", "a", vec![]);
+        let metric = InstanceSpecificRubricsMetric::new(Arc::new(ScriptedLlm::new(Vec::new())));
+        assert!(metric.score(&no_rubric).await.is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_instance_specific_rubrics_scores_better_answer_higher() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        let rubric = vec![
+            (1, "completely incorrect".to_string()),
+            (3, "partially correct".to_string()),
+            (5, "fully correct and complete".to_string()),
+        ];
+        let metric = InstanceSpecificRubricsMetric::new(client);
+        let good = SingleTurnSample::new(
+            "What is the boiling point of water at sea level in Celsius?",
+            "Water boils at 100 degrees Celsius at sea level.",
+            vec![],
+        )
+        .with_rubrics(rubric.clone());
+        let bad = SingleTurnSample::new(
+            "What is the boiling point of water at sea level in Celsius?",
+            "Water boils at 7 degrees Celsius at sea level.",
+            vec![],
+        )
+        .with_rubrics(rubric);
 
         let good_score = numeric(&metric.score(&good).await.expect("good"));
         let bad_score = numeric(&metric.score(&bad).await.expect("bad"));

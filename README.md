@@ -18,10 +18,11 @@ This is an early (`0.1`) library. What it does, it does for real:
   etc.
 - **Tested** with mock LLMs covering discrimination (good vs. bad), JSON-repair, and
   malformed-output paths, plus deterministic-metric unit tests.
-- **Verified live** (2026-06-06) against an OpenAI-compatible provider: all 17 LLM/embedding
-  metrics plus the LLM test-set synthesizer were each run against a real model and asserted to
-  discriminate correctly (a good sample scores strictly above an adversarial one). Evidence:
-  [`docs/live-verification/results.md`](docs/live-verification/results.md) — 20 gates, 0 failures.
+- **Verified live** (2026-06-06) against an OpenAI-compatible provider: all 20 LLM/embedding
+  metrics (including the Phase-4 agentic metrics) plus the LLM test-set synthesizer were each run
+  against a real model and asserted to discriminate correctly (a good sample scores strictly above
+  an adversarial one). Evidence:
+  [`docs/live-verification/results.md`](docs/live-verification/results.md) — 23 gates, 0 failures.
 
 Honest caveats:
 
@@ -32,15 +33,17 @@ Honest caveats:
 
 ## Features
 
-- **Metrics (real):** ~30 metrics on the `Metric` / `MultiTurnMetric` traits.
+- **Metrics (real):** ~33 metrics on the `Metric` / `MultiTurnMetric` traits.
   - *13 deterministic (no provider):* `ExactMatch`, `StringPresence`, `NonLLMStringSimilarity`
     (Levenshtein/Hamming/Jaro/Jaro-Winkler), `BleuScore`, `ChrfScore`, `RougeScore`
     (rouge1/2/L × precision/recall/F), `NonLLM`/`IDBased` context precision & recall,
     `DataCompyScore`, `ToolCallAccuracy`/`ToolCallF1` — unit-tested offline.
-  - *17 LLM/embedding (live-verified, see above):* Faithfulness, ResponseRelevancy, Context
+  - *20 LLM/embedding (live-verified, see above):* Faithfulness, ResponseRelevancy, Context
     Precision/Recall/Utilization/Relevance/EntityRecall, FactualCorrectness,
     AnswerCorrectness/Accuracy, AspectCritic, SimpleCriteria, SqlSemanticEquivalence,
-    ResponseGroundedness, RubricsScore, SummarizationScore, NoiseSensitivity.
+    ResponseGroundedness, RubricsScore, SummarizationScore, NoiseSensitivity, and the agentic
+    multi-turn `AgentGoalAccuracy` (with/without reference), `TopicAdherence`
+    (precision/recall/F1), and `InstanceSpecificRubrics`.
   - Some lexical metrics use a simplified tokenizer (a documented divergence from Python).
 - **Test-set generation:** an LLM-driven `Synthesizer` (single- and multi-hop) over a
   knowledge graph, with a deterministic fallback.
