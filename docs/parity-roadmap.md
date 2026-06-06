@@ -31,7 +31,11 @@ substrate to a live model. Live-verified vs DeepSeek (`live_llm_extractor_pulls_
 Then the embedding side of Phase 6: `EmbeddingExtractor` (embed a node's text → new `GraphProperty::Vector`
 property; errors on missing/non-text per Python) + `build_cosine_relationships` (faithful `CosineSimilarityBuilder`
 — pairwise cosine over embedded nodes, `cosine_similarity` edges above a threshold). Live-verified vs SiliconFlow
-embeddings (`live_cosine_relationships_link_semantically_similar_nodes`).
+embeddings (`live_cosine_relationships_link_semantically_similar_nodes`). Then `build_overlap_relationships`
+(faithful `OverlapScoreBuilder` — the default-pipeline entity-overlap builder: per-pair fuzzy Jaro-Winkler
+entity matching with the top-5% "noisy item" exclusion → directed `entities_overlap` edges; reuses the
+Phase-2 `string_distance_similarity_with`; deterministic, hand-computed tests). The relationship layer
+(cosine + overlap) now has both edge types the multi-hop synthesizers traverse.
 
 ## Goal & non-goals
 
@@ -287,7 +291,7 @@ truncation for tiktoken and deterministic sampling for NumPy RNG.*
 | **KnowledgeGraph widening + cluster/relationship queries** | M | high | Foundation. `find_n_indirect_clusters` = portable seeded-DFS (the actually-used multi-hop path); deliberately **skip** Leiden `find_indirect_clusters`. |
 | **LLM-based extractors (Summary, Keyphrases, Title, Headlines, NER, Themes, TopicDescription)** ✅ | M | high | DONE 2026-06-06 — `LlmExtractor` + `LlmExtractorKind` (all 7 kinds) drive `LlmProvider::generate`, parse with the shared outermost-`{ .. }` JSON-repair path; single-value kinds use `chunks[0]`, list kinds `extend` per chunk (no post-dedup; `max_num` bounds the prompt only). Char-budget substitutes for the tiktoken `split_text_by_token_limit` (documented non-goal). `extract_bundle` (NER→Themes→Summary) feeds the existing `attach_extractions` substrate. Offline ScriptedLlm tests + live gate vs DeepSeek. |
 | **Transforms engine (apply_transforms, Parallel groups, default bins)** | L | high | `Transform` trait + sequential/`tokio::join!` runner + token-length bin branching (bins diverge without tiktoken — document it). |
-| **Splitters + relationship builders + embedding/regex extractors + node filters** 🔶 | M | high | 🔶 PARTIAL 2026-06-06 — `EmbeddingExtractor` (embed node text → `GraphProperty::Vector`) + `build_cosine_relationships` (faithful `CosineSimilarityBuilder`: pairwise cosine over embedded nodes → `cosine_similarity` edges ≥ threshold; reuses `cosine_similarity`; live-verified vs SiliconFlow). STILL TODO: Jaccard/Overlap builder (Jaro-Winkler from Phase 2), regex extractor, headline splitter, `CustomNodeFilter` (1–5 LLM score). |
+| **Splitters + relationship builders + embedding/regex extractors + node filters** 🔶 | M | high | 🔶 PARTIAL 2026-06-06 — `EmbeddingExtractor` (embed node text → `GraphProperty::Vector`) + `build_cosine_relationships` (faithful `CosineSimilarityBuilder`: pairwise cosine over embedded nodes → `cosine_similarity` edges ≥ threshold; reuses `cosine_similarity`; live-verified vs SiliconFlow) + `build_overlap_relationships` (faithful `OverlapScoreBuilder`, the default-pipeline entity-overlap builder: per-pair fuzzy Jaro-Winkler entity matching with the top-5% "noisy item" exclusion → directed `entities_overlap` edges; reuses the Phase-2 `string_distance_similarity_with`; deterministic, hand-computed tests). STILL TODO: regex extractor, headline splitter, `CustomNodeFilter` (1–5 LLM score). |
 | **Persona generation from KG + scenario model** | M | high | KG-derived personas (cosine-grouped summaries + prompt) replacing manual seed strings; two-phase `generate_scenarios`/`generate_sample`. |
 | **Three named synthesizers + TestsetGenerator orchestrator** | L | high | SingleHopSpecific / MultiHopAbstract / MultiHopSpecific over transform outputs; Rust-native `generate_with_documents/chunks` entrypoints (no LangChain/LlamaIndex loaders). |
 

@@ -4,8 +4,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ChatMessage, EmbeddingProvider, EmbeddingRequest, EvaluationDataset, LlmProvider, LlmRequest,
-    RagasError, SingleTurnSample, cosine_similarity,
+    ChatMessage, DistanceMeasure, EmbeddingProvider, EmbeddingRequest, EvaluationDataset,
+    LlmProvider, LlmRequest, RagasError, SingleTurnSample, cosine_similarity,
+    string_distance_similarity_with,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1381,6 +1382,121 @@ pub fn build_cosine_relationships(
         graph = graph.add_edge(edge);
     }
     Ok(graph)
+}
+
+/// Add `entities_overlap` relationships between graph nodes whose `entities` lists share
+/// fuzzily-matching items — a faithful port of Python ragas's `OverlapScoreBuilder` (the
+/// entity-overlap builder used by the default testset pipeline).
+///
+/// For each directed pair `i < j`, every non-noisy entity of node `i` is compared to every
+/// non-noisy entity of node `j` via case-insensitive Jaro-Winkler similarity (`1 - distance`,
+/// reusing the Phase-2 [`crate::string_distance_similarity_with`]); a comparison counts as a
+/// match when similarity `>= distance_threshold`. The overlap score is `matches / comparisons`
+/// and an `entities_overlap` edge (carrying `entities_overlap_score` and the matched
+/// `overlapped_items`) is added when that score `>= threshold`. "Noisy" entities — the top
+/// ~5% most frequent across all nodes (at least one) — are excluded, mirroring Python's
+/// `_get_noisy_items`.
+///
+/// Python defaults: `distance_threshold = 0.9`, `threshold = 0.01`. Like
+/// [`build_cosine_relationships`], this filters to nodes carrying an `entities`
+/// [`GraphProperty::TextList`] instead of erroring on a node that lacks it (documented
+/// divergence — the transforms-engine pre-filter doesn't exist yet). Edges are **directed**
+/// (Python's overlap relationship is not bidirectional, unlike its cosine/Jaccard ones).
+pub fn build_overlap_relationships(
+    mut graph: KnowledgeGraph,
+    distance_threshold: f64,
+    threshold: f64,
+) -> KnowledgeGraph {
+    let entitied: Vec<(usize, Vec<String>)> = graph
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| match node.properties.get("entities") {
+            Some(GraphProperty::TextList(items)) => Some((idx, items.clone())),
+            _ => None,
+        })
+        .collect();
+
+    let noisy = noisy_entities(&entitied);
+
+    let mut new_edges = Vec::new();
+    for a in 0..entitied.len() {
+        for b in (a + 1)..entitied.len() {
+            let (i, items_i) = (entitied[a].0, &entitied[a].1);
+            let (j, items_j) = (entitied[b].0, &entitied[b].1);
+
+            let mut comparisons = 0usize;
+            let mut matches = 0usize;
+            let mut overlapped = Vec::new();
+            for x in items_i.iter().filter(|item| !noisy.contains(*item)) {
+                for y in items_j.iter().filter(|item| !noisy.contains(*item)) {
+                    let similarity = string_distance_similarity_with(
+                        &x.to_lowercase(),
+                        &y.to_lowercase(),
+                        DistanceMeasure::JaroWinkler,
+                    )
+                    .score
+                    .unwrap_or(0.0);
+                    comparisons += 1;
+                    if similarity >= distance_threshold {
+                        matches += 1;
+                        overlapped.push(format!("{x} => {y}"));
+                    }
+                }
+            }
+
+            let score = if comparisons > 0 {
+                matches as f64 / comparisons as f64
+            } else {
+                0.0
+            };
+            if score >= threshold {
+                new_edges.push(
+                    GraphEdge::new(
+                        graph.nodes[i].id.clone(),
+                        graph.nodes[j].id.clone(),
+                        "entities_overlap",
+                    )
+                    .with_property("entities_overlap_score", GraphProperty::Number(score))
+                    .with_property("overlapped_items", GraphProperty::TextList(overlapped)),
+                );
+            }
+        }
+    }
+    for edge in new_edges {
+        graph = graph.add_edge(edge);
+    }
+    graph
+}
+
+/// The "noisy" entity strings to exclude from overlap scoring: the top ~5% most frequent items
+/// across all nodes (at least one), ties broken by first-seen order — mirroring Python's
+/// `_get_noisy_items` over `Counter.most_common`.
+fn noisy_entities(entitied: &[(usize, Vec<String>)]) -> BTreeSet<String> {
+    let mut order: Vec<String> = Vec::new();
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for (_, items) in entitied {
+        for item in items {
+            if !counts.contains_key(item) {
+                order.push(item.clone());
+            }
+            *counts.entry(item.clone()).or_insert(0) += 1;
+        }
+    }
+    let num_unique = order.len();
+    if num_unique == 0 {
+        return BTreeSet::new();
+    }
+    // Python: max(1, int(num_unique * 0.05)) — truncate toward zero, then floor of 1.
+    let num_noisy = ((num_unique as f64 * 0.05) as usize).max(1);
+    let mut ranked: Vec<(usize, &String)> = order.iter().enumerate().collect();
+    // Most frequent first; ties keep first-seen order (Counter.most_common semantics).
+    ranked.sort_by(|(idx_a, a), (idx_b, b)| counts[*b].cmp(&counts[*a]).then(idx_a.cmp(idx_b)));
+    ranked
+        .into_iter()
+        .take(num_noisy)
+        .map(|(_, item)| item.clone())
+        .collect()
 }
 
 #[cfg(test)]
@@ -2868,6 +2984,113 @@ like Berlin and Shanghai.";
         assert!(
             cats - cat_market > 0.1,
             "cat/cat similarity ({cats}) should exceed cat/market ({cat_market}) by a clear margin"
+        );
+    }
+
+    fn entitied_node(id: &str, entities: &[&str]) -> GraphNode {
+        GraphNode::new(id, "chunk").with_property(
+            "entities",
+            GraphProperty::TextList(entities.iter().map(|e| e.to_string()).collect()),
+        )
+    }
+
+    fn overlap_score(graph: &KnowledgeGraph, source: &str, target: &str) -> Option<f64> {
+        graph
+            .edges_by_relationship("entities_overlap")
+            .into_iter()
+            .find(|edge| edge.source_id == source && edge.target_id == target)
+            .and_then(|edge| match edge.properties.get("entities_overlap_score") {
+                Some(GraphProperty::Number(value)) => Some(*value),
+                _ => None,
+            })
+    }
+
+    #[test]
+    fn overlap_builder_links_nodes_sharing_entities() {
+        // "zzz" appears in all 3 nodes -> it is the single noisy item (top 5%, max(1)),
+        // so it is excluded from scoring; the shared "Tesla" drives the only overlap.
+        let graph = KnowledgeGraph::new()
+            .add_node(entitied_node("n1", &["zzz", "Tesla", "SpaceX"]))
+            .add_node(entitied_node("n2", &["zzz", "Tesla", "Berlin"]))
+            .add_node(entitied_node("n3", &["zzz", "Apple", "Google"]));
+
+        let linked = build_overlap_relationships(graph, 0.9, 0.01);
+        let edges = linked.edges_by_relationship("entities_overlap");
+        // Only n1->n2 shares an entity (Tesla); n*-n3 share nothing.
+        assert_eq!(edges.len(), 1);
+        assert_eq!(
+            (edges[0].source_id.as_str(), edges[0].target_id.as_str()),
+            ("n1", "n2")
+        );
+        // 1 match (Tesla=Tesla) of 4 non-noisy comparisons ([Tesla,SpaceX] x [Tesla,Berlin]).
+        // If "zzz" were NOT excluded the score would be 2/9 ≈ 0.222, not 0.25 — so this pins
+        // the noisy-item exclusion.
+        let score = overlap_score(&linked, "n1", "n2").expect("score");
+        assert!(
+            (score - 0.25).abs() < 1e-9,
+            "expected 1/4 = 0.25, got {score}"
+        );
+        let Some(GraphProperty::TextList(items)) = edges[0].properties.get("overlapped_items")
+        else {
+            panic!("expected overlapped_items list");
+        };
+        assert_eq!(items, &vec!["Tesla => Tesla".to_string()]);
+    }
+
+    #[test]
+    fn overlap_builder_excludes_the_most_common_noisy_entity() {
+        // "common" is in every node and is the single noisy item; once excluded no two nodes
+        // share a (fuzzily) matching entity, so NO edges are produced. Without the exclusion,
+        // common=common would link every pair.
+        let graph = KnowledgeGraph::new()
+            .add_node(entitied_node("n1", &["common", "Tesla"]))
+            .add_node(entitied_node("n2", &["common", "Apple"]))
+            .add_node(entitied_node("n3", &["common", "Google"]))
+            .add_node(entitied_node("n4", &["common", "Berlin"]));
+
+        let linked = build_overlap_relationships(graph, 0.9, 0.01);
+        assert!(
+            linked.edges_by_relationship("entities_overlap").is_empty(),
+            "the only shared entity was noisy and excluded -> no overlap edges"
+        );
+    }
+
+    #[test]
+    fn overlap_builder_matches_fuzzy_near_duplicates() {
+        // "zzz" is noisy/excluded; "Microsoft" vs "Microsft" (one-char typo) must clear the
+        // 0.9 Jaro-Winkler bar, proving the match is fuzzy, not exact.
+        let graph = KnowledgeGraph::new()
+            .add_node(entitied_node("n1", &["zzz", "Microsoft"]))
+            .add_node(entitied_node("n2", &["zzz", "Microsft"]));
+
+        let linked = build_overlap_relationships(graph, 0.9, 0.01);
+        let score = overlap_score(&linked, "n1", "n2");
+        assert_eq!(
+            score,
+            Some(1.0),
+            "the single non-noisy comparison (Microsoft~Microsft) should match -> 1/1"
+        );
+    }
+
+    #[test]
+    fn overlap_builder_skips_nodes_without_entities() {
+        // A node lacking `entities` is skipped (the documented divergence), not an error.
+        let graph = KnowledgeGraph::new()
+            .add_node(
+                GraphNode::new("doc", "document")
+                    .with_property("title", GraphProperty::Text("T".to_string())),
+            )
+            .add_node(entitied_node("n1", &["zzz", "Tesla"]))
+            .add_node(entitied_node("n2", &["zzz", "Tesla"]));
+
+        let linked = build_overlap_relationships(graph, 0.9, 0.01);
+        // "zzz" is the noisy item (tie with Tesla on count 2, first-seen wins); Tesla then
+        // matches across n1/n2 -> exactly one edge, and the doc node caused no panic.
+        let edges = linked.edges_by_relationship("entities_overlap");
+        assert_eq!(edges.len(), 1);
+        assert_eq!(
+            (edges[0].source_id.as_str(), edges[0].target_id.as_str()),
+            ("n1", "n2")
         );
     }
 }
