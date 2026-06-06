@@ -2812,6 +2812,7 @@ mod tests {
 
         let report = EvaluationReport {
             metric_names: vec!["faithfulness".to_string()],
+            usage: Default::default(),
             results: vec![SampleEvaluation {
                 sample_index: 0,
                 results: vec![

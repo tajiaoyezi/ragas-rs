@@ -145,13 +145,26 @@ impl EvaluationDataset<SingleTurnSample> {
     }
 
     pub fn from_csv_str(input: &str) -> Result<Self, RagasError> {
+        Self::from_csv_str_with_column_map(input, &HashMap::new())
+    }
+
+    /// Like [`from_csv_str`](Self::from_csv_str), but first renames CSV header columns via
+    /// `column_map`. Orientation matches Python ragas: keys are ragas's canonical column names
+    /// and values are your dataset's actual column names (e.g. `{"user_input": "query"}` when
+    /// your CSV header is `query`). The rename happens before required-column validation; an
+    /// empty map is a no-op.
+    pub fn from_csv_str_with_column_map(
+        input: &str,
+        column_map: &HashMap<String, String>,
+    ) -> Result<Self, RagasError> {
         let mut reader = csv::ReaderBuilder::new()
             .trim(csv::Trim::All)
             .from_reader(input.as_bytes());
-        let headers = reader
+        let raw_headers = reader
             .headers()
             .map_err(|error| dataset_io_error(format!("CSV header parse failed: {error}")))?
             .clone();
+        let headers = remap_headers(&raw_headers, column_map);
 
         let user_input_idx = required_header(&headers, "user_input")?;
         let response_idx = required_header(&headers, "response")?;
@@ -234,6 +247,51 @@ impl EvaluationDataset<EvaluationSample> {
         Self::from_samples(samples)
     }
 
+    /// Like [`from_jsonl_str`](Self::from_jsonl_str), but first renames each JSON object's
+    /// top-level keys via `column_map`. Orientation matches Python ragas: keys are ragas's
+    /// canonical field names and values are your dataset's actual key names (e.g.
+    /// `{"user_input": "query", "reference": "ground_truth"}`). The rename happens before
+    /// deserialization into the typed sample; an empty map is a no-op (and takes the fast path).
+    ///
+    /// Note: `sample_type` is the reserved enum discriminator for JSONL rows — don't map a column
+    /// onto it, or the row will fail to deserialize.
+    pub fn from_jsonl_str_with_column_map(
+        input: &str,
+        column_map: &HashMap<String, String>,
+    ) -> Result<Self, RagasError> {
+        if column_map.is_empty() {
+            return Self::from_jsonl_str(input);
+        }
+        // Invert {canonical: actual} -> {actual: canonical} so we rename the user's keys to ours.
+        let rename: HashMap<&str, &str> = column_map
+            .iter()
+            .map(|(canonical, actual)| (actual.as_str(), canonical.as_str()))
+            .collect();
+
+        let mut samples = Vec::new();
+        for (line_index, line) in input.lines().enumerate() {
+            let line_number = line_index + 1;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let mut value =
+                serde_json::from_str::<serde_json::Value>(trimmed).map_err(|error| {
+                    dataset_io_error(format!("JSONL line {line_number} parse failed: {error}"))
+                })?;
+            if let Some(object) = value.as_object_mut() {
+                remap_json_object_keys(object, &rename);
+            }
+            let sample = serde_json::from_value::<EvaluationSample>(value).map_err(|error| {
+                dataset_io_error(format!("JSONL line {line_number} parse failed: {error}"))
+            })?;
+            validate_evaluation_sample(line_index, &sample)?;
+            samples.push(sample);
+        }
+
+        Self::from_samples(samples)
+    }
+
     pub fn to_jsonl_string(&self) -> Result<String, RagasError> {
         let mut output = String::new();
         for sample in &self.samples {
@@ -293,6 +351,51 @@ impl EvaluationDatasetBuilder {
 fn dataset_io_error(message: impl Into<String>) -> RagasError {
     RagasError::DatasetIo {
         message: message.into(),
+    }
+}
+
+/// Rename CSV header columns according to `column_map` (`{ragas_canonical: your_column}`).
+/// Each header equal to a mapped "actual" name becomes its "canonical" name; others are kept.
+/// An empty map returns the headers unchanged.
+fn remap_headers(
+    headers: &csv::StringRecord,
+    column_map: &HashMap<String, String>,
+) -> csv::StringRecord {
+    if column_map.is_empty() {
+        return headers.clone();
+    }
+    let rename: HashMap<&str, &str> = column_map
+        .iter()
+        .map(|(canonical, actual)| (actual.as_str(), canonical.as_str()))
+        .collect();
+    headers
+        .iter()
+        .map(|header| rename.get(header).copied().unwrap_or(header))
+        .collect()
+}
+
+/// Rename the top-level keys of a JSON object in place, using a pre-inverted `{actual: canonical}`
+/// map. Keys absent from the map are preserved under their original names. On a name collision —
+/// a renamed key landing on a name that already exists (or two source keys mapping to the same
+/// canonical) — the renamed (mapped) entry wins; this is made order-independent by writing the
+/// originals first, then the renames over them (so it does not depend on JSON key ordering).
+fn remap_json_object_keys(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    rename: &HashMap<&str, &str>,
+) {
+    let mut renamed_entries = Vec::new();
+    // Pass 1: re-insert keys that are not being renamed, under their original names.
+    for (key, value) in std::mem::take(object) {
+        match rename.get(key.as_str()) {
+            Some(canonical) => renamed_entries.push(((*canonical).to_string(), value)),
+            None => {
+                object.insert(key, value);
+            }
+        }
+    }
+    // Pass 2: insert the renamed entries, overwriting any colliding original (renamed wins).
+    for (canonical, value) in renamed_entries {
+        object.insert(canonical, value);
     }
 }
 
@@ -485,6 +588,88 @@ mod tests {
             .expect("dataset");
         let jsonl = dataset.to_jsonl_string().expect("jsonl");
         assert!(!jsonl.contains("rubrics"));
+    }
+
+    #[test]
+    fn column_map_renames_jsonl_keys_to_canonical_before_parsing() {
+        // The dataset uses non-canonical keys: `query`/`answer`/`contexts`/`ground_truth`.
+        // column_map orientation is {ragas_canonical: your_column}, matching Python ragas.
+        let line = r#"{"sample_type":"single_turn","query":"What is ragas?","answer":"An eval framework.","contexts":["ctx a","ctx b"],"ground_truth":"Ragas evaluates LLM apps.","metadata":{}}"#;
+        let column_map = HashMap::from([
+            ("user_input".to_string(), "query".to_string()),
+            ("response".to_string(), "answer".to_string()),
+            ("retrieved_contexts".to_string(), "contexts".to_string()),
+            ("reference".to_string(), "ground_truth".to_string()),
+        ]);
+
+        // Without the map, the non-canonical keys fail to deserialize.
+        assert!(EvaluationDataset::<EvaluationSample>::from_jsonl_str(line).is_err());
+
+        let dataset = EvaluationDataset::<EvaluationSample>::from_jsonl_str_with_column_map(
+            line,
+            &column_map,
+        )
+        .expect("remapped dataset parses");
+        let EvaluationSample::SingleTurn(sample) = &dataset.samples()[0] else {
+            panic!("expected single turn");
+        };
+        assert_eq!(sample.user_input, "What is ragas?");
+        assert_eq!(sample.response, "An eval framework.");
+        assert_eq!(sample.retrieved_contexts, vec!["ctx a", "ctx b"]);
+        assert_eq!(
+            sample.reference.as_deref(),
+            Some("Ragas evaluates LLM apps.")
+        );
+
+        // An empty map is a no-op equivalent to the canonical loader.
+        let canonical = r#"{"sample_type":"single_turn","user_input":"q","response":"a","retrieved_contexts":["c"],"metadata":{}}"#;
+        let from_empty = EvaluationDataset::<EvaluationSample>::from_jsonl_str_with_column_map(
+            canonical,
+            &HashMap::new(),
+        )
+        .expect("empty map parses canonical line");
+        assert_eq!(from_empty.len(), 1);
+    }
+
+    #[test]
+    fn column_map_collision_lets_the_renamed_value_win_deterministically() {
+        // The row carries BOTH the canonical `user_input` and the mapped source `query`. Mapping
+        // user_input=query must deterministically take the mapped (query) value regardless of the
+        // JSON object's key ordering.
+        let line = r#"{"sample_type":"single_turn","user_input":"WRONG original","query":"correct mapped","response":"a","retrieved_contexts":["c"],"metadata":{}}"#;
+        let column_map = HashMap::from([("user_input".to_string(), "query".to_string())]);
+        let dataset = EvaluationDataset::<EvaluationSample>::from_jsonl_str_with_column_map(
+            line,
+            &column_map,
+        )
+        .expect("parses");
+        let EvaluationSample::SingleTurn(sample) = &dataset.samples()[0] else {
+            panic!("single turn");
+        };
+        assert_eq!(sample.user_input, "correct mapped");
+    }
+
+    #[test]
+    fn column_map_renames_csv_headers_to_canonical() {
+        // Headers are non-canonical (`query`/`answer`/`contexts`/`ground_truth`).
+        let csv = "query,answer,contexts,ground_truth\nWhat?,Answer,ctx one|ctx two,Reference\n";
+        let column_map = HashMap::from([
+            ("user_input".to_string(), "query".to_string()),
+            ("response".to_string(), "answer".to_string()),
+            ("retrieved_contexts".to_string(), "contexts".to_string()),
+            ("reference".to_string(), "ground_truth".to_string()),
+        ]);
+
+        // Without the map, the required canonical columns are missing.
+        assert!(EvaluationDataset::from_csv_str(csv).is_err());
+
+        let dataset = EvaluationDataset::from_csv_str_with_column_map(csv, &column_map)
+            .expect("remapped CSV parses");
+        let sample = &dataset.samples()[0];
+        assert_eq!(sample.user_input, "What?");
+        assert_eq!(sample.response, "Answer");
+        assert_eq!(sample.retrieved_contexts, vec!["ctx one", "ctx two"]);
+        assert_eq!(sample.reference.as_deref(), Some("Reference"));
     }
 
     #[test]

@@ -11,6 +11,7 @@
 //!   ragas testset   --doc <file.txt> --source-id <id> [--out <file.jsonl>]
 //!   ragas benchmark [--runs <n>]
 
+use std::collections::HashMap;
 use std::process::ExitCode;
 use std::sync::Arc;
 
@@ -29,8 +30,10 @@ COMMANDS:
     config                          Print the resolved provider configuration (secrets redacted).
     evaluate --dataset <file.jsonl> Evaluate a JSONL dataset. Runs offline ROUGE-L always, plus the
              [--report <file>]      LLM metrics (faithfulness, context utilization, context recall)
-                                    when an API key is configured. Optionally write the full JSON
-                                    report to a file.
+             [--column-map a=b,..]  when an API key is configured. Optionally write the full JSON
+                                    report to a file. --column-map renames dataset keys to ragas's
+                                    canonical names (canonical=your_column, e.g.
+                                    user_input=query,reference=ground_truth).
     testset  --doc <file.txt>       Generate a test dataset from a text document. Uses the real LLM
              --source-id <id>       synthesizer when an API key is configured (add --multi-hop for
              [--multi-hop]          multi-hop), otherwise a deterministic single-hop fallback.
@@ -98,11 +101,18 @@ fn cmd_evaluate_with(
 ) -> Result<String, String> {
     let dataset_path = flag(args, "--dataset").ok_or("evaluate requires --dataset <file.jsonl>")?;
     let report_path = flag(args, "--report");
+    let column_map = match flag(args, "--column-map") {
+        Some(spec) => parse_column_map(&spec)?,
+        None => HashMap::new(),
+    };
 
     let content = std::fs::read_to_string(&dataset_path)
         .map_err(|error| format!("cannot read dataset '{dataset_path}': {error}"))?;
-    let dataset = EvaluationDataset::<EvaluationSample>::from_jsonl_str(&content)
-        .map_err(|error| format!("cannot parse JSONL dataset '{dataset_path}': {error}"))?;
+    let dataset = EvaluationDataset::<EvaluationSample>::from_jsonl_str_with_column_map(
+        &content,
+        &column_map,
+    )
+    .map_err(|error| format!("cannot parse JSONL dataset '{dataset_path}': {error}"))?;
 
     let mut runtime = CliRuntime::new();
     runtime
@@ -236,6 +246,31 @@ fn flag(args: &[String], name: &str) -> Option<String> {
         .and_then(|index| args.get(index + 1).cloned())
 }
 
+/// Parse a `--column-map canonical=column,canonical2=column2` spec into a
+/// `{ragas_canonical: your_column}` map (the orientation ragas expects). Empty entries are
+/// skipped; a malformed entry (no `=`, or a blank side) is a hard error.
+fn parse_column_map(spec: &str) -> Result<HashMap<String, String>, String> {
+    let mut map = HashMap::new();
+    for entry in spec.split(',') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let (canonical, column) = entry.split_once('=').ok_or_else(|| {
+            format!("invalid --column-map entry '{entry}', expected canonical=your_column")
+        })?;
+        let canonical = canonical.trim();
+        let column = column.trim();
+        if canonical.is_empty() || column.is_empty() {
+            return Err(format!(
+                "invalid --column-map entry '{entry}', expected canonical=your_column"
+            ));
+        }
+        map.insert(canonical.to_string(), column.to_string());
+    }
+    Ok(map)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,6 +334,47 @@ mod tests {
         std::fs::remove_file(&path).ok();
 
         // The offline ROUGE-L metric ran (response == reference -> recall 1.0) and is reported.
+        assert!(out.contains("rouge_l"));
+        assert!(out.contains("\"sample_count\":1"));
+    }
+
+    #[test]
+    fn parse_column_map_reads_pairs_and_rejects_malformed() {
+        let map = parse_column_map("user_input=query, reference=ground_truth ,").expect("valid");
+        assert_eq!(map.get("user_input").map(String::as_str), Some("query"));
+        assert_eq!(
+            map.get("reference").map(String::as_str),
+            Some("ground_truth")
+        );
+        assert_eq!(map.len(), 2);
+
+        assert!(parse_column_map("user_input").is_err());
+        assert!(parse_column_map("=query").is_err());
+        assert!(parse_column_map("user_input=").is_err());
+        // An empty / whitespace spec is an empty (no-op) map, not an error.
+        assert!(parse_column_map("   ").expect("empty ok").is_empty());
+    }
+
+    #[test]
+    fn evaluate_applies_column_map_over_noncanonical_jsonl() {
+        // A JSONL row whose keys are NOT ragas's canonical names; --column-map renames them.
+        let path = std::env::temp_dir().join("ragas_cli_colmap_smoke.jsonl");
+        let line = r#"{"sample_type":"single_turn","query":"q","answer":"the cat sat","contexts":["ctx"],"ground_truth":"the cat sat","metadata":{}}"#;
+        std::fs::write(&path, format!("{line}\n")).expect("write temp dataset");
+
+        let out = cmd_evaluate_with(
+            &args(&[
+                "--dataset",
+                path.to_str().unwrap(),
+                "--column-map",
+                "user_input=query,response=answer,retrieved_contexts=contexts,reference=ground_truth",
+            ]),
+            None,
+        )
+        .expect("evaluate runs with column map");
+        std::fs::remove_file(&path).ok();
+
+        // Remapped successfully -> the offline ROUGE-L metric scored the single sample.
         assert!(out.contains("rouge_l"));
         assert!(out.contains("\"sample_count\":1"));
     }

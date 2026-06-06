@@ -16,6 +16,10 @@ runtime-tokio = []
 providers-openai = []
 integrations = []
 benchmarks = []
+# Real BPE token counting via tiktoken-rs (offline; vocab is baked into the binary). Off by
+# default because it adds ~3-5 MB (all encodings compile in, no per-encoding gate) plus the
+# regex/fancy-regex dep tree. Without it, token counting falls back to a whitespace heuristic.
+tokenizer = ["dep:tiktoken-rs"]
 
 [dependencies]
 async-trait = "0.1"
@@ -24,4 +28,5 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+tiktoken-rs = { version = "0.12", optional = true }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }

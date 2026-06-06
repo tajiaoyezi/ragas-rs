@@ -5,12 +5,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    ContextUtilizationMetric, DatasetBackend, EvaluationDataset, EvaluationReport,
-    EvaluationSample, ExtractionBundle, FaithfulnessMetric, FnMetric, GraphNode,
+    ContextUtilizationMetric, DatasetBackend, EvaluationConfig, EvaluationDataset,
+    EvaluationReport, EvaluationSample, ExtractionBundle, FaithfulnessMetric, FnMetric, GraphNode,
     InMemoryDatasetBackend, KnowledgeGraph, LlmContextRecallMetric, LlmProvider, Metric,
     MetricResult, MetricValue, PersonaGenerator, RagasError, ResilientLlmProvider, RetryConfig,
     RunConfig, SingleTurnSample, TimeoutConfig, UsageRecordingLlmProvider, UsageTracker,
-    attach_extractions, build_chunk_relationships, evaluate_with, rouge_l_recall,
+    attach_extractions, build_chunk_relationships, evaluate_with_config, rouge_l_recall,
     split_text_into_chunks, synthesize_single_hop_sample,
 };
 
@@ -185,12 +185,20 @@ fn run_evaluate(
         let run_config = eval_run_config();
         let provider = provider.map(|provider| resilient_eval_provider(provider, &run_config));
         let metrics = build_evaluate_metrics(provider, any_reference, &usage);
+        // The library attaches the shared tracker's usage onto the report. `raise_exceptions`
+        // stays false: the CLI surfaces per-metric error counts rather than aborting the run.
+        let config = EvaluationConfig::new(run_config).with_usage_tracker(Arc::clone(&usage));
         // Drive the async evaluation pipeline from this synchronous CLI entry point.
-        let report = run_async(evaluate_with(&scorable, &metrics, &run_config));
+        let report = run_async(evaluate_with_config(&scorable, &metrics, &config))
+            .expect("evaluate_with_config is infallible when raise_exceptions = false");
         Some(report)
     };
-    // Token usage actually consumed by the LLM metrics' calls (all-zero when offline).
-    let usage_summary = usage.lock().expect("usage tracker not poisoned").summary();
+    // Token usage actually consumed by the LLM metrics' calls, as attached to the report by the
+    // library (all-zero when offline / nothing scored).
+    let usage_summary = evaluated
+        .as_ref()
+        .map(|report| report.usage.clone())
+        .unwrap_or_default();
     let usage_json = serde_json::to_value(&usage_summary)
         .map_err(|error| parse_error(format!("usage summary serialization failed: {error}")))?;
 

@@ -8,6 +8,7 @@ use ragas::{
 fn report(faithfulness: f64, answer_relevancy: f64) -> EvaluationReport {
     EvaluationReport {
         metric_names: vec!["faithfulness".to_string(), "answer_relevancy".to_string()],
+        usage: Default::default(),
         results: vec![
             sample(0, faithfulness, answer_relevancy),
             sample(1, faithfulness, answer_relevancy),
