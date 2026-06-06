@@ -1402,6 +1402,8 @@ pub fn build_cosine_relationships(
 /// [`GraphProperty::TextList`] instead of erroring on a node that lacks it (documented
 /// divergence — the transforms-engine pre-filter doesn't exist yet). Edges are **directed**
 /// (Python's overlap relationship is not bidirectional, unlike its cosine/Jaccard ones).
+/// `overlapped_items` is a [`GraphProperty::TextList`] of `"x => y"` strings (Python stores
+/// `(x, y)` tuples; `GraphProperty` has no tuple type — a representation, not a logic, change).
 pub fn build_overlap_relationships(
     mut graph: KnowledgeGraph,
     distance_threshold: f64,
@@ -3035,6 +3037,8 @@ like Berlin and Shanghai.";
             panic!("expected overlapped_items list");
         };
         assert_eq!(items, &vec!["Tesla => Tesla".to_string()]);
+        // The relationship is directed: there is no reverse n2->n1 edge.
+        assert_eq!(overlap_score(&linked, "n2", "n1"), None);
     }
 
     #[test]
@@ -3069,6 +3073,53 @@ like Berlin and Shanghai.";
             score,
             Some(1.0),
             "the single non-noisy comparison (Microsoft~Microsft) should match -> 1/1"
+        );
+        // Directly pin the underlying fuzzy similarity: the typo pair clears 0.9 but is < 1.0
+        // (not an exact match), so the edge is genuinely from fuzzy matching.
+        let jw =
+            string_distance_similarity_with("microsoft", "microsft", DistanceMeasure::JaroWinkler)
+                .score
+                .expect("jaro-winkler score");
+        assert!(
+            (0.9..1.0).contains(&jw),
+            "expected 0.9 <= JW < 1.0, got {jw}"
+        );
+    }
+
+    #[test]
+    fn overlap_builder_score_threshold_is_inclusive() {
+        // "zzz" is the single noisy item (tie at count 2, first-seen); non-noisy entities are
+        // [Tesla, Foo] x [Tesla, Bar] -> 1 match / 4 comparisons = exactly 0.25.
+        let graph = || {
+            KnowledgeGraph::new()
+                .add_node(entitied_node("n1", &["zzz", "Tesla", "Foo"]))
+                .add_node(entitied_node("n2", &["zzz", "Tesla", "Bar"]))
+        };
+        // score (0.25) >= threshold (0.25) is inclusive -> edge.
+        let at = build_overlap_relationships(graph(), 0.9, 0.25);
+        assert_eq!(overlap_score(&at, "n1", "n2"), Some(0.25));
+        // Just above the score -> filtered out.
+        let above = build_overlap_relationships(graph(), 0.9, 0.26);
+        assert_eq!(overlap_score(&above, "n1", "n2"), None);
+    }
+
+    #[test]
+    fn overlap_builder_records_multiple_overlaps_in_iteration_order() {
+        // All three entities tie at count 2; "zzz" (first-seen) is the noisy item. The non-noisy
+        // [Apple, Google] x [Apple, Google] yields two matches (2/4 = 0.5), listed in
+        // outer-then-inner order.
+        let graph = KnowledgeGraph::new()
+            .add_node(entitied_node("n1", &["zzz", "Apple", "Google"]))
+            .add_node(entitied_node("n2", &["zzz", "Apple", "Google"]));
+        let linked = build_overlap_relationships(graph, 0.9, 0.01);
+        assert_eq!(overlap_score(&linked, "n1", "n2"), Some(0.5));
+        let edge = linked.edges_by_relationship("entities_overlap")[0];
+        let Some(GraphProperty::TextList(items)) = edge.properties.get("overlapped_items") else {
+            panic!("expected overlapped_items list");
+        };
+        assert_eq!(
+            items,
+            &vec!["Apple => Apple".to_string(), "Google => Google".to_string()]
         );
     }
 
