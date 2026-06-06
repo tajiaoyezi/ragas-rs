@@ -7,11 +7,11 @@ A prioritized plan to maximize **functional replication** of the Python
 > ragas-rs surface read from the actual code) followed by an adversarial completeness/correctness
 > review. Baseline numbers were verified directly against the source.
 
-**Status:** Phase 1 ✅; Phase 2 ✅ (deterministic + NonLLM context pair; only the low-value
-ID-based variant deferred); Phase 3 ✅ (7/7) — all LLM metrics live-verified vs DeepSeek;
-`context_utilization` wired into the `ragas evaluate` CLI default. Phase 5 🔶 (retry/timeout +
-caching decorators shipped; 2 of 3 critical bugs fixed). Wired metric count **5 → 25** of ~39
-(2026-06-05); all on `main`.
+**Status:** Phase 1 ✅; Phase 2 ✅ (complete, incl. ID-based context precision/recall); Phase 3 ✅
+(7/7) — all LLM metrics live-verified vs DeepSeek; `context_utilization` wired into the
+`ragas evaluate` CLI default. Phase 4 🔶 (DataCompyScore shipped; agentic LLM metrics remain).
+Phase 5 🔶 (retry/timeout + caching decorators; 2 of 3 critical bugs fixed). Wired metric count
+**5 → 28** of ~39 (2026-06-06); all on `main`.
 
 ## Goal & non-goals
 
@@ -94,7 +94,8 @@ AP@k accumulator, `Metric` trait). No new subsystems.*
 > `BleuScoreMetric` (real BLEU-4), `ChrfScoreMetric` (real chrF, char n-gram F-β=2), plus
 > `NonLlmContextPrecisionMetric` + `NonLlmContextRecallMetric` (enabled by the new
 > `SingleTurnSample.reference_contexts` field) — all real `impl Metric`, offline unit-tested.
-> **Only `IDBasedContextRecall` remains** (low value; needs a separate context-ID schema field).
+> **Phase 2 complete** — `IdBasedContextPrecisionMetric` + `IdBasedContextRecallMetric` shipped
+> 2026-06-06 (new `SingleTurnSample.retrieved_context_ids` / `reference_context_ids` fields).
 
 | Metric | Effort | Value | Approach |
 |---|---|---|---|
@@ -127,10 +128,16 @@ them is multi-call and the bookkeeping must match Python. Keep the lexical versi
 | **SummarizationScore** | L | medium | 3-call chain: keyphrase extraction → QA-pair generation → answer-from-summary-only; coverage = fraction yes, optional conciseness blend. |
 | **RubricsScore (DomainSpecificRubrics)** | M | high | Add a `ScoreRubric` type (ordered score→description; current `Rubric` shape is wrong), single LLM call → `{feedback, score 1-5}`, ship the two Python default rubrics. |
 
-## Phase 4 — Agentic + multi-turn metrics
+## Phase 4 — Agentic + multi-turn metrics 🔶 DataCompy done
 
 *Counting functions exist; the LLM inference steps are missing and some need `MultiTurnSample` schema
 additions (`reference_topics`) + transcript renderers. Share a transcript renderer + infer-outcome prompt.*
+
+> 🔶 **Shipped 2026-06-06** — `DataCompyScoreMetric` (deterministic CSV row precision/recall/F1,
+> `DataCompyMode`), the one Phase-4 metric that fits the single-turn `Metric` trait with no LLM.
+> **Remaining (deferred):** ToolCallAccuracy/F1, AgentGoalAccuracy, TopicAdherence, InstanceRubrics
+> — these need `MultiTurnSample` work (a `reference_tool_calls` / `reference_topics` field + a
+> `MultiTurnMetric` path, since the core `Metric` trait is single-turn) and/or live LLM verification.
 
 | Metric | Effort | Value | Approach |
 |---|---|---|---|
