@@ -14,7 +14,8 @@ LLM agentic metrics (`AgentGoalAccuracy` with/without reference, `TopicAdherence
 `InstanceSpecificRubrics`), all live-verified vs DeepSeek (2026-06-06). Phase 5 🔶 (retry/timeout +
 caching decorators; 2 of 3 critical bugs fixed; plus `evaluate()` options — `column_map`,
 `raise_exceptions`, `usage_summary` on `EvaluationReport`, per-token cost API, optional tiktoken
-token counts). Wired count **29 single-turn `Metric`** of ~39 +
+token counts; `LLMDidNotFinish` truncation detection; lifecycle callbacks). Wired count
+**29 single-turn `Metric`** of ~39 +
 **5 multi-turn metrics** (tool-call ×2, agent-goal-accuracy ×2, topic-adherence) (2026-06-06); all on
 `main`. `StringSimilarityMetric` now exposes a full `DistanceMeasure` selector
 (Levenshtein/Hamming/Jaro/Jaro-Winkler, rapidfuzz-verified) — the last purely-deterministic parity
@@ -230,15 +231,34 @@ latent bugs** — high value because they affect every metric.*
 > offline BPE token counting via **tiktoken-rs behind an optional `tokenizer` feature**
 > (`num_tokens_from_string` + `tiktoken_encoding_for_model`; off by default to keep the build lean,
 > covered by a dedicated CI step). Adversarially reviewed vs the ragas 0.4.3 source (orientation,
-> raise, per-token cost confirmed). **Still TODO:** `token_usage_parser`/`metric.init` hooks,
-> per-provider usage parsers, caching-into-eval, callbacks/progress, FixOutputFormat repair,
+> raise, per-token cost confirmed).
+
+> ✅ **`LLMDidNotFinishException` shipped 2026-06-06 (PR #3)** — the truncation-detection half of
+> FixOutputFormat. New `RagasError::LlmDidNotFinish { reason }`; `parse_chat_response` flags a
+> generation cut off by the model (OpenAI `finish_reason == "length"`/`"content_filter"`/…) as a
+> distinct typed error instead of returning truncated content that fails an opaque downstream JSON
+> parse. Finished set `{stop, STOP, MAX_TOKENS, eos_token, end_turn}`; a **missing** finish_reason
+> is lenient (finished), matching ragas's `all([]) == True`. `ResilientLlmProvider` does **not**
+> retry it (non-transient). Verified vs ragas `llms/base.py is_finished`.
+
+> ✅ **Evaluation lifecycle callbacks shipped 2026-06-06 (PR #4)** — the faithful analog of ragas's
+> `evaluate(..., callbacks=…)`. `EvaluationConfig` gained a `callbacks: CallbackManager`;
+> `evaluate_with_config` emits `EvaluationStarted` → per-cell `MetricStarted` /
+> `MetricSucceeded` / `MetricFailed` → `EvaluationFinished` `RuntimeEvent`s (added the
+> `metric_failed` / `evaluation_finished` constructors). This wires the previously-orphaned
+> `CallbackManager` / `RuntimeEvent` infra into the eval path; an empty manager (the default, incl.
+> the CLI) is a no-op, so behavior is unchanged when unused.
+
+> **Still TODO (Phase 5):** `token_usage_parser`/`metric.init` hooks, per-provider usage parsers,
+> caching-into-eval, the **FixOutputFormat repair** half (second-stage LLM JSON-repair call on
+> malformed-but-complete output — invasive: a `generate-and-parse` helper across ~24 call sites),
 > PydanticPrompt renderer + Loss.
 
 | Item | Effort | Value | Approach |
 |---|---|---|---|
 | **RunConfig retry/backoff + per-op timeout** | M | high | **CRITICAL:** retry & timeout are currently *dead config* (only concurrency is consumed). Add exponential-backoff wrapper + `tokio::time::timeout` per job. |
 | **Provider response caching** | M | medium | Cache key + store exist but **nothing wraps** `generate`/`embed`. Add a `Cache` trait + caching provider decorator keyed on `generate_runtime_cache_key`. |
-| **FixOutputFormat repair + `LLMDidNotFinishException`** | M | high | JSON extraction exists; the second-stage LLM repair on parse failure does not. Add it + the missing typed "model truncated output" error (distinct from malformed JSON). |
+| **FixOutputFormat repair + `LLMDidNotFinishException`** | M | high | 🔶 `LLMDidNotFinishException` ✅ (PR #3 — truncation detected in `parse_chat_response`). Remaining: the second-stage LLM repair on parse failure (invasive — ~24 `generate`+`parse_json` call sites). |
 | **`evaluate()` options: column_map, raise_exceptions, token_usage_parser, metric.init** | M | high | Core `evaluate()` lacks column remapping, raise-vs-swallow toggle, per-provider token parsers, and an init lifecycle hook. |
 | **Per-provider TokenUsageParser + cost on report** | M | medium | Only OpenAI's response shape is parsed; add a trait + per-provider impls, attach total_tokens/cost to `EvaluationReport`. |
 | **`num_tokens_from_string` via tiktoken-rs + real Tokenizer trait** | M | low | `LazyTokenizer` is a whitespace stub; real BPE counts feed cost + testset bins. (HF-vocab path is model-dependent — mark it.) |

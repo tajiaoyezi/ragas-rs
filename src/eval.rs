@@ -1,10 +1,18 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 
 use crate::RunConfig;
-use crate::{EvaluationDataset, Metric, MetricResult, RagasError, UsageSummary, UsageTracker};
+use crate::{
+    CallbackManager, EvaluationDataset, Metric, MetricResult, RagasError, RuntimeEvent,
+    UsageSummary, UsageTracker,
+};
+
+/// Process-wide source of evaluation run ids for lifecycle callback events. Not meaningful across
+/// processes; it only correlates the events of a single `evaluate_with_config` call.
+static NEXT_RUN_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvaluationOptions {
@@ -49,10 +57,18 @@ pub async fn evaluate(
     options: EvaluationOptions,
 ) -> EvaluationReport {
     let metric_names = metric_names(metrics);
-    // `raise_exceptions = false` collects per-cell failures and never returns Err.
-    let results = run_scoring(dataset, metrics, options.concurrency, false)
-        .await
-        .expect("run_scoring is infallible when raise_exceptions = false");
+    // `raise_exceptions = false` collects per-cell failures and never returns Err. No callbacks
+    // on the minimal path (an empty manager makes every emit a no-op).
+    let results = run_scoring(
+        dataset,
+        metrics,
+        options.concurrency,
+        false,
+        &CallbackManager::new(),
+        "",
+    )
+    .await
+    .expect("run_scoring is infallible when raise_exceptions = false");
     EvaluationReport {
         results,
         metric_names,
@@ -77,11 +93,18 @@ fn metric_names(metrics: &[Arc<dyn Metric>]) -> Vec<String> {
 /// from Python's `raise_exceptions=True`: Python raises whichever errored cell *completes* first
 /// (nondeterministic), and it stops scheduling further work; this implementation lets all in-flight
 /// cells finish, then returns the order-deterministic first error.
+///
+/// `callbacks` receive a [`RuntimeEvent::metric_started`] before each cell and a
+/// [`RuntimeEvent::metric_succeeded`] / [`RuntimeEvent::metric_failed`] after; an empty
+/// [`CallbackManager`] makes every emit a no-op. Events fire from the concurrent scoring tasks, so
+/// they interleave across cells in scheduling-nondeterministic order.
 async fn run_scoring(
     dataset: &EvaluationDataset,
     metrics: &[Arc<dyn Metric>],
     concurrency: usize,
     raise_exceptions: bool,
+    callbacks: &CallbackManager,
+    run_id: &str,
 ) -> Result<Vec<SampleEvaluation>, RagasError> {
     let names = metric_names(metrics);
     let metric_count = metrics.len();
@@ -94,9 +117,30 @@ async fn run_scoring(
         for (metric_index, metric) in metrics.iter().cloned().enumerate() {
             let semaphore = Arc::clone(&semaphore);
             let sample = sample.clone();
+            let callbacks = callbacks.clone();
+            let run_id = run_id.to_string();
+            let metric_name = metric.name().to_string();
             handles.push(tokio::spawn(async move {
                 let _permit = semaphore.acquire_owned().await.expect("semaphore open");
+                callbacks.emit(RuntimeEvent::metric_started(
+                    &run_id,
+                    &metric_name,
+                    sample_index,
+                ));
                 let outcome = metric.score(&sample).await;
+                if outcome.is_ok() {
+                    callbacks.emit(RuntimeEvent::metric_succeeded(
+                        &run_id,
+                        &metric_name,
+                        sample_index,
+                    ));
+                } else {
+                    callbacks.emit(RuntimeEvent::metric_failed(
+                        &run_id,
+                        &metric_name,
+                        sample_index,
+                    ));
+                }
                 (sample_index, metric_index, outcome)
             }));
         }
@@ -191,11 +235,16 @@ pub async fn evaluate_with(
 ///   returned [`EvaluationReport::usage`]. Wrap each LLM metric's provider in a
 ///   `UsageRecordingLlmProvider` sharing this same tracker so the recorded usage reflects the
 ///   calls actually made.
+/// - `callbacks` receive lifecycle [`RuntimeEvent`]s — `EvaluationStarted` once, then
+///   `MetricStarted` / `MetricSucceeded` / `MetricFailed` per (sample, metric) cell, then
+///   `EvaluationFinished` once (the faithful analog of ragas's `evaluate(..., callbacks=...)`).
+///   An empty manager (the default) is a no-op.
 #[derive(Clone, Default)]
 pub struct EvaluationConfig {
     pub run_config: RunConfig,
     pub raise_exceptions: bool,
     pub usage_tracker: Option<Arc<Mutex<UsageTracker>>>,
+    pub callbacks: CallbackManager,
 }
 
 impl EvaluationConfig {
@@ -204,6 +253,7 @@ impl EvaluationConfig {
             run_config,
             raise_exceptions: false,
             usage_tracker: None,
+            callbacks: CallbackManager::new(),
         }
     }
 
@@ -214,6 +264,11 @@ impl EvaluationConfig {
 
     pub fn with_usage_tracker(mut self, usage_tracker: Arc<Mutex<UsageTracker>>) -> Self {
         self.usage_tracker = Some(usage_tracker);
+        self
+    }
+
+    pub fn with_callbacks(mut self, callbacks: CallbackManager) -> Self {
+        self.callbacks = callbacks;
         self
     }
 }
@@ -228,13 +283,23 @@ pub async fn evaluate_with_config(
     config: &EvaluationConfig,
 ) -> Result<EvaluationReport, RagasError> {
     let metric_names = metric_names(metrics);
+    let run_id = format!("eval-{}", NEXT_RUN_ID.fetch_add(1, Ordering::Relaxed));
+    config
+        .callbacks
+        .emit(RuntimeEvent::evaluation_started(&run_id));
     let results = run_scoring(
         dataset,
         metrics,
         config.run_config.concurrency,
         config.raise_exceptions,
+        &config.callbacks,
+        &run_id,
     )
     .await?;
+    // Only emitted on the success path; a `raise_exceptions` abort returns Err above.
+    config
+        .callbacks
+        .emit(RuntimeEvent::evaluation_finished(&run_id));
     let usage = config
         .usage_tracker
         .as_ref()
@@ -423,5 +488,38 @@ mod tests {
             error.to_string().contains("task failed"),
             "unexpected error: {error}"
         );
+    }
+
+    #[tokio::test]
+    async fn evaluate_with_config_emits_lifecycle_callbacks() {
+        use crate::RuntimeEventKind;
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        let callbacks = CallbackManager::new().with_callback(move |event: &RuntimeEvent| {
+            captured.lock().unwrap().push(event.kind.clone());
+        });
+
+        // 2 samples x 2 metrics (one ok, one failing) = 4 cells.
+        let dataset = EvaluationDataset::new(vec![
+            SingleTurnSample::new("q1", "a1", vec!["c1".to_string()]),
+            SingleTurnSample::new("q2", "a2", vec!["c2".to_string()]),
+        ])
+        .expect("dataset");
+        let metrics = vec![ok_metric(), failing_metric()];
+
+        let config = EvaluationConfig::new(RunConfig::default()).with_callbacks(callbacks);
+        evaluate_with_config(&dataset, &metrics, &config)
+            .await
+            .expect("collect-and-continue succeeds");
+
+        let kinds = events.lock().unwrap().clone();
+        // Brackets the run: started first, finished last.
+        assert_eq!(kinds.first(), Some(&RuntimeEventKind::EvaluationStarted));
+        assert_eq!(kinds.last(), Some(&RuntimeEventKind::EvaluationFinished));
+        let count = |kind: RuntimeEventKind| kinds.iter().filter(|k| **k == kind).count();
+        assert_eq!(count(RuntimeEventKind::MetricStarted), 4);
+        assert_eq!(count(RuntimeEventKind::MetricSucceeded), 2); // ok metric over 2 samples
+        assert_eq!(count(RuntimeEventKind::MetricFailed), 2); // failing metric over 2 samples
     }
 }

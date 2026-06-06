@@ -542,6 +542,28 @@ impl RuntimeEvent {
             sample_index: Some(sample_index),
         }
     }
+
+    pub fn metric_failed(
+        run_id: impl Into<String>,
+        metric_name: impl Into<String>,
+        sample_index: usize,
+    ) -> Self {
+        Self {
+            kind: RuntimeEventKind::MetricFailed,
+            run_id: run_id.into(),
+            metric_name: Some(metric_name.into()),
+            sample_index: Some(sample_index),
+        }
+    }
+
+    pub fn evaluation_finished(run_id: impl Into<String>) -> Self {
+        Self {
+            kind: RuntimeEventKind::EvaluationFinished,
+            run_id: run_id.into(),
+            metric_name: None,
+            sample_index: None,
+        }
+    }
 }
 
 type RuntimeCallback = Arc<dyn Fn(&RuntimeEvent) + Send + Sync + 'static>;
