@@ -4,7 +4,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ChatMessage, EvaluationDataset, LlmProvider, LlmRequest, RagasError, SingleTurnSample,
+    ChatMessage, EmbeddingProvider, EmbeddingRequest, EvaluationDataset, LlmProvider, LlmRequest,
+    RagasError, SingleTurnSample, cosine_similarity,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -13,6 +14,10 @@ pub enum GraphProperty {
     Number(f64),
     Boolean(bool),
     TextList(Vec<String>),
+    /// A dense embedding vector (e.g. produced by [`EmbeddingExtractor`] and consumed by
+    /// [`build_cosine_relationships`]). Stored as `f32` to match the provider output and the
+    /// [`crate::cosine_similarity`] signature.
+    Vector(Vec<f32>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -395,6 +400,8 @@ fn graph_property_cluster_keys(value: &GraphProperty) -> Vec<String> {
         GraphProperty::Number(value) => vec![format!("{value:.6}")],
         GraphProperty::Boolean(value) => vec![value.to_string()],
         GraphProperty::TextList(values) => values.clone(),
+        // Embedding vectors are not sensible discrete cluster keys.
+        GraphProperty::Vector(_) => Vec::new(),
     }
 }
 
@@ -1248,6 +1255,132 @@ fn text_value((_, property): (String, GraphProperty)) -> String {
         GraphProperty::Text(value) => value,
         _ => String::new(),
     }
+}
+
+/// Embedding-backed extractor that writes a dense vector onto a graph node from its text.
+///
+/// The runnable analog of Python `ragas`'s `EmbeddingExtractor`: it reads the node's text
+/// property, embeds it via a real [`EmbeddingProvider`], and returns a [`GraphProperty::Vector`]
+/// under `property_name` (default `"embedding"`). Unlike the lenient [`LlmExtractor`], a node
+/// whose embed-text property is missing or non-text is an **error** (mirroring Python's
+/// `ValueError`), since an embedding has no meaningful empty value.
+pub struct EmbeddingExtractor {
+    embedding: Arc<dyn EmbeddingProvider>,
+    property_name: String,
+    embed_property_name: String,
+}
+
+impl EmbeddingExtractor {
+    /// Create an extractor over `embedding`, writing `"embedding"` from the node's `"text"`
+    /// property (this module's text key; Python's default is `page_content`).
+    pub fn new(embedding: Arc<dyn EmbeddingProvider>) -> Self {
+        Self {
+            embedding,
+            property_name: "embedding".to_string(),
+            embed_property_name: "text".to_string(),
+        }
+    }
+
+    /// Override the property the embedding is written to (Python `property_name`).
+    pub fn with_property_name(mut self, property_name: impl Into<String>) -> Self {
+        self.property_name = property_name.into();
+        self
+    }
+
+    /// Override the property the text to embed is read from (Python `embed_property_name`).
+    pub fn with_embed_property_name(mut self, embed_property_name: impl Into<String>) -> Self {
+        self.embed_property_name = embed_property_name.into();
+        self
+    }
+
+    /// Embed `node`'s text and return `(property_name, GraphProperty::Vector)`.
+    pub async fn extract(&self, node: &GraphNode) -> Result<(String, GraphProperty), RagasError> {
+        let Some(text) = text_property(node, &self.embed_property_name) else {
+            return Err(RagasError::Parse {
+                message: format!(
+                    "embedding extractor: node '{}' has no text property '{}'",
+                    node.id, self.embed_property_name
+                ),
+            });
+        };
+        let mut response = self
+            .embedding
+            .embed(EmbeddingRequest {
+                input: vec![text.to_string()],
+            })
+            .await?;
+        if response.embeddings.len() != 1 {
+            return Err(RagasError::Provider {
+                message: format!(
+                    "embedding extractor: expected 1 embedding, got {}",
+                    response.embeddings.len()
+                ),
+            });
+        }
+        let vector = response.embeddings.remove(0);
+        Ok((self.property_name.clone(), GraphProperty::Vector(vector)))
+    }
+}
+
+/// Add `cosine_similarity` relationships between graph nodes that carry an `embedding`
+/// [`GraphProperty::Vector`], for every pair whose cosine similarity is `>= threshold`.
+///
+/// Faithful to Python `ragas`'s `CosineSimilarityBuilder` (property `"embedding"`, relationship
+/// `"cosine_similarity"`, score carried as a `cosine_similarity` edge property), with one
+/// **documented divergence**: Python errors if *any* node lacks the embedding because its
+/// transforms engine pre-filters; that engine doesn't exist here yet, so this filters to the
+/// embedded nodes instead of erroring. Embedded nodes must share one dimension (mirrors
+/// `_validate_embedding_shapes`); a mismatch is an error. One directed edge is added per
+/// `i < j` pair (the relationship is undirected — treat source/target symmetrically).
+pub fn build_cosine_relationships(
+    mut graph: KnowledgeGraph,
+    threshold: f64,
+) -> Result<KnowledgeGraph, RagasError> {
+    let embedded: Vec<(usize, Vec<f32>)> = graph
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| match node.properties.get("embedding") {
+            Some(GraphProperty::Vector(vector)) => Some((idx, vector.clone())),
+            _ => None,
+        })
+        .collect();
+
+    if let Some((_, first)) = embedded.first() {
+        let dimension = first.len();
+        if let Some((idx, vector)) = embedded.iter().find(|(_, v)| v.len() != dimension) {
+            return Err(RagasError::Parse {
+                message: format!(
+                    "cosine builder: embedding on node '{}' has length {} (expected {dimension})",
+                    graph.nodes[*idx].id,
+                    vector.len()
+                ),
+            });
+        }
+    }
+
+    let mut new_edges = Vec::new();
+    for a in 0..embedded.len() {
+        for b in (a + 1)..embedded.len() {
+            let (i, vi) = (embedded[a].0, &embedded[a].1);
+            let (j, vj) = (embedded[b].0, &embedded[b].1);
+            let score = cosine_similarity(vi, vj);
+            if score >= threshold {
+                new_edges.push(
+                    GraphEdge::new(
+                        graph.nodes[i].id.clone(),
+                        graph.nodes[j].id.clone(),
+                        "cosine_similarity",
+                    )
+                    .with_property("cosine_similarity", GraphProperty::Number(score)),
+                );
+            }
+        }
+    }
+    for edge in new_edges {
+        graph = graph.add_edge(edge);
+    }
+    Ok(graph)
 }
 
 #[cfg(test)]
@@ -2519,6 +2652,222 @@ like Berlin and Shanghai.";
             "summary ({} chars) should be shorter than source ({} chars)",
             summary.len(),
             text.len()
+        );
+    }
+
+    #[test]
+    fn graph_property_vector_roundtrips() {
+        let graph = KnowledgeGraph::new().add_node(
+            GraphNode::new("n", "chunk")
+                .with_property("embedding", GraphProperty::Vector(vec![0.1, 0.2, 0.3])),
+        );
+        let json = serde_json::to_string(&graph).expect("serialize");
+        let back: KnowledgeGraph = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, graph);
+        assert!(matches!(
+            back.node("n").unwrap().properties.get("embedding"),
+            Some(GraphProperty::Vector(values)) if values.len() == 3
+        ));
+    }
+
+    fn embedded_node(id: &str, vector: Vec<f32>) -> GraphNode {
+        GraphNode::new(id, "chunk").with_property("embedding", GraphProperty::Vector(vector))
+    }
+
+    #[test]
+    fn cosine_builder_links_similar_above_threshold() {
+        // a == b (cosine 1.0); c is orthogonal to both (cosine 0.0).
+        let graph = KnowledgeGraph::new()
+            .add_node(embedded_node("a", vec![1.0, 0.0]))
+            .add_node(embedded_node("b", vec![1.0, 0.0]))
+            .add_node(embedded_node("c", vec![0.0, 1.0]));
+
+        let linked = build_cosine_relationships(graph, 0.5).expect("build");
+        let edges = linked.edges_by_relationship("cosine_similarity");
+        // Only a<->b clears the 0.5 threshold; a-c and b-c are 0.0.
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].source_id, "a");
+        assert_eq!(edges[0].target_id, "b");
+        let Some(GraphProperty::Number(score)) = edges[0].properties.get("cosine_similarity")
+        else {
+            panic!("expected a numeric cosine_similarity score");
+        };
+        assert!(
+            *score > 0.99,
+            "identical vectors should score ~1.0, got {score}"
+        );
+    }
+
+    #[test]
+    fn cosine_builder_skips_nodes_without_embedding() {
+        // A non-embedded node is skipped (not an error) — the documented divergence from
+        // Python, which pre-filters via its transforms engine.
+        let graph = KnowledgeGraph::new()
+            .add_node(
+                GraphNode::new("doc", "document")
+                    .with_property("title", GraphProperty::Text("T".to_string())),
+            )
+            .add_node(embedded_node("a", vec![1.0, 0.0]))
+            .add_node(embedded_node("b", vec![1.0, 0.0]));
+        let linked = build_cosine_relationships(graph, 0.5).expect("build");
+        assert_eq!(linked.edges_by_relationship("cosine_similarity").len(), 1);
+    }
+
+    #[test]
+    fn cosine_builder_rejects_mismatched_dimensions() {
+        let graph = KnowledgeGraph::new()
+            .add_node(embedded_node("a", vec![1.0, 0.0]))
+            .add_node(embedded_node("b", vec![1.0, 0.0, 0.0]));
+        let Err(RagasError::Parse { message }) = build_cosine_relationships(graph, 0.5) else {
+            panic!("expected a Parse error on mismatched embedding dimensions");
+        };
+        // The error names the offending node and the dimensions, for actionable diagnosis.
+        assert!(
+            message.contains('b') && message.contains("length") && message.contains("expected"),
+            "error should identify node + dimensions, got: {message}"
+        );
+    }
+
+    #[test]
+    fn cosine_builder_empty_and_single_node_return_no_edges() {
+        let empty = build_cosine_relationships(KnowledgeGraph::new(), 0.5).expect("empty graph");
+        assert!(empty.edges_by_relationship("cosine_similarity").is_empty());
+
+        // A single embedded node has no i<j pair, so no edges (but the node is preserved).
+        let single = build_cosine_relationships(
+            KnowledgeGraph::new().add_node(embedded_node("only", vec![1.0, 0.0])),
+            0.5,
+        )
+        .expect("single node");
+        assert_eq!(single.nodes.len(), 1);
+        assert!(single.edges_by_relationship("cosine_similarity").is_empty());
+    }
+
+    #[test]
+    fn cosine_builder_threshold_is_inclusive_and_filters_negative() {
+        // x⊥y (cosine 0.0), x·z anti-parallel (cosine -1.0), y⊥z (cosine 0.0).
+        let graph = || {
+            KnowledgeGraph::new()
+                .add_node(embedded_node("x", vec![1.0, 0.0]))
+                .add_node(embedded_node("y", vec![0.0, 1.0]))
+                .add_node(embedded_node("z", vec![-1.0, 0.0]))
+        };
+        // threshold 0.0 is inclusive (>=): the two orthogonal (0.0) pairs link; the -1.0 pair
+        // is filtered out.
+        let at_zero = build_cosine_relationships(graph(), 0.0).expect("build");
+        let edges = at_zero.edges_by_relationship("cosine_similarity");
+        assert_eq!(
+            edges.len(),
+            2,
+            "0.0-threshold includes the two 0.0 pairs only"
+        );
+        assert!(
+            !edges
+                .iter()
+                .any(|edge| edge.source_id == "x" && edge.target_id == "z"),
+            "the anti-parallel x-z pair (-1.0) must be filtered at threshold 0.0"
+        );
+        // Lowering the threshold to -1.0 admits the anti-parallel pair too (all 3 pairs).
+        let at_neg = build_cosine_relationships(graph(), -1.0).expect("build");
+        assert_eq!(at_neg.edges_by_relationship("cosine_similarity").len(), 3);
+    }
+
+    #[tokio::test]
+    async fn embedding_extractor_stores_vector_and_errors_on_missing_text() {
+        let embedding = Arc::new(crate::MockEmbeddingProvider::new(vec![vec![0.1, 0.2, 0.3]]));
+        let (name, property) = EmbeddingExtractor::new(embedding.clone())
+            .extract(&text_node("n1", "some text to embed"))
+            .await
+            .expect("embedding");
+        assert_eq!(name, "embedding");
+        assert_eq!(property, GraphProperty::Vector(vec![0.1, 0.2, 0.3]));
+
+        // Missing text property -> error (faithful to Python's ValueError, unlike LlmExtractor).
+        let result = EmbeddingExtractor::new(embedding)
+            .extract(&GraphNode::new("n2", "chunk"))
+            .await;
+        assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    #[tokio::test]
+    async fn embedding_extractor_property_name_overrides() {
+        let embedding = Arc::new(crate::MockEmbeddingProvider::new(vec![vec![0.5, 0.5]]));
+        // Text lives under "body" (not the default "text"); the embedding goes to "vec".
+        let node = GraphNode::new("n", "chunk").with_property(
+            "body",
+            GraphProperty::Text("text under a custom key".to_string()),
+        );
+        let (name, property) = EmbeddingExtractor::new(embedding)
+            .with_property_name("vec")
+            .with_embed_property_name("body")
+            .extract(&node)
+            .await
+            .expect("embedding");
+        // Reading from "body" succeeded (the node has no "text") and the output key is "vec".
+        assert_eq!(name, "vec");
+        assert_eq!(property, GraphProperty::Vector(vec![0.5, 0.5]));
+    }
+
+    /// Live gate (env-gated): real embeddings make two semantically similar nodes score
+    /// strictly higher than an unrelated node. Threshold -1.0 forces an edge per pair so the
+    /// scores are comparable; the proof is the ordering, not an absolute cutoff.
+    #[tokio::test]
+    #[ignore = "requires embedding provider env; run with --ignored"]
+    async fn live_cosine_relationships_link_semantically_similar_nodes() {
+        let Some(client) = crate::ProviderConfig::from_env().embedding_client() else {
+            eprintln!("skipping live cosine builder: embedding provider not set");
+            return;
+        };
+        let embedding: Arc<dyn EmbeddingProvider> = Arc::new(client);
+
+        let texts = [
+            (
+                "cat-1",
+                "Cats are small domestic felines commonly kept as pets.",
+            ),
+            ("cat-2", "Domestic cats are popular household pet animals."),
+            (
+                "market",
+                "The stock market fell sharply after the interest rate decision.",
+            ),
+        ];
+        let mut graph = KnowledgeGraph::new();
+        for (id, text) in texts {
+            let (name, vector) = EmbeddingExtractor::new(embedding.clone())
+                .extract(&text_node(id, text))
+                .await
+                .expect("live embed");
+            graph = graph.add_node(text_node(id, text).with_property(name, vector));
+        }
+
+        let linked = build_cosine_relationships(graph, -1.0).expect("build");
+        let edges = linked.edges_by_relationship("cosine_similarity");
+        let score = |a: &str, b: &str| -> f64 {
+            edges
+                .iter()
+                .find(|edge| {
+                    (edge.source_id == a && edge.target_id == b)
+                        || (edge.source_id == b && edge.target_id == a)
+                })
+                .and_then(|edge| match edge.properties.get("cosine_similarity") {
+                    Some(GraphProperty::Number(value)) => Some(*value),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no cosine edge for {a},{b}"))
+        };
+
+        let cats = score("cat-1", "cat-2");
+        let cat_market = score("cat-1", "market");
+        // Stronger than bare ordering: the two cat sentences must be substantially similar in
+        // absolute terms AND beat the unrelated market sentence by a clear margin — so the gate
+        // can't pass on degenerate/collapsed embeddings.
+        assert!(
+            cats > 0.5,
+            "two clearly-related cat sentences should be substantially similar, got {cats}"
+        );
+        assert!(
+            cats - cat_market > 0.1,
+            "cat/cat similarity ({cats}) should exceed cat/market ({cat_market}) by a clear margin"
         );
     }
 }
