@@ -1,4 +1,4 @@
-//! Resilient + caching provider decorators.
+//! Resilient, caching, and usage-recording provider decorators.
 //!
 //! [`RunConfig`]'s `retry` and `timeout` were previously dead config — nothing in the
 //! evaluation path (`evaluate` / `AsyncExecutor`) applied them, and no layer cached provider
@@ -26,7 +26,7 @@ use tokio::time::{Duration, sleep, timeout};
 
 use crate::{
     EmbeddingProvider, EmbeddingRequest, EmbeddingResponse, LlmProvider, LlmRequest, LlmResponse,
-    RagasError, RetryConfig, RunConfig, TimeoutConfig,
+    RagasError, RetryConfig, RunConfig, TimeoutConfig, UsageTracker,
 };
 
 /// Run `make_future` with retry (exponential backoff) and a per-operation timeout. Each attempt
@@ -130,6 +130,46 @@ impl LlmProvider for ResilientLlmProvider {
             async move { inner.generate(request).await }
         })
         .await
+    }
+}
+
+/// An [`LlmProvider`] that records each successful response's token usage into a shared
+/// [`UsageTracker`], attributed to a `(provider, metric)` label. A response carrying no `usage` is
+/// passed through unrecorded. Transparent otherwise — compose it over the base (or resilient)
+/// provider so the recorded usage reflects the calls actually made.
+pub struct UsageRecordingLlmProvider {
+    inner: Arc<dyn LlmProvider>,
+    tracker: Arc<Mutex<UsageTracker>>,
+    provider_label: String,
+    metric_label: String,
+}
+
+impl UsageRecordingLlmProvider {
+    pub fn new(
+        inner: Arc<dyn LlmProvider>,
+        tracker: Arc<Mutex<UsageTracker>>,
+        provider_label: impl Into<String>,
+        metric_label: impl Into<String>,
+    ) -> Self {
+        Self {
+            inner,
+            tracker,
+            provider_label: provider_label.into(),
+            metric_label: metric_label.into(),
+        }
+    }
+}
+
+#[async_trait]
+impl LlmProvider for UsageRecordingLlmProvider {
+    async fn generate(&self, request: LlmRequest) -> Result<LlmResponse, RagasError> {
+        let response = self.inner.generate(request).await?;
+        if let Some(usage) = response.usage.clone()
+            && let Ok(mut tracker) = self.tracker.lock()
+        {
+            tracker.record(&self.provider_label, &self.metric_label, usage);
+        }
+        Ok(response)
     }
 }
 
@@ -431,5 +471,42 @@ mod tests {
         provider.generate(other).await.expect("other");
         assert_eq!(counting.calls(), 2);
         assert_eq!(provider.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn usage_recording_provider_aggregates_token_usage_by_label() {
+        use crate::TokenUsage;
+
+        struct FixedUsageLlm;
+        #[async_trait]
+        impl LlmProvider for FixedUsageLlm {
+            async fn generate(&self, _request: LlmRequest) -> Result<LlmResponse, RagasError> {
+                Ok(LlmResponse {
+                    content: "ok".to_string(),
+                    usage: Some(TokenUsage {
+                        prompt_tokens: Some(10),
+                        completion_tokens: Some(5),
+                        total_tokens: Some(15),
+                    }),
+                })
+            }
+        }
+
+        let tracker = Arc::new(Mutex::new(UsageTracker::new()));
+        let provider = UsageRecordingLlmProvider::new(
+            Arc::new(FixedUsageLlm),
+            Arc::clone(&tracker),
+            "chat",
+            "faithfulness",
+        );
+        provider.generate(request()).await.expect("first");
+        provider.generate(request()).await.expect("second");
+
+        let summary = tracker.lock().expect("tracker").summary();
+        assert_eq!(summary.total.total_tokens, 30);
+        assert_eq!(summary.total.prompt_tokens, 20);
+        assert_eq!(summary.total.completion_tokens, 10);
+        assert_eq!(summary.by_metric["faithfulness"].total_tokens, 30);
+        assert_eq!(summary.by_provider["chat"].total_tokens, 30);
     }
 }

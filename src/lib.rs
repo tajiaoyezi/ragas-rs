@@ -108,6 +108,7 @@ pub use providers::{
 };
 pub use resilience::{
     CachingEmbeddingProvider, CachingLlmProvider, ResilientEmbeddingProvider, ResilientLlmProvider,
+    UsageRecordingLlmProvider,
 };
 pub use runtime::{
     AsyncExecutor, CacheKey, CallbackManager, CancellationConfig, ExecutorJobResult,

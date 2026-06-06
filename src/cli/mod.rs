@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -9,8 +9,9 @@ use crate::{
     EvaluationSample, ExtractionBundle, FaithfulnessMetric, FnMetric, GraphNode,
     InMemoryDatasetBackend, KnowledgeGraph, LlmContextRecallMetric, LlmProvider, Metric,
     MetricResult, MetricValue, PersonaGenerator, RagasError, ResilientLlmProvider, RetryConfig,
-    RunConfig, SingleTurnSample, TimeoutConfig, attach_extractions, build_chunk_relationships,
-    evaluate_with, rouge_l_recall, split_text_into_chunks, synthesize_single_hop_sample,
+    RunConfig, SingleTurnSample, TimeoutConfig, UsageRecordingLlmProvider, UsageTracker,
+    attach_extractions, build_chunk_relationships, evaluate_with, rouge_l_recall,
+    split_text_into_chunks, synthesize_single_hop_sample,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,6 +173,7 @@ fn run_evaluate(
         .collect();
     let skipped = total_samples - single_turn.len();
 
+    let usage = Arc::new(Mutex::new(UsageTracker::new()));
     let evaluated = if single_turn.is_empty() {
         None
     } else {
@@ -182,11 +184,15 @@ fn run_evaluate(
         // previously inert — nothing in the eval path applied it).
         let run_config = eval_run_config();
         let provider = provider.map(|provider| resilient_eval_provider(provider, &run_config));
-        let metrics = build_evaluate_metrics(provider, any_reference);
+        let metrics = build_evaluate_metrics(provider, any_reference, &usage);
         // Drive the async evaluation pipeline from this synchronous CLI entry point.
         let report = run_async(evaluate_with(&scorable, &metrics, &run_config));
         Some(report)
     };
+    // Token usage actually consumed by the LLM metrics' calls (all-zero when offline).
+    let usage_summary = usage.lock().expect("usage tracker not poisoned").summary();
+    let usage_json = serde_json::to_value(&usage_summary)
+        .map_err(|error| parse_error(format!("usage summary serialization failed: {error}")))?;
 
     let aggregates = evaluated.as_ref().map(aggregate_report).unwrap_or_default();
     let summary = render_summary(&aggregates);
@@ -213,6 +219,7 @@ fn run_evaluate(
         "skipped_samples": skipped,
         "metrics": aggregates_json,
         "summary": summary,
+        "usage": usage_json.clone(),
     });
     let report_string = serde_json::to_string(&report_json)
         .map_err(|error| parse_error(format!("evaluate report serialization failed: {error}")))?;
@@ -225,6 +232,7 @@ fn run_evaluate(
         "sample_count": total_samples,
         "metrics": aggregates_json,
         "summary": summary,
+        "usage": usage_json,
     });
     cli_output(stdout)
 }
@@ -241,6 +249,7 @@ fn run_evaluate(
 fn build_evaluate_metrics(
     provider: Option<Arc<dyn LlmProvider>>,
     any_reference: bool,
+    usage: &Arc<Mutex<UsageTracker>>,
 ) -> Vec<Arc<dyn Metric>> {
     let rouge = Arc::new(FnMetric::new("rouge_l", |sample: &SingleTurnSample| {
         let response = sample.response.clone();
@@ -264,17 +273,42 @@ fn build_evaluate_metrics(
     let mut metrics: Vec<Arc<dyn Metric>> = vec![rouge];
 
     if let Some(provider) = provider {
-        metrics.push(Arc::new(FaithfulnessMetric::new(Arc::clone(&provider))));
+        metrics.push(Arc::new(FaithfulnessMetric::new(usage_recording(
+            Arc::clone(&provider),
+            usage,
+            "faithfulness",
+        ))));
         // Context utilization needs no reference (the common production case), so it always runs.
-        metrics.push(Arc::new(ContextUtilizationMetric::new(Arc::clone(
-            &provider,
+        metrics.push(Arc::new(ContextUtilizationMetric::new(usage_recording(
+            Arc::clone(&provider),
+            usage,
+            "context_utilization",
         ))));
         if any_reference {
-            metrics.push(Arc::new(LlmContextRecallMetric::new(provider)));
+            metrics.push(Arc::new(LlmContextRecallMetric::new(usage_recording(
+                provider,
+                usage,
+                "context_recall",
+            ))));
         }
     }
 
     metrics
+}
+
+/// Wrap a provider so a metric's LLM calls record token usage into `usage`, attributed to the
+/// metric name (the chat provider is labelled `"chat"`).
+fn usage_recording(
+    provider: Arc<dyn LlmProvider>,
+    usage: &Arc<Mutex<UsageTracker>>,
+    metric: &str,
+) -> Arc<dyn LlmProvider> {
+    Arc::new(UsageRecordingLlmProvider::new(
+        provider,
+        Arc::clone(usage),
+        "chat",
+        metric,
+    ))
 }
 
 /// Conservative resilience config for the CLI evaluate path. Deliberately NOT
@@ -589,6 +623,33 @@ mod tests {
                 });
             }
             self.inner.generate(request).await
+        }
+    }
+
+    /// Wraps [`PromptRoutingLlm`], stamping a fixed token usage onto every response so the CLI
+    /// usage-summary wiring can be asserted deterministically.
+    struct UsageStampingLlm {
+        inner: PromptRoutingLlm,
+    }
+
+    impl UsageStampingLlm {
+        fn new() -> Self {
+            Self {
+                inner: PromptRoutingLlm::new(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for UsageStampingLlm {
+        async fn generate(&self, request: LlmRequest) -> Result<LlmResponse, RagasError> {
+            let mut response = self.inner.generate(request).await?;
+            response.usage = Some(crate::TokenUsage {
+                prompt_tokens: Some(7),
+                completion_tokens: Some(3),
+                total_tokens: Some(10),
+            });
+            Ok(response)
         }
     }
 
@@ -953,6 +1014,60 @@ mod tests {
     }
 
     #[test]
+    fn evaluate_command_reports_token_usage_summary() {
+        // With a usage-stamping provider, the evaluate command surfaces a usage summary: total
+        // tokens plus a per-metric / per-provider breakdown from the LLM metrics' real calls.
+        let dataset = EvaluationDataset::<EvaluationSample>::from_samples(vec![
+            EvaluationSample::SingleTurn(
+                SingleTurnSample::new(
+                    "What is Ragas and who maintains it?",
+                    "Ragas evaluates LLM applications. It is maintained by Exploding Gradients.",
+                    vec!["Ragas is a framework to evaluate LLM applications.".to_string()],
+                )
+                .with_reference("Ragas evaluates RAG applications."),
+            ),
+        ])
+        .expect("dataset");
+
+        let mut runtime = CliRuntime::new();
+        runtime
+            .datasets_mut()
+            .save("datasets/usage", &dataset)
+            .expect("save dataset");
+
+        let provider = Arc::new(UsageStampingLlm::new());
+        let output = run_cli_command_with_provider(
+            &mut runtime,
+            CliCommand::Evaluate {
+                input: "datasets/usage".to_string(),
+                report: "reports/usage".to_string(),
+            },
+            Some(provider as Arc<dyn LlmProvider>),
+        )
+        .expect("evaluate command");
+
+        let stdout_json: Value = serde_json::from_str(&output.stdout).expect("stdout JSON");
+        let usage = &stdout_json["usage"];
+        // 4 LLM calls (faithfulness x2, context_utilization, context_recall) x (7 prompt + 3
+        // completion = 10 total) tokens.
+        assert_eq!(usage["total"]["total_tokens"], 40);
+        assert_eq!(usage["total"]["prompt_tokens"], 28);
+        assert_eq!(usage["total"]["completion_tokens"], 12);
+        assert_eq!(usage["by_metric"]["faithfulness"]["total_tokens"], 20);
+        assert_eq!(
+            usage["by_metric"]["context_utilization"]["total_tokens"],
+            10
+        );
+        assert_eq!(usage["by_metric"]["context_recall"]["total_tokens"], 10);
+        assert_eq!(usage["by_provider"]["chat"]["total_tokens"], 40);
+
+        // The same usage summary is persisted into the saved report.
+        let report = runtime.report("reports/usage").expect("written report");
+        let report_json: Value = serde_json::from_str(report).expect("report JSON");
+        assert_eq!(report_json["usage"]["total"]["total_tokens"], 40);
+    }
+
+    #[test]
     fn evaluate_command_stays_offline_without_provider() {
         // Without a provider, only the deterministic offline metric runs (no LLM metrics),
         // preserving the prior CLI behavior exactly.
@@ -1127,7 +1242,8 @@ mod tests {
                 "report",
                 "sample_count",
                 "status",
-                "summary"
+                "summary",
+                "usage"
             ]
         );
         assert!(snapshot.stderr_empty);
