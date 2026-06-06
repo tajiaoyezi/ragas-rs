@@ -426,8 +426,12 @@ impl Metric for SemanticSimilarityMetric {
 
     /// Faithful port of ragas' SemanticSimilarity: embed the response and the reference, take the
     /// cosine similarity of the two vectors (clamped to `[0, 1]` via
-    /// [`semantic_similarity_from_vectors`]). With a `threshold`, the score is binarized; otherwise
-    /// the raw cosine is returned. Requires a `reference`.
+    /// [`semantic_similarity_from_vectors`]). With a positive `threshold`, the score is binarized;
+    /// otherwise the raw cosine is returned. Requires a `reference`.
+    ///
+    /// Two ragas-faithful edge behaviors: an empty `response`/`reference` is coerced to a single
+    /// space before embedding (ragas's `answer or " "`), and a `threshold` of `0.0` is treated as
+    /// "no threshold" (ragas gates binarization on Python truthiness, `if self.threshold:`).
     async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
         let Some(reference) = sample.reference.as_ref() else {
             return Err(RagasError::Parse {
@@ -435,10 +439,19 @@ impl Metric for SemanticSimilarityMetric {
             });
         };
 
+        // ragas coerces an empty string to " " before embedding (`answer or " "`), avoiding a
+        // degenerate/zero embedding for "".
+        let coerce = |text: &str| -> String {
+            if text.is_empty() {
+                " ".to_string()
+            } else {
+                text.to_string()
+            }
+        };
         let embedded = self
             .embedding
             .embed(EmbeddingRequest {
-                input: vec![sample.response.clone(), reference.clone()],
+                input: vec![coerce(&sample.response), coerce(reference)],
             })
             .await?;
         if embedded.embeddings.len() != 2 {
@@ -454,8 +467,9 @@ impl Metric for SemanticSimilarityMetric {
                     message: "semantic_similarity produced no score".to_string(),
                 })?;
 
+        // A non-positive threshold is treated as "no threshold" (ragas: `if self.threshold:`).
         let (score, reason) = match self.threshold {
-            Some(threshold) => {
+            Some(threshold) if threshold > 0.0 => {
                 let passed = threshold_semantic_similarity(
                     raw,
                     SemanticThresholdPolicy::inclusive(threshold),
@@ -467,7 +481,7 @@ impl Metric for SemanticSimilarityMetric {
                     format!("cosine {raw:.6} vs inclusive threshold {threshold:.3} -> {passed}"),
                 )
             }
-            None => (raw, format!("embedding cosine similarity {raw:.6}")),
+            _ => (raw, format!("embedding cosine similarity {raw:.6}")),
         };
 
         Ok(MetricResult::success(self.name(), MetricValue::numeric(score)).with_reason(reason))
@@ -3630,6 +3644,36 @@ mod tests {
                 .expect("fail"),
         );
         assert_eq!(fail, 0.0, "0.7071 < 0.8 -> 0.0");
+
+        // A threshold of 0.0 is "no threshold" (ragas truthiness): the raw cosine is returned,
+        // NOT binarized to 1.0 (every clamped cosine is >= 0.0).
+        let zero_threshold = provider(&[("a", vec![1.0, 0.0]), ("b", vec![0.0, 1.0])]);
+        let raw_zero = numeric(
+            &SemanticSimilarityMetric::new(zero_threshold)
+                .with_threshold(0.0)
+                .score(&sample("a", "b"))
+                .await
+                .expect("zero threshold"),
+        );
+        assert_eq!(
+            raw_zero, 0.0,
+            "threshold 0.0 means no threshold -> raw cosine 0.0"
+        );
+
+        // An empty response is coerced to " " before embedding (ragas `answer or " "`). With " "
+        // and the reference mapped to the same vector the score is 1.0 — proving "" was coerced,
+        // not sent through (an unmapped "" -> empty vector -> cosine 0.0).
+        let coerced = provider(&[(" ", vec![1.0, 0.0]), ("ref", vec![1.0, 0.0])]);
+        let empty_response = numeric(
+            &SemanticSimilarityMetric::new(coerced)
+                .score(&sample("", "ref"))
+                .await
+                .expect("empty response coerced"),
+        );
+        assert!(
+            (empty_response - 1.0).abs() < 1e-9,
+            "empty response coerced to ' ' -> cosine 1.0, got {empty_response}"
+        );
 
         // A missing reference is a hard error (the metric is reference-based).
         let no_reference = SingleTurnSample::new("q", "resp", vec!["c".to_string()]);
