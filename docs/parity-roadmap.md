@@ -186,6 +186,16 @@ latent bugs** — high value because they affect every metric.*
 > aggressive 10×/60s/180s. Proven by a flaky-provider test (first call fails → metrics still score,
 > 0 errors, exactly one retry). Caching/usage decorators remain opt-in (next Bucket-A slices).
 
+> ✅ **Usage tracking wired 2026-06-06** — new `UsageRecordingLlmProvider` decorator; the CLI
+> evaluate report now carries a `usage` summary (`{total, by_provider, by_metric}` with
+> prompt/completion/total tokens) from the LLM metrics' real calls (per-metric attribution; offline
+> → all-zero). Also fixed a test-hygiene bug: four "offline" CLI unit tests were resolving a live
+> provider from `.env` and making real API calls during `cargo test` (~40s, cost tokens, network-
+> dependent) — switched them to `run_cli_command_with_provider(None)`; lib suite ~40s → ~0.26s,
+> truly offline. **Still opt-in / TODO:** caching decorator into eval, callbacks/progress events,
+> `usage_summary` on the `EvaluationReport` struct (currently CLI-output only, since `evaluate_with`
+> can't see providers), tiktoken token counts, cost (rates) on the summary.
+
 | Item | Effort | Value | Approach |
 |---|---|---|---|
 | **RunConfig retry/backoff + per-op timeout** | M | high | **CRITICAL:** retry & timeout are currently *dead config* (only concurrency is consumed). Add exponential-backoff wrapper + `tokio::time::timeout` per job. |
