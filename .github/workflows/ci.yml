@@ -20,3 +20,9 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Test
         run: cargo test
+      # The optional `tokenizer` feature (tiktoken-rs) is off by default; cover it explicitly so
+      # the feature-gated token-counting code does not bit-rot.
+      - name: Clippy (tokenizer feature)
+        run: cargo clippy --all-targets --features tokenizer -- -D warnings
+      - name: Test (tokenizer feature)
+        run: cargo test --features tokenizer
