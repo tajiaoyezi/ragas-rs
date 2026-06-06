@@ -1,3 +1,4 @@
+pub mod agentic;
 pub mod backends;
 pub mod benchmarks;
 pub mod cli;
@@ -19,6 +20,7 @@ pub mod schema;
 pub mod testset;
 pub mod validation;
 
+pub use agentic::{ToolCallAccuracyMetric, ToolCallF1Metric};
 pub use backends::{
     CsvDatasetBackend, DatasetBackend, DiskCacheCompatibility, GDriveAuthMode, GDriveBackendConfig,
     GDriveSheetTransport, GoogleDriveDatasetBackend, InMemoryDatasetBackend,

@@ -100,6 +100,10 @@ pub struct MultiTurnSample {
     pub messages: Vec<Message>,
     pub reference: Option<String>,
     pub rubrics: Vec<Rubric>,
+    /// Expected/ground-truth tool calls for the tool-call metrics. Optional; omitted from JSON
+    /// when empty (backward compatible).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reference_tool_calls: Vec<ToolCall>,
     pub metadata: HashMap<String, String>,
 }
 
@@ -109,6 +113,7 @@ impl MultiTurnSample {
             messages,
             reference: None,
             rubrics: Vec::new(),
+            reference_tool_calls: Vec::new(),
             metadata: HashMap::new(),
         }
     }
@@ -120,6 +125,11 @@ impl MultiTurnSample {
 
     pub fn with_rubric(mut self, rubric: Rubric) -> Self {
         self.rubrics.push(rubric);
+        self
+    }
+
+    pub fn with_reference_tool_calls(mut self, reference_tool_calls: Vec<ToolCall>) -> Self {
+        self.reference_tool_calls = reference_tool_calls;
         self
     }
 
