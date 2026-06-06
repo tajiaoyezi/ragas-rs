@@ -178,6 +178,14 @@ latent bugs** — high value because they affect every metric.*
 > (column_map / raise_exceptions / token parser / init), per-provider TokenUsageParser + cost on
 > report, tiktoken-rs tokenizer, and the PydanticPrompt renderer + Loss foundation.
 
+> ✅ **Wired 2026-06-06** — added `evaluate_with(dataset, metrics, &RunConfig)` (RunConfig-driven
+> carrier; minimal `evaluate()` unchanged), and the **CLI evaluate path now wraps the chat provider
+> in `ResilientLlmProvider`** (retry + per-op timeout) before building metrics, so retry/timeout is
+> no longer opt-in dead config on the default path. Uses a **conservative** eval config (3 attempts /
+> 250ms→2s backoff / 60s per-op timeout, concurrency 1), deliberately not `RunConfig::default`'s
+> aggressive 10×/60s/180s. Proven by a flaky-provider test (first call fails → metrics still score,
+> 0 errors, exactly one retry). Caching/usage decorators remain opt-in (next Bucket-A slices).
+
 | Item | Effort | Value | Approach |
 |---|---|---|---|
 | **RunConfig retry/backoff + per-op timeout** | M | high | **CRITICAL:** retry & timeout are currently *dead config* (only concurrency is consumed). Add exponential-backoff wrapper + `tokio::time::timeout` per job. |
