@@ -72,11 +72,11 @@ pub use metric::{
 };
 pub use metrics::{
     AgentGoalOutcome, AnswerCorrectnessWeights, AspectCriticConfig, AspectCriticMode,
-    ContextPrecisionVariant, DetailedMetricResult, DomainRubric, FactualCorrectnessCounts,
-    FaithfulnessJudgeContract, InstanceRubric, MetricError, MetricErrorKind, MetricEvidence,
-    MetricMetadata, MetricProviderRequirement, MetricRegistry, MetricRegistryEntry,
-    MetricSampleKind, MetricValueType, MultiTurnMetric, MultimodalMetricKind, QuotedSpan,
-    RougeMode, RougeScore, RougeScores, RougeType, RubricCriterion, RubricMetric,
+    ContextPrecisionVariant, DetailedMetricResult, DistanceMeasure, DomainRubric,
+    FactualCorrectnessCounts, FaithfulnessJudgeContract, InstanceRubric, MetricError,
+    MetricErrorKind, MetricEvidence, MetricMetadata, MetricProviderRequirement, MetricRegistry,
+    MetricRegistryEntry, MetricSampleKind, MetricValueType, MultiTurnMetric, MultimodalMetricKind,
+    QuotedSpan, RougeMode, RougeScore, RougeScores, RougeType, RubricCriterion, RubricMetric,
     ScoreNormalizationPolicy, SemanticThresholdPolicy, SingleTurnMetric, SqlJudgeVerdict,
     SummarizationSignals, ToolCallOrderPolicy, TopicAdherence, agent_goal_accuracy,
     answer_correctness, answer_relevancy_from_embedding_similarity,
@@ -87,8 +87,8 @@ pub use metrics::{
     normalize_score, quoted_citation_coverage, quoted_span_overlap, response_groundedness,
     rouge_l_recall, score_aspect_critic, semantic_similarity_batch,
     semantic_similarity_from_vectors, sql_semantic_equivalence, string_distance_similarity,
-    summarization_score_from_judge_output, threshold_semantic_similarity, tool_call_accuracy,
-    tool_call_f1, topic_adherence,
+    string_distance_similarity_with, summarization_score_from_judge_output,
+    threshold_semantic_similarity, tool_call_accuracy, tool_call_f1, topic_adherence,
 };
 pub use optimizers::{
     CandidateGenerator, DspyCacheContract, GeneticOptimizer, GeneticOptimizerConfig, MiproV2Trial,

@@ -108,6 +108,81 @@ pub fn string_distance_similarity(candidate: &str, reference: &str) -> DetailedM
     )
 }
 
+/// Which character-distance backend [`string_distance_similarity_with`] uses, mirroring the
+/// `DistanceMeasure` enum of Python ragas's `NonLLMStringSimilarity`. All four are deterministic,
+/// case-sensitive (no folding), and symmetric.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DistanceMeasure {
+    #[default]
+    Levenshtein,
+    Hamming,
+    Jaro,
+    JaroWinkler,
+}
+
+impl DistanceMeasure {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Levenshtein => "levenshtein",
+            Self::Hamming => "hamming",
+            Self::Jaro => "jaro",
+            Self::JaroWinkler => "jaro_winkler",
+        }
+    }
+}
+
+/// Normalized string similarity in [0, 1] between `candidate` and `reference` under `measure`,
+/// matching `1 - rapidfuzz.distance.<Measure>.normalized_distance(...)` as used by Python ragas's
+/// `NonLLMStringSimilarity`. Two empty strings score 1.0 for every measure. Case-sensitive.
+pub fn string_distance_similarity_with(
+    candidate: &str,
+    reference: &str,
+    measure: DistanceMeasure,
+) -> DetailedMetricResult {
+    let candidate_chars = candidate.chars().collect::<Vec<_>>();
+    let reference_chars = reference.chars().collect::<Vec<_>>();
+    if candidate_chars.is_empty() && reference_chars.is_empty() {
+        return numeric_result(
+            "string_distance_similarity",
+            1.0,
+            "both strings empty; normalized similarity is 1",
+            Vec::new(),
+        );
+    }
+
+    let max_len = candidate_chars.len().max(reference_chars.len());
+    let (score, detail) = match measure {
+        DistanceMeasure::Levenshtein => {
+            let distance = levenshtein_distance(candidate, reference);
+            (
+                1.0 - distance as f64 / max_len as f64,
+                format!("distance={distance} max_len={max_len}"),
+            )
+        }
+        DistanceMeasure::Hamming => {
+            let distance = hamming_distance(&candidate_chars, &reference_chars);
+            (
+                1.0 - distance as f64 / max_len as f64,
+                format!("distance={distance} max_len={max_len}"),
+            )
+        }
+        DistanceMeasure::Jaro => {
+            let similarity = jaro_similarity(&candidate_chars, &reference_chars);
+            (similarity, format!("jaro={similarity:.6}"))
+        }
+        DistanceMeasure::JaroWinkler => {
+            let similarity = jaro_winkler_similarity(&candidate_chars, &reference_chars);
+            (similarity, format!("jaro_winkler={similarity:.6}"))
+        }
+    };
+    numeric_result(
+        "string_distance_similarity",
+        score,
+        format!("provider-free normalized {} similarity", measure.as_str()),
+        vec![MetricEvidence::new(measure.as_str(), detail)],
+    )
+}
+
 pub fn bleu_unigram(candidate: &str, reference: &str) -> DetailedMetricResult {
     let candidate_tokens = whitespace_lowercase_tokens(candidate);
     let reference_tokens = whitespace_lowercase_tokens(reference);
@@ -799,6 +874,83 @@ fn levenshtein_distance(left: &str, right: &str) -> usize {
     previous[right.len()]
 }
 
+/// Hamming distance with rapidfuzz `pad=True` semantics: positional mismatches over the shared
+/// prefix plus the absolute length difference (the longer string's tail counts as mismatches).
+fn hamming_distance(left: &[char], right: &[char]) -> usize {
+    let overlap = left.len().min(right.len());
+    let mismatches = (0..overlap)
+        .filter(|&index| left[index] != right[index])
+        .count();
+    mismatches + left.len().abs_diff(right.len())
+}
+
+/// Jaro similarity in [0, 1]. Identical strings (including two empty ones) score 1.0; if exactly
+/// one side is empty there are no matches, so the score is 0.0.
+fn jaro_similarity(left: &[char], right: &[char]) -> f64 {
+    if left == right {
+        return 1.0;
+    }
+    let (left_len, right_len) = (left.len(), right.len());
+    if left_len == 0 || right_len == 0 {
+        return 0.0;
+    }
+
+    // Match window = floor(max_len / 2) - 1, clamped at 0 for very short inputs.
+    let window = (left_len.max(right_len) / 2).saturating_sub(1);
+    let mut left_matched = vec![false; left_len];
+    let mut right_matched = vec![false; right_len];
+    let mut matches = 0usize;
+    for (index, left_char) in left.iter().enumerate() {
+        let lo = index.saturating_sub(window);
+        let hi = (index + window + 1).min(right_len);
+        for offset in lo..hi {
+            if !right_matched[offset] && *left_char == right[offset] {
+                left_matched[index] = true;
+                right_matched[offset] = true;
+                matches += 1;
+                break;
+            }
+        }
+    }
+    if matches == 0 {
+        return 0.0;
+    }
+
+    // Transpositions = half the number of matched chars that line up out of order.
+    let left_chars = left
+        .iter()
+        .zip(left_matched.iter())
+        .filter_map(|(character, matched)| matched.then_some(*character));
+    let right_chars = right
+        .iter()
+        .zip(right_matched.iter())
+        .filter_map(|(character, matched)| matched.then_some(*character));
+    let out_of_order = left_chars
+        .zip(right_chars)
+        .filter(|(left_char, right_char)| left_char != right_char)
+        .count();
+    let transpositions = out_of_order / 2;
+
+    let matches = matches as f64;
+    ((matches / left_len as f64)
+        + (matches / right_len as f64)
+        + ((matches - transpositions as f64) / matches))
+        / 3.0
+}
+
+/// Jaro-Winkler similarity: Jaro boosted by the common prefix (capped at 4) times the standard
+/// scaling factor p = 0.1 (rapidfuzz default).
+fn jaro_winkler_similarity(left: &[char], right: &[char]) -> f64 {
+    let jaro = jaro_similarity(left, right);
+    let prefix = left
+        .iter()
+        .zip(right.iter())
+        .take(4)
+        .take_while(|(left_char, right_char)| left_char == right_char)
+        .count();
+    jaro + prefix as f64 * 0.1 * (1.0 - jaro)
+}
+
 fn ratio(numerator: usize, denominator: usize) -> f64 {
     if denominator == 0 {
         0.0
@@ -866,6 +1018,60 @@ mod tests {
         let distance = string_distance_similarity("kitten", "sitting");
         assert_score_close(&distance, 4.0 / 7.0);
         assert_eq!(distance.metric_name, "string_distance_similarity");
+    }
+
+    #[test]
+    fn distance_measures_match_rapidfuzz_reference_oracle() {
+        // Oracle verified two ways: empirically against rapidfuzz 3.14.5 and by independent
+        // hand-derivation; both sources agreed on every value (canonical Jaro/Jaro-Winkler pairs
+        // MARTHA/MARHTA, DWAYNE/DUANE, DIXON/DICKSONX). Hamming uses pad=True (denominator
+        // max(len), not len1+len2). All measures are case-sensitive and symmetric.
+        use DistanceMeasure::{Hamming, Jaro, JaroWinkler, Levenshtein};
+        let cases: &[(&str, &str, DistanceMeasure, f64)] = &[
+            ("MARTHA", "MARHTA", Jaro, 17.0 / 18.0),
+            ("MARTHA", "MARHTA", JaroWinkler, 173.0 / 180.0),
+            ("DWAYNE", "DUANE", Jaro, 37.0 / 45.0),
+            ("DWAYNE", "DUANE", JaroWinkler, 21.0 / 25.0),
+            ("DIXON", "DICKSONX", Jaro, 23.0 / 30.0),
+            ("DIXON", "DICKSONX", JaroWinkler, 61.0 / 75.0),
+            ("karolin", "kathrin", Hamming, 4.0 / 7.0),
+            ("abc", "abcd", Hamming, 3.0 / 4.0),
+            ("color", "colour", Hamming, 2.0 / 3.0),
+            ("kitten", "sitting", Levenshtein, 4.0 / 7.0),
+            ("abc", "abc", Jaro, 1.0),
+            ("abc", "abc", JaroWinkler, 1.0),
+            ("abc", "abc", Hamming, 1.0),
+            ("abc", "abc", Levenshtein, 1.0),
+            ("", "", Levenshtein, 1.0),
+            ("", "", Hamming, 1.0),
+            ("", "", Jaro, 1.0),
+            ("", "", JaroWinkler, 1.0),
+            ("abc", "", Levenshtein, 0.0),
+            ("abc", "", Hamming, 0.0),
+            ("abc", "", Jaro, 0.0),
+            ("abc", "", JaroWinkler, 0.0),
+            // Case-sensitive: no folding (rapidfuzz compares raw code points).
+            ("ABC", "abc", Levenshtein, 0.0),
+            ("Abc", "abc", Levenshtein, 2.0 / 3.0),
+            ("ABC", "abc", Jaro, 0.0),
+        ];
+        for (left, right, measure, expected) in cases {
+            let score = string_distance_similarity_with(left, right, *measure)
+                .score
+                .expect("score");
+            assert!(
+                (score - expected).abs() < 1e-9,
+                "{left:?} vs {right:?} [{measure:?}]: expected {expected}, got {score}"
+            );
+            // Every measure is symmetric: swapping the arguments must not change the score.
+            let swapped = string_distance_similarity_with(right, left, *measure)
+                .score
+                .expect("score");
+            assert!(
+                (swapped - expected).abs() < 1e-9,
+                "asymmetry for {left:?}/{right:?} [{measure:?}]: {swapped} != {expected}"
+            );
+        }
     }
 
     #[test]

@@ -2026,9 +2026,12 @@ impl Metric for StringPresenceMetric {
     }
 }
 
-/// StringSimilarity — normalized Levenshtein edit similarity in [0, 1] between the response
-/// and reference. Deterministic; reuses [`crate::string_distance_similarity`].
-pub struct StringSimilarityMetric;
+/// StringSimilarity — normalized string-distance similarity in [0, 1] between the response and
+/// reference under a selectable [`crate::DistanceMeasure`] (Levenshtein by default). Deterministic;
+/// mirrors Python ragas's `NonLLMStringSimilarity`. Reuses [`crate::string_distance_similarity_with`].
+pub struct StringSimilarityMetric {
+    measure: crate::DistanceMeasure,
+}
 
 impl Default for StringSimilarityMetric {
     fn default() -> Self {
@@ -2038,7 +2041,15 @@ impl Default for StringSimilarityMetric {
 
 impl StringSimilarityMetric {
     pub fn new() -> Self {
-        Self
+        Self {
+            measure: crate::DistanceMeasure::Levenshtein,
+        }
+    }
+
+    /// Select the character-distance backend (Levenshtein / Hamming / Jaro / Jaro-Winkler).
+    pub fn with_distance_measure(mut self, measure: crate::DistanceMeasure) -> Self {
+        self.measure = measure;
+        self
     }
 }
 
@@ -2057,12 +2068,13 @@ impl Metric for StringSimilarityMetric {
 
     async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
         let reference = require_reference(sample, self.name())?;
-        let score = crate::string_distance_similarity(&sample.response, reference)
-            .score
-            .unwrap_or(0.0);
+        let score =
+            crate::string_distance_similarity_with(&sample.response, reference, self.measure)
+                .score
+                .unwrap_or(0.0);
         Ok(
             MetricResult::success(self.name(), MetricValue::numeric(score))
-                .with_reason("normalized edit-distance similarity"),
+                .with_reason("normalized string-distance similarity"),
         )
     }
 }
@@ -3958,6 +3970,29 @@ mod tests {
         assert!(ExactMatchMetric::new().score(&no_ref).await.is_err());
         assert!(StringPresenceMetric::new().score(&no_ref).await.is_err());
         assert!(StringSimilarityMetric::new().score(&no_ref).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn string_similarity_metric_honors_distance_measure() {
+        // A transposition: Levenshtein needs 2 edits (1 - 2/6), Jaro scores it 17/18.
+        let sample =
+            SingleTurnSample::new("q", "MARTHA", vec!["c".to_string()]).with_reference("MARHTA");
+        let levenshtein = numeric(
+            &StringSimilarityMetric::new()
+                .score(&sample)
+                .await
+                .expect("levenshtein"),
+        );
+        let jaro = numeric(
+            &StringSimilarityMetric::new()
+                .with_distance_measure(crate::DistanceMeasure::Jaro)
+                .score(&sample)
+                .await
+                .expect("jaro"),
+        );
+        assert!((levenshtein - (1.0 - 2.0 / 6.0)).abs() < 1e-9);
+        assert!((jaro - 17.0 / 18.0).abs() < 1e-9);
+        assert!(jaro > levenshtein);
     }
 
     #[tokio::test]
