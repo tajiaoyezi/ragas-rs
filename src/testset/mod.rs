@@ -1231,6 +1231,9 @@ pub async fn extract_bundle(
     Ok(ExtractionBundle::new(entities, themes, summary))
 }
 
+/// Pull the list value out of an [`LlmExtractor::extract`] result. Defensive fallback only:
+/// the list kinds always return [`GraphProperty::TextList`], so the empty branch is
+/// unreachable for the kinds [`extract_bundle`] passes here.
 fn list_property((_, property): (String, GraphProperty)) -> Vec<String> {
     match property {
         GraphProperty::TextList(values) => values,
@@ -1238,6 +1241,8 @@ fn list_property((_, property): (String, GraphProperty)) -> Vec<String> {
     }
 }
 
+/// Pull the single text value out of an [`LlmExtractor::extract`] result. Defensive fallback
+/// only: the single-value kinds always return [`GraphProperty::Text`].
 fn text_value((_, property): (String, GraphProperty)) -> String {
     match property {
         GraphProperty::Text(value) => value,
@@ -2295,12 +2300,129 @@ binaries that run without a Python runtime.";
     #[tokio::test]
     async fn llm_extractor_wrong_shape_errors() {
         // Valid JSON but the expected field is absent -> a typed parse error, not a silent empty.
+        // (Covers the list-kind extract_list_chunk missing-field branch via Ner.)
         let llm = Arc::new(ScriptedLlm::new(vec![r#"{"wrong_key": ["x"]}"#]));
         let node = text_node("n1", "Some text.");
         let result = LlmExtractor::new(llm, LlmExtractorKind::Ner)
             .extract(&node)
             .await;
         assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    #[tokio::test]
+    async fn llm_extractor_single_value_wrong_shape_errors() {
+        // The single-value parse path (extract_single_chunk) also rejects a missing field —
+        // the other half of the wrong-shape branch from the list-kind test above.
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"not_text": "x"}"#]));
+        let node = text_node("n1", "Some text.");
+        let result = LlmExtractor::new(llm, LlmExtractorKind::Summary)
+            .extract(&node)
+            .await;
+        assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    #[tokio::test]
+    async fn llm_extractor_all_kinds_wire_property_key_and_shape() {
+        // Pin the per-kind config table (property_name / json_key / list-vs-single) against
+        // copy-paste drift: for each of the 7 kinds, a response in that kind's JSON shape must
+        // yield the right property name + value, and the prompt must name the kind's JSON key.
+        struct Case {
+            kind: LlmExtractorKind,
+            response: &'static str,
+            property: &'static str,
+            json_key: &'static str,
+            expected: GraphProperty,
+        }
+        let cases = vec![
+            Case {
+                kind: LlmExtractorKind::Summary,
+                response: r#"{"text": "S"}"#,
+                property: "summary",
+                json_key: "\"text\"",
+                expected: GraphProperty::Text("S".to_string()),
+            },
+            Case {
+                kind: LlmExtractorKind::Title,
+                response: r#"{"text": "T"}"#,
+                property: "title",
+                json_key: "\"text\"",
+                expected: GraphProperty::Text("T".to_string()),
+            },
+            Case {
+                kind: LlmExtractorKind::TopicDescription,
+                response: r#"{"description": "D"}"#,
+                property: "topic_description",
+                json_key: "\"description\"",
+                expected: GraphProperty::Text("D".to_string()),
+            },
+            Case {
+                kind: LlmExtractorKind::Keyphrases,
+                response: r#"{"keyphrases": ["k1", "k2"]}"#,
+                property: "keyphrases",
+                json_key: "\"keyphrases\"",
+                expected: GraphProperty::TextList(vec!["k1".to_string(), "k2".to_string()]),
+            },
+            Case {
+                kind: LlmExtractorKind::Headlines,
+                response: r#"{"headlines": ["h1"]}"#,
+                property: "headlines",
+                json_key: "\"headlines\"",
+                expected: GraphProperty::TextList(vec!["h1".to_string()]),
+            },
+            Case {
+                kind: LlmExtractorKind::Ner,
+                response: r#"{"entities": ["e1"]}"#,
+                property: "entities",
+                json_key: "\"entities\"",
+                expected: GraphProperty::TextList(vec!["e1".to_string()]),
+            },
+            Case {
+                kind: LlmExtractorKind::Themes,
+                response: r#"{"output": ["t1"]}"#,
+                property: "themes",
+                json_key: "\"output\"",
+                expected: GraphProperty::TextList(vec!["t1".to_string()]),
+            },
+        ];
+
+        for case in cases {
+            let llm = Arc::new(ScriptedLlm::new(vec![case.response]));
+            let extractor = LlmExtractor::new(llm.clone(), case.kind);
+            assert_eq!(
+                extractor.property_name(),
+                case.property,
+                "kind {:?}",
+                case.kind
+            );
+            let (name, property) = extractor
+                .extract(&text_node("n", "Some node text."))
+                .await
+                .unwrap_or_else(|error| panic!("kind {:?}: {error}", case.kind));
+            assert_eq!(name, case.property, "kind {:?}", case.kind);
+            assert_eq!(property, case.expected, "kind {:?}", case.kind);
+            assert!(
+                llm.prompts()[0].contains(case.json_key),
+                "kind {:?} prompt missing key {}",
+                case.kind,
+                case.json_key
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn llm_extractor_with_max_num_changes_prompt() {
+        // with_max_num overrides the prompt cap for list kinds (default Keyphrases = 5).
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"keyphrases": ["k"]}"#]));
+        LlmExtractor::new(llm.clone(), LlmExtractorKind::Keyphrases)
+            .with_max_num(17)
+            .extract(&text_node("n", "Some text."))
+            .await
+            .expect("keyphrases");
+        assert!(
+            llm.prompts()[0].contains("top 17 keyphrases"),
+            "prompt should reflect the overridden max_num, got: {}",
+            llm.prompts()[0]
+        );
     }
 
     #[tokio::test]
