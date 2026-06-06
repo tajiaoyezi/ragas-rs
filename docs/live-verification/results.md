@@ -14,9 +14,17 @@ adversarial one. Until such a run exists, the honest status of an LLM metric is
 - **Command:** `cargo test --lib -- --ignored --test-threads=4`
 - **Result:** **20 passed, 0 failed** (~137s).
 
+### Follow-up run — Phase 4 LLM agentic metrics
+
+- **Date:** 2026-06-06
+- **Provider:** DeepSeek (chat), same configuration.
+- **Command:** `cargo test --lib -- --ignored --test-threads=3 live_agent_goal_accuracy
+  live_topic_adherence live_instance_specific_rubrics`
+- **Result:** **3 passed, 0 failed** (~26s) — the three gates added in the rows marked **(P4)** below.
+
 ## Gates (all PASS)
 
-LLM metric discrimination gates (17):
+LLM metric discrimination gates (20):
 
 | metric | gate |
 |---|---|
@@ -37,8 +45,12 @@ LLM metric discrimination gates (17):
 | RubricsScore | `live_rubrics_score_scores_better_answer_higher` |
 | SummarizationScore | `live_summarization_score_scores_faithful_summary_above_off_topic` |
 | NoiseSensitivity | `live_noise_sensitivity_flags_noisy_response_above_clean` |
+| AgentGoalAccuracy (multi-turn) **(P4)** | `live_agent_goal_accuracy_discriminates_achieved_from_failed` |
+| TopicAdherence (multi-turn) **(P4)** | `live_topic_adherence_scores_adherent_above_non_adherent` |
+| InstanceSpecificRubrics **(P4)** | `live_instance_specific_rubrics_scores_better_answer_higher` |
 
-`*` also exercises the embedding endpoint.
+`*` also exercises the embedding endpoint. **(P4)** = Phase-4 agentic metrics, run in the
+follow-up above.
 
 End-to-end gates (3):
 

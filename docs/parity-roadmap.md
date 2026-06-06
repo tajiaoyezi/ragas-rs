@@ -9,12 +9,14 @@ A prioritized plan to maximize **functional replication** of the Python
 
 **Status:** Phase 1 ✅; Phase 2 ✅ (complete, incl. ID-based context precision/recall); Phase 3 ✅
 (7/7) — all LLM metrics live-verified vs DeepSeek; `context_utilization` wired into the
-`ragas evaluate` CLI default. Phase 4 🔶 (DataCompy + deterministic tool-call metrics shipped; the
-LLM agentic metrics remain). Phase 5 🔶 (retry/timeout + caching decorators; 2 of 3 critical bugs
-fixed). Wired count **28 single-turn `Metric`** of ~39 + **2 multi-turn tool-call metrics**
-(2026-06-06); all on `main`. `StringSimilarityMetric` now exposes a full `DistanceMeasure` selector
+`ragas evaluate` CLI default. Phase 4 ✅ (7/7) — DataCompy + deterministic tool-call metrics plus the
+LLM agentic metrics (`AgentGoalAccuracy` with/without reference, `TopicAdherence`,
+`InstanceSpecificRubrics`), all live-verified vs DeepSeek (2026-06-06). Phase 5 🔶 (retry/timeout +
+caching decorators; 2 of 3 critical bugs fixed). Wired count **29 single-turn `Metric`** of ~39 +
+**5 multi-turn metrics** (tool-call ×2, agent-goal-accuracy ×2, topic-adherence) (2026-06-06); all on
+`main`. `StringSimilarityMetric` now exposes a full `DistanceMeasure` selector
 (Levenshtein/Hamming/Jaro/Jaro-Winkler, rapidfuzz-verified) — the last purely-deterministic parity
-gap (2026-06-06); the metric count is **unchanged** (a variant on an existing `Metric`, not a new one).
+gap (2026-06-06); the metric count is **unchanged** for that one (a variant on an existing `Metric`).
 
 ## Goal & non-goals
 
@@ -139,7 +141,7 @@ them is multi-call and the bookkeeping must match Python. Keep the lexical versi
 | **SummarizationScore** | L | medium | 3-call chain: keyphrase extraction → QA-pair generation → answer-from-summary-only; coverage = fraction yes, optional conciseness blend. |
 | **RubricsScore (DomainSpecificRubrics)** | M | high | Add a `ScoreRubric` type (ordered score→description; current `Rubric` shape is wrong), single LLM call → `{feedback, score 1-5}`, ship the two Python default rubrics. |
 
-## Phase 4 — Agentic + multi-turn metrics 🔶 DataCompy done
+## Phase 4 — Agentic + multi-turn metrics ✅ DONE (7/7)
 
 *Counting functions exist; the LLM inference steps are missing and some need `MultiTurnSample` schema
 additions (`reference_topics`) + transcript renderers. Share a transcript renderer + infer-outcome prompt.*
@@ -148,9 +150,26 @@ additions (`reference_topics`) + transcript renderers. Share a transcript render
 > `DataCompyMode`) on the single-turn `Metric` trait, plus `ToolCallAccuracyMetric` +
 > `ToolCallF1Metric` (`src/agentic.rs`, `impl MultiTurnMetric`, deterministic; new
 > `MultiTurnSample.reference_tool_calls` field; actual calls extracted from assistant messages,
-> matched on name+arguments). **All deterministic Phase-4 metrics done.** **Remaining (deferred —
-> need live LLM):** AgentGoalAccuracy, TopicAdherence, InstanceRubrics (TopicAdherence also needs a
-> `reference_topics` field; they run via the `MultiTurnMetric` / single-turn paths as appropriate).
+> matched on name+arguments).
+
+> ✅ **LLM agentic metrics shipped + live-verified 2026-06-06** — the rest of Phase 4, all faithful
+> ports of the Python `collections` source (specs cross-checked, then an adversarial Rust-vs-Python
+> review found zero real divergences before any live call):
+> - `AgentGoalAccuracyWithReferenceMetric` / `AgentGoalAccuracyWithoutReferenceMetric`
+>   (`src/agentic.rs`, `impl MultiTurnMetric`) — render the transcript, infer `{user_goal, end_state}`,
+>   then a binary compare call. With-reference compares the reference to the end-state; without-reference
+>   compares the inferred goal to the end-state. Shared `render_transcript` (Human:/AI:/Tools:/ToolOutput:).
+> - `TopicAdherenceMetric` + `TopicAdherenceMode {Precision, Recall, F1}` (`src/agentic.rs`) — 3-stage
+>   pipeline (extract topics → per-topic refusal detection → in-scope classification vs the new
+>   `MultiTurnSample.reference_topics` field) reduced to a TP/FP/FN confusion matrix with ragas' `eps`
+>   guard. Named distinctly from the pre-existing deterministic `TopicAdherence` helper.
+> - `InstanceSpecificRubricsMetric` (`src/metric.rs`, `impl Metric`) — like `RubricsScoreMetric` but the
+>   rubric is carried **per-sample** via the new `SingleTurnSample.rubrics: Vec<(i64, String)>` field;
+>   raw score passthrough, feedback surfaced as the reason.
+>
+> Live gates `live_agent_goal_accuracy_discriminates_achieved_from_failed`,
+> `live_topic_adherence_scores_adherent_above_non_adherent`, and
+> `live_instance_specific_rubrics_scores_better_answer_higher` all pass vs DeepSeek. **Phase 4 = 7/7.**
 
 | Metric | Effort | Value | Approach |
 |---|---|---|---|
