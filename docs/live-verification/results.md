@@ -29,6 +29,15 @@ adversarial one. Until such a run exists, the honest status of an LLM metric is
 - **Command:** `cargo test --lib live_semantic_similarity_scores_similar_above_dissimilar -- --ignored`
 - **Result:** **1 passed, 0 failed** (~1s) — the embedding-only gate marked **(SS)** below.
 
+### Follow-up run — LLM testset extractor (Phase 6)
+
+- **Date:** 2026-06-06
+- **Provider:** DeepSeek (chat), same configuration.
+- **Command:** `cargo test --lib live_llm_extractor_pulls_named_entities_and_summary -- --ignored`
+- **Result:** **1 passed, 0 failed** (~8s) — the `LlmExtractor` gate marked **(EX)** below: the real
+  model extracts the obvious named entities (Tesla + Musk/SpaceX) from an entity-rich passage and
+  returns a non-empty summary shorter than the source.
+
 ## Gates (all PASS)
 
 LLM metric discrimination gates (20):
@@ -60,11 +69,12 @@ LLM metric discrimination gates (20):
 `*` also exercises the embedding endpoint. **(P4)** = Phase-4 agentic metrics, run in the
 follow-up above.
 
-End-to-end gates (3):
+End-to-end / testset gates (4):
 
 - CLI `evaluate` with a live provider — `live_evaluate_command_runs_llm_metrics`
 - LLM test-set synthesizer, single-hop — `test_31_2_7_live_synthesizer_generates_from_real_model`
 - LLM test-set synthesizer, multi-hop — `test_31_2_8_live_multi_hop_synthesizer_generates_two_context_sample`
+- LLM testset extractor **(EX)** — `live_llm_extractor_pulls_named_entities_and_summary`
 
 ## What this proves — and what it does NOT
 
