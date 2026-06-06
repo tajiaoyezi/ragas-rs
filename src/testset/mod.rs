@@ -2718,8 +2718,58 @@ like Berlin and Shanghai.";
         let graph = KnowledgeGraph::new()
             .add_node(embedded_node("a", vec![1.0, 0.0]))
             .add_node(embedded_node("b", vec![1.0, 0.0, 0.0]));
-        let result = build_cosine_relationships(graph, 0.5);
-        assert!(matches!(result, Err(RagasError::Parse { .. })));
+        let Err(RagasError::Parse { message }) = build_cosine_relationships(graph, 0.5) else {
+            panic!("expected a Parse error on mismatched embedding dimensions");
+        };
+        // The error names the offending node and the dimensions, for actionable diagnosis.
+        assert!(
+            message.contains('b') && message.contains("length") && message.contains("expected"),
+            "error should identify node + dimensions, got: {message}"
+        );
+    }
+
+    #[test]
+    fn cosine_builder_empty_and_single_node_return_no_edges() {
+        let empty = build_cosine_relationships(KnowledgeGraph::new(), 0.5).expect("empty graph");
+        assert!(empty.edges_by_relationship("cosine_similarity").is_empty());
+
+        // A single embedded node has no i<j pair, so no edges (but the node is preserved).
+        let single = build_cosine_relationships(
+            KnowledgeGraph::new().add_node(embedded_node("only", vec![1.0, 0.0])),
+            0.5,
+        )
+        .expect("single node");
+        assert_eq!(single.nodes.len(), 1);
+        assert!(single.edges_by_relationship("cosine_similarity").is_empty());
+    }
+
+    #[test]
+    fn cosine_builder_threshold_is_inclusive_and_filters_negative() {
+        // x⊥y (cosine 0.0), x·z anti-parallel (cosine -1.0), y⊥z (cosine 0.0).
+        let graph = || {
+            KnowledgeGraph::new()
+                .add_node(embedded_node("x", vec![1.0, 0.0]))
+                .add_node(embedded_node("y", vec![0.0, 1.0]))
+                .add_node(embedded_node("z", vec![-1.0, 0.0]))
+        };
+        // threshold 0.0 is inclusive (>=): the two orthogonal (0.0) pairs link; the -1.0 pair
+        // is filtered out.
+        let at_zero = build_cosine_relationships(graph(), 0.0).expect("build");
+        let edges = at_zero.edges_by_relationship("cosine_similarity");
+        assert_eq!(
+            edges.len(),
+            2,
+            "0.0-threshold includes the two 0.0 pairs only"
+        );
+        assert!(
+            !edges
+                .iter()
+                .any(|edge| edge.source_id == "x" && edge.target_id == "z"),
+            "the anti-parallel x-z pair (-1.0) must be filtered at threshold 0.0"
+        );
+        // Lowering the threshold to -1.0 admits the anti-parallel pair too (all 3 pairs).
+        let at_neg = build_cosine_relationships(graph(), -1.0).expect("build");
+        assert_eq!(at_neg.edges_by_relationship("cosine_similarity").len(), 3);
     }
 
     #[tokio::test]
@@ -2737,6 +2787,25 @@ like Berlin and Shanghai.";
             .extract(&GraphNode::new("n2", "chunk"))
             .await;
         assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    #[tokio::test]
+    async fn embedding_extractor_property_name_overrides() {
+        let embedding = Arc::new(crate::MockEmbeddingProvider::new(vec![vec![0.5, 0.5]]));
+        // Text lives under "body" (not the default "text"); the embedding goes to "vec".
+        let node = GraphNode::new("n", "chunk").with_property(
+            "body",
+            GraphProperty::Text("text under a custom key".to_string()),
+        );
+        let (name, property) = EmbeddingExtractor::new(embedding)
+            .with_property_name("vec")
+            .with_embed_property_name("body")
+            .extract(&node)
+            .await
+            .expect("embedding");
+        // Reading from "body" succeeded (the node has no "text") and the output key is "vec".
+        assert_eq!(name, "vec");
+        assert_eq!(property, GraphProperty::Vector(vec![0.5, 0.5]));
     }
 
     /// Live gate (env-gated): real embeddings make two semantically similar nodes score
@@ -2789,9 +2858,16 @@ like Berlin and Shanghai.";
 
         let cats = score("cat-1", "cat-2");
         let cat_market = score("cat-1", "market");
+        // Stronger than bare ordering: the two cat sentences must be substantially similar in
+        // absolute terms AND beat the unrelated market sentence by a clear margin — so the gate
+        // can't pass on degenerate/collapsed embeddings.
         assert!(
-            cats > cat_market,
-            "two cat sentences ({cats}) should be more similar than cat vs market ({cat_market})"
+            cats > 0.5,
+            "two clearly-related cat sentences should be substantially similar, got {cats}"
+        );
+        assert!(
+            cats - cat_market > 0.1,
+            "cat/cat similarity ({cats}) should exceed cat/market ({cat_market}) by a clear margin"
         );
     }
 }
