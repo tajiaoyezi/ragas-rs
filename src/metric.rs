@@ -3412,8 +3412,10 @@ mod tests {
     // higher than an adversarial one. They are #[ignore]-attributed so they never
     // run in normal `cargo test`; run them with:
     //   OPENAI_API_KEY=... cargo test --lib -- --ignored
-    // Until a real key has driven them, the honest status of the LLM metrics is
-    // "math verified; real-LLM UNVERIFIED".
+    // Live-verified 2026-06-06: all of these gates passed against a real provider
+    // (DeepSeek chat + SiliconFlow embeddings), 20 passed / 0 failed. Evidence:
+    // docs/live-verification/results.md. They stay #[ignore] (no key in CI); re-run
+    // to re-verify on another provider/model.
     // ---------------------------------------------------------------------
     use crate::OpenAiCompatibleClient;
 
