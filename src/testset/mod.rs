@@ -2311,7 +2311,10 @@ binaries that run without a Python runtime.";
             r#"{"output": ["evaluation", "grounding"]}"#,
             r#"{"text": "RAG evaluates retrieval with grounded metrics."}"#,
         ]));
-        let node = text_node("n1", "RAG evaluates retrieval quality with grounded metrics.");
+        let node = text_node(
+            "n1",
+            "RAG evaluates retrieval quality with grounded metrics.",
+        );
         let bundle = extract_bundle(llm.clone(), &node).await.expect("bundle");
         assert_eq!(
             bundle.entities,
@@ -2321,7 +2324,10 @@ binaries that run without a Python runtime.";
             bundle.themes,
             vec!["evaluation".to_string(), "grounding".to_string()]
         );
-        assert_eq!(bundle.summary, "RAG evaluates retrieval with grounded metrics.");
+        assert_eq!(
+            bundle.summary,
+            "RAG evaluates retrieval with grounded metrics."
+        );
         assert_eq!(llm.prompts().len(), 3);
 
         // The bundle feeds the existing attach_extractions substrate end-to-end.
