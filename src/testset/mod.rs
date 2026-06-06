@@ -954,6 +954,297 @@ pub async fn generate_testset(
         .await
 }
 
+/// The kind of property an [`LlmExtractor`] pulls out of a graph node's text.
+///
+/// Faithful port of the seven Python `ragas.testset.transforms.extractors.llm_based`
+/// `LLMBasedExtractor` subclasses. Each kind differs only by its instruction, the JSON shape
+/// it asks the model for (a single string vs a string list), and the graph property it writes
+/// — the orchestration (read node text → chunk → `generate` → JSON-repair parse) is shared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LlmExtractorKind {
+    /// `summary` — a concise summary of the text (single value). Python `SummaryExtractor`.
+    Summary,
+    /// `keyphrases` — top keyphrases (list). Python `KeyphrasesExtractor` (default max 5).
+    Keyphrases,
+    /// `title` — the document title (single value). Python `TitleExtractor`.
+    Title,
+    /// `headlines` — section headlines (list). Python `HeadlinesExtractor` (default max 5).
+    Headlines,
+    /// `entities` — named entities (list). Python `NERExtractor` (default max 10).
+    Ner,
+    /// `themes` — main themes/concepts (list). Python `ThemesExtractor` (default max 10).
+    Themes,
+    /// `topic_description` — a concise topic description (single value). Python
+    /// `TopicDescriptionExtractor`.
+    TopicDescription,
+}
+
+impl LlmExtractorKind {
+    /// The graph property name this kind writes (mirrors the Python `property_name`).
+    pub fn property_name(self) -> &'static str {
+        match self {
+            Self::Summary => "summary",
+            Self::Keyphrases => "keyphrases",
+            Self::Title => "title",
+            Self::Headlines => "headlines",
+            Self::Ner => "entities",
+            Self::Themes => "themes",
+            Self::TopicDescription => "topic_description",
+        }
+    }
+
+    /// The JSON object key the model is asked to emit (mirrors the Python pydantic output
+    /// model field).
+    fn json_key(self) -> &'static str {
+        match self {
+            Self::Summary | Self::Title => "text",
+            Self::Keyphrases => "keyphrases",
+            Self::Headlines => "headlines",
+            Self::Ner => "entities",
+            Self::Themes => "output",
+            Self::TopicDescription => "description",
+        }
+    }
+
+    /// Whether the output is a list of strings (vs a single string).
+    fn is_list(self) -> bool {
+        matches!(
+            self,
+            Self::Keyphrases | Self::Headlines | Self::Ner | Self::Themes
+        )
+    }
+
+    /// Default per-chunk item cap for the list kinds (ignored by single-value kinds),
+    /// matching the Python extractor defaults.
+    fn default_max_num(self) -> usize {
+        match self {
+            Self::Keyphrases | Self::Headlines => 5,
+            Self::Ner | Self::Themes => 10,
+            _ => 0,
+        }
+    }
+
+    /// The extraction instruction, mirroring the Python prompt `instruction` strings.
+    fn instruction(self, max_num: usize) -> String {
+        match self {
+            Self::Summary => "Summarize the given text in less than 10 sentences.".to_string(),
+            Self::Keyphrases => format!("Extract top {max_num} keyphrases from the given text."),
+            Self::Title => "Extract the title of the given document.".to_string(),
+            Self::Headlines => format!(
+                "Extract the most important {max_num} headlines from the given text that can be \
+used to split the text into independent sections. Focus on Level 2 and Level 3 headings."
+            ),
+            Self::Ner => format!(
+                "Extract the named entities from the given text, limiting the output to the top \
+entities. Ensure the number of entities does not exceed {max_num}."
+            ),
+            Self::Themes => "Extract the main themes and concepts from the given text.".to_string(),
+            Self::TopicDescription => {
+                "Provide a concise description of the main topic(s) discussed in the following text."
+                    .to_string()
+            }
+        }
+    }
+}
+
+/// LLM-backed extractor that writes a property onto a knowledge-graph node from its text.
+///
+/// This is the runnable analog of Python `ragas`'s `LLMBasedExtractor` family: it reads the
+/// node's `text` property, splits it into chunks (a char-based substitute for ragas's tiktoken
+/// `split_text_by_token_limit` — token parity is an explicit non-goal), prompts a real
+/// [`LlmProvider`] for the requested property as JSON, and parses the response with the same
+/// outermost-`{ .. }` JSON-repair path used by the synthesizer.
+///
+/// Single-value kinds (Summary/Title/TopicDescription) use only the first chunk (matching
+/// Python's `chunks[0]`); list kinds (Keyphrases/Headlines/NER/Themes) call the model per chunk
+/// and concatenate the results, matching Python's `extend` loop (no post-dedup or truncation —
+/// `max_num` only bounds the prompt, as in Python).
+pub struct LlmExtractor {
+    llm: Arc<dyn LlmProvider>,
+    kind: LlmExtractorKind,
+    max_num: usize,
+    max_chars: usize,
+}
+
+impl LlmExtractor {
+    /// A char-budget substitute for Python's 32000-*token* `max_token_limit`. Chars are not
+    /// tokens (token parity is a non-goal); in practice node texts are well under this, so a
+    /// single chunk is used.
+    const DEFAULT_MAX_CHARS: usize = 32_000;
+
+    /// Create an extractor of the given kind over `llm`, with the Python default `max_num`.
+    pub fn new(llm: Arc<dyn LlmProvider>, kind: LlmExtractorKind) -> Self {
+        Self {
+            llm,
+            kind,
+            max_num: kind.default_max_num(),
+            max_chars: Self::DEFAULT_MAX_CHARS,
+        }
+    }
+
+    /// Override the per-chunk item cap for list kinds (no effect on single-value kinds).
+    pub fn with_max_num(mut self, max_num: usize) -> Self {
+        self.max_num = max_num;
+        self
+    }
+
+    /// Override the per-chunk char budget used to split long node text.
+    pub fn with_max_chars(mut self, max_chars: usize) -> Self {
+        self.max_chars = max_chars.max(1);
+        self
+    }
+
+    /// The property name this extractor writes.
+    pub fn property_name(&self) -> &'static str {
+        self.kind.property_name()
+    }
+
+    /// Extract this extractor's property from `node`'s `text`, returning `(property_name,
+    /// value)` ready to insert into the node's properties — the same shape as Python's
+    /// `extract(node) -> (property_name, value)`.
+    ///
+    /// When the node has no non-empty `text` property, returns an empty value (an empty list
+    /// for list kinds, an empty string for single-value kinds) without calling the model,
+    /// mirroring Python's `return self.property_name, None/[]` leniency rather than erroring.
+    pub async fn extract(&self, node: &GraphNode) -> Result<(String, GraphProperty), RagasError> {
+        let name = self.kind.property_name().to_string();
+        let text = text_property(node, "text").unwrap_or("").trim();
+        if text.is_empty() {
+            let empty = if self.kind.is_list() {
+                GraphProperty::TextList(Vec::new())
+            } else {
+                GraphProperty::Text(String::new())
+            };
+            return Ok((name, empty));
+        }
+
+        let chunks = split_text_into_chunks(&node.id, text, self.max_chars);
+
+        if self.kind.is_list() {
+            let mut items = Vec::new();
+            for chunk in &chunks {
+                items.extend(self.extract_list_chunk(&chunk.text).await?);
+            }
+            Ok((name, GraphProperty::TextList(items)))
+        } else {
+            // Single-value kinds use only the first chunk, matching Python's `chunks[0]`.
+            let first = chunks
+                .first()
+                .map(|chunk| chunk.text.as_str())
+                .unwrap_or(text);
+            let value = self.extract_single_chunk(first).await?;
+            Ok((name, GraphProperty::Text(value)))
+        }
+    }
+
+    async fn extract_list_chunk(&self, chunk: &str) -> Result<Vec<String>, RagasError> {
+        let context = self.context();
+        let block = self.generate_block(chunk).await?;
+        let value = parse_json_block(&block, &context)?;
+        let items = value
+            .get(self.kind.json_key())
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| RagasError::Parse {
+                message: format!("{context}: missing list field '{}'", self.kind.json_key()),
+            })?
+            .iter()
+            .filter_map(|item| item.as_str().map(|item| item.trim().to_string()))
+            .filter(|item| !item.is_empty())
+            .collect();
+        Ok(items)
+    }
+
+    async fn extract_single_chunk(&self, chunk: &str) -> Result<String, RagasError> {
+        let context = self.context();
+        let block = self.generate_block(chunk).await?;
+        let value = parse_json_block(&block, &context)?;
+        let text = value
+            .get(self.kind.json_key())
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| RagasError::Parse {
+                message: format!("{context}: missing string field '{}'", self.kind.json_key()),
+            })?;
+        Ok(text.trim().to_string())
+    }
+
+    async fn generate_block(&self, chunk: &str) -> Result<String, RagasError> {
+        let instruction = self.kind.instruction(self.max_num);
+        let key = self.kind.json_key();
+        let shape = if self.kind.is_list() {
+            format!("{{\"{key}\": [\"...\", \"...\"]}}")
+        } else {
+            format!("{{\"{key}\": \"...\"}}")
+        };
+        let prompt =
+            format!("{instruction}\nReturn ONLY JSON of the form {shape}.\n\nTEXT:\n{chunk}");
+        let response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        Ok(response.content)
+    }
+
+    fn context(&self) -> String {
+        format!("llm extractor '{}'", self.kind.property_name())
+    }
+}
+
+/// Extract the outermost `{ .. }` block from an LLM response (tolerating prose / markdown
+/// fences) and parse it as JSON — the JSON-repair path shared with [`parse_synthesized_qa`].
+fn parse_json_block(content: &str, context: &str) -> Result<serde_json::Value, RagasError> {
+    let block = match (content.find('{'), content.rfind('}')) {
+        (Some(start), Some(end)) if end >= start => &content[start..=end],
+        _ => content.trim(),
+    };
+    serde_json::from_str(block).map_err(|error| RagasError::Parse {
+        message: format!("{context}: {error}"),
+    })
+}
+
+/// Drive a real [`LlmProvider`] to extract the `{entities, themes, summary}` triple from a
+/// node's text and assemble it into an [`ExtractionBundle`] — the input expected by
+/// [`attach_extractions`]. This wires the previously hand-fed extraction substrate to a live
+/// model. The three extractors run in a **fixed sequential order** (NER → Themes → Summary) so
+/// a scripted/mock provider is deterministic.
+pub async fn extract_bundle(
+    llm: Arc<dyn LlmProvider>,
+    node: &GraphNode,
+) -> Result<ExtractionBundle, RagasError> {
+    let entities = list_property(
+        LlmExtractor::new(llm.clone(), LlmExtractorKind::Ner)
+            .extract(node)
+            .await?,
+    );
+    let themes = list_property(
+        LlmExtractor::new(llm.clone(), LlmExtractorKind::Themes)
+            .extract(node)
+            .await?,
+    );
+    let summary = text_value(
+        LlmExtractor::new(llm, LlmExtractorKind::Summary)
+            .extract(node)
+            .await?,
+    );
+    Ok(ExtractionBundle::new(entities, themes, summary))
+}
+
+fn list_property((_, property): (String, GraphProperty)) -> Vec<String> {
+    match property {
+        GraphProperty::TextList(values) => values,
+        _ => Vec::new(),
+    }
+}
+
+fn text_value((_, property): (String, GraphProperty)) -> String {
+    match property {
+        GraphProperty::Text(value) => value,
+        _ => String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1880,5 +2171,226 @@ binaries that run without a Python runtime.";
             assert!(!sample.user_input.trim().is_empty());
             assert!(!sample.response.trim().is_empty());
         }
+    }
+
+    fn text_node(id: &str, text: &str) -> GraphNode {
+        GraphNode::new(id, "chunk").with_property("text", GraphProperty::Text(text.to_string()))
+    }
+
+    #[tokio::test]
+    async fn llm_extractor_ner_parses_entity_list() {
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"entities": ["Elon Musk", "Tesla", "SpaceX"]}"#,
+        ]));
+        let node = text_node("n1", "Elon Musk runs Tesla and SpaceX.");
+        let (name, property) = LlmExtractor::new(llm.clone(), LlmExtractorKind::Ner)
+            .extract(&node)
+            .await
+            .expect("ner");
+        assert_eq!(name, "entities");
+        assert_eq!(
+            property,
+            GraphProperty::TextList(vec![
+                "Elon Musk".to_string(),
+                "Tesla".to_string(),
+                "SpaceX".to_string(),
+            ])
+        );
+        // The model saw the node text and was asked for the `entities` JSON shape.
+        let prompt = &llm.prompts()[0];
+        assert!(prompt.contains("Elon Musk runs Tesla"));
+        assert!(prompt.contains("\"entities\""));
+    }
+
+    #[tokio::test]
+    async fn llm_extractor_summary_parses_single_text() {
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"text": "A concise summary."}"#]));
+        let node = text_node("n1", "A long passage about many different things.");
+        let (name, property) = LlmExtractor::new(llm, LlmExtractorKind::Summary)
+            .extract(&node)
+            .await
+            .expect("summary");
+        assert_eq!(name, "summary");
+        assert_eq!(
+            property,
+            GraphProperty::Text("A concise summary.".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn llm_extractor_recovers_fenced_json() {
+        // The repair path extracts the outermost { .. } block from prose/markdown fences.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            "Sure!\n```json\n{\"output\": [\"AI\", \"Automation\"]}\n```\n",
+        ]));
+        let node = text_node("n1", "AI automates tasks.");
+        let (name, property) = LlmExtractor::new(llm, LlmExtractorKind::Themes)
+            .extract(&node)
+            .await
+            .expect("themes");
+        assert_eq!(name, "themes");
+        assert_eq!(
+            property,
+            GraphProperty::TextList(vec!["AI".to_string(), "Automation".to_string()])
+        );
+    }
+
+    #[tokio::test]
+    async fn llm_extractor_list_extends_across_chunks() {
+        // A small char budget forces two chunks -> two generate calls -> concatenated list,
+        // mirroring Python's per-chunk `extend` loop.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"entities": ["Alpha"]}"#,
+            r#"{"entities": ["Beta", "Gamma"]}"#,
+        ]));
+        let node = text_node("n1", "Alpha one two three. Beta four five six.");
+        let (_, property) = LlmExtractor::new(llm.clone(), LlmExtractorKind::Ner)
+            .with_max_chars(20)
+            .extract(&node)
+            .await
+            .expect("entities");
+        assert_eq!(
+            property,
+            GraphProperty::TextList(vec![
+                "Alpha".to_string(),
+                "Beta".to_string(),
+                "Gamma".to_string(),
+            ])
+        );
+        assert_eq!(llm.prompts().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn llm_extractor_missing_text_returns_empty_without_calling_model() {
+        let llm = Arc::new(ScriptedLlm::new(vec![]));
+        let node = GraphNode::new("n1", "chunk"); // no `text` property
+
+        let (name, property) = LlmExtractor::new(llm.clone(), LlmExtractorKind::Ner)
+            .extract(&node)
+            .await
+            .expect("empty list");
+        assert_eq!(name, "entities");
+        assert_eq!(property, GraphProperty::TextList(Vec::new()));
+
+        let (_, property) = LlmExtractor::new(llm.clone(), LlmExtractorKind::Summary)
+            .extract(&node)
+            .await
+            .expect("empty text");
+        assert_eq!(property, GraphProperty::Text(String::new()));
+
+        // Lenient empty path never touches the model (matching Python's early `None`/`[]`).
+        assert!(llm.prompts().is_empty());
+    }
+
+    #[tokio::test]
+    async fn llm_extractor_malformed_json_errors() {
+        let llm = Arc::new(ScriptedLlm::new(vec!["not json at all"]));
+        let node = text_node("n1", "Some text.");
+        let result = LlmExtractor::new(llm, LlmExtractorKind::Ner)
+            .extract(&node)
+            .await;
+        assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    #[tokio::test]
+    async fn llm_extractor_wrong_shape_errors() {
+        // Valid JSON but the expected field is absent -> a typed parse error, not a silent empty.
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"wrong_key": ["x"]}"#]));
+        let node = text_node("n1", "Some text.");
+        let result = LlmExtractor::new(llm, LlmExtractorKind::Ner)
+            .extract(&node)
+            .await;
+        assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    #[tokio::test]
+    async fn extract_bundle_assembles_entities_themes_summary() {
+        // Fixed sequential order: NER, then Themes, then Summary.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"entities": ["RAG", "retrieval"]}"#,
+            r#"{"output": ["evaluation", "grounding"]}"#,
+            r#"{"text": "RAG evaluates retrieval with grounded metrics."}"#,
+        ]));
+        let node = text_node("n1", "RAG evaluates retrieval quality with grounded metrics.");
+        let bundle = extract_bundle(llm.clone(), &node).await.expect("bundle");
+        assert_eq!(
+            bundle.entities,
+            vec!["RAG".to_string(), "retrieval".to_string()]
+        );
+        assert_eq!(
+            bundle.themes,
+            vec!["evaluation".to_string(), "grounding".to_string()]
+        );
+        assert_eq!(bundle.summary, "RAG evaluates retrieval with grounded metrics.");
+        assert_eq!(llm.prompts().len(), 3);
+
+        // The bundle feeds the existing attach_extractions substrate end-to-end.
+        let updated = attach_extractions(KnowledgeGraph::new().add_node(node), "n1", bundle);
+        let stored = updated.node("n1").expect("node");
+        let entities = match stored.properties.get("entities") {
+            Some(GraphProperty::TextList(values)) => values.clone(),
+            other => panic!("expected entities list, got {other:?}"),
+        };
+        assert!(
+            entities.contains(&"RAG".to_string()) && entities.contains(&"retrieval".to_string())
+        );
+        assert!(matches!(
+            stored.properties.get("summary"),
+            Some(GraphProperty::Text(summary)) if summary.contains("RAG evaluates")
+        ));
+    }
+
+    /// Live extraction gate (env-gated like the synthesizer live tests): the real model pulls
+    /// the obvious named entities out of an entity-rich passage and returns a non-empty summary
+    /// shorter than the source. This is the "real LLM, real extraction" proof for the new
+    /// `LlmExtractor`.
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; run with --ignored"]
+    async fn live_llm_extractor_pulls_named_entities_and_summary() {
+        let Some(client) = crate::ProviderConfig::from_env().chat_client() else {
+            eprintln!("skipping live extractor: OPENAI_API_KEY not set");
+            return;
+        };
+        let llm: Arc<dyn LlmProvider> = Arc::new(client);
+        let text = "Elon Musk, the CEO of Tesla and SpaceX, announced plans to expand \
+operations to new locations in Europe and Asia, creating thousands of jobs in cities \
+like Berlin and Shanghai.";
+        let node = text_node("live-node", text);
+
+        let (name, entities) = LlmExtractor::new(llm.clone(), LlmExtractorKind::Ner)
+            .extract(&node)
+            .await
+            .expect("live ner");
+        assert_eq!(name, "entities");
+        let GraphProperty::TextList(entities) = entities else {
+            panic!("expected an entity list");
+        };
+        assert!(
+            !entities.is_empty(),
+            "expected some entities from the real model"
+        );
+        let lower: Vec<String> = entities.iter().map(|item| item.to_lowercase()).collect();
+        assert!(
+            lower.iter().any(|item| item.contains("tesla"))
+                && lower
+                    .iter()
+                    .any(|item| item.contains("musk") || item.contains("spacex")),
+            "expected Tesla + Musk/SpaceX among entities, got {entities:?}"
+        );
+
+        let (_, summary) = LlmExtractor::new(llm, LlmExtractorKind::Summary)
+            .extract(&node)
+            .await
+            .expect("live summary");
+        let GraphProperty::Text(summary) = summary else {
+            panic!("expected summary text");
+        };
+        assert!(!summary.trim().is_empty(), "expected a non-empty summary");
+        assert!(
+            summary.len() < text.len(),
+            "summary ({} chars) should be shorter than source ({} chars)",
+            summary.len(),
+            text.len()
+        );
     }
 }

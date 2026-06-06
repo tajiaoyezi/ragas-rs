@@ -22,6 +22,12 @@ optional threshold; live-verified vs SiliconFlow embeddings 2026-06-06). Wired c
 `main`. `StringSimilarityMetric` now exposes a full `DistanceMeasure` selector
 (Levenshtein/Hamming/Jaro/Jaro-Winkler, rapidfuzz-verified) — the last purely-deterministic parity
 gap (2026-06-06); the metric count is **unchanged** for that one (a variant on an existing `Metric`).
+**Phase 6 started 2026-06-06** — the first real LLM testset extractors landed: `LlmExtractor` +
+`LlmExtractorKind` (Summary/Keyphrases/Title/Headlines/NER/Themes/TopicDescription), a faithful port
+of Python's seven `LLMBasedExtractor` subclasses, each driving a real `LlmProvider::generate` and
+parsing via the shared outermost-`{ .. }` JSON-repair path; plus `extract_bundle` (sequential
+NER→Themes→Summary) which finally wires the previously hand-fed `ExtractionBundle`/`attach_extractions`
+substrate to a live model. Live-verified vs DeepSeek (`live_llm_extractor_pulls_named_entities_and_summary`).
 
 ## Goal & non-goals
 
@@ -275,7 +281,7 @@ truncation for tiktoken and deterministic sampling for NumPy RNG.*
 | Item | Effort | Value | Approach |
 |---|---|---|---|
 | **KnowledgeGraph widening + cluster/relationship queries** | M | high | Foundation. `find_n_indirect_clusters` = portable seeded-DFS (the actually-used multi-hop path); deliberately **skip** Leiden `find_indirect_clusters`. |
-| **LLM-based extractors (Summary, Keyphrases, Title, Headlines, NER, Themes, TopicDescription)** | M | high | Same parse-JSON-write-property pattern as existing live metrics; 7 prompts. |
+| **LLM-based extractors (Summary, Keyphrases, Title, Headlines, NER, Themes, TopicDescription)** ✅ | M | high | DONE 2026-06-06 — `LlmExtractor` + `LlmExtractorKind` (all 7 kinds) drive `LlmProvider::generate`, parse with the shared outermost-`{ .. }` JSON-repair path; single-value kinds use `chunks[0]`, list kinds `extend` per chunk (no post-dedup; `max_num` bounds the prompt only). Char-budget substitutes for the tiktoken `split_text_by_token_limit` (documented non-goal). `extract_bundle` (NER→Themes→Summary) feeds the existing `attach_extractions` substrate. Offline ScriptedLlm tests + live gate vs DeepSeek. |
 | **Transforms engine (apply_transforms, Parallel groups, default bins)** | L | high | `Transform` trait + sequential/`tokio::join!` runner + token-length bin branching (bins diverge without tiktoken — document it). |
 | **Splitters + relationship builders + embedding/regex extractors + node filters** | M | high | Cosine builders reuse `cosine_similarity`; Jaccard/Overlap use Jaro-Winkler from Phase 2; `CustomNodeFilter` is a 1–5 LLM score. |
 | **Persona generation from KG + scenario model** | M | high | KG-derived personas (cosine-grouped summaries + prompt) replacing manual seed strings; two-phase `generate_scenarios`/`generate_sample`. |
