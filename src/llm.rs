@@ -494,6 +494,8 @@ pub fn parse_chat_response(body: &str) -> Result<LlmResponse, RagasError> {
     #[derive(Deserialize)]
     struct Choice {
         message: ChatApiMessage,
+        #[serde(default)]
+        finish_reason: Option<String>,
     }
 
     #[derive(Deserialize)]
@@ -506,19 +508,42 @@ pub fn parse_chat_response(body: &str) -> Result<LlmResponse, RagasError> {
             message: format!("chat response JSON: {error}"),
         })?;
 
-    let content = parsed
+    let choice = parsed
         .choices
         .into_iter()
         .next()
-        .map(|choice| choice.message.content)
         .ok_or_else(|| RagasError::Parse {
             message: "chat response contained no choices".to_string(),
         })?;
 
+    // A truncated/incomplete generation (e.g. `finish_reason == "length"`) is surfaced as a
+    // distinct, actionable error before any downstream JSON parse fails opaquely — mirroring
+    // Python ragas's `LLMDidNotFinishException`. A missing `finish_reason` is treated as finished
+    // (lenient, matching ragas's `all([]) == True` default), so providers that omit it are fine.
+    if let Some(reason) = choice.finish_reason.as_deref()
+        && !is_finished_reason(reason)
+    {
+        return Err(RagasError::LlmDidNotFinish {
+            reason: reason.to_string(),
+        });
+    }
+
     Ok(LlmResponse {
-        content,
+        content: choice.message.content,
         usage: parsed.usage,
     })
+}
+
+/// Whether an OpenAI-style `finish_reason` indicates the generation completed normally.
+/// Mirrors the success set in Python ragas's `LangchainLLMWrapper.is_finished`
+/// (`["stop", "STOP", "MAX_TOKENS", "eos_token"]`, plus the Anthropic-style `"end_turn"`); any
+/// other present value — notably `"length"` (OpenAI truncation) or `"content_filter"` — is "did
+/// not finish".
+fn is_finished_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "stop" | "STOP" | "MAX_TOKENS" | "eos_token" | "end_turn"
+    )
 }
 
 pub fn parse_embedding_response(body: &str) -> Result<EmbeddingResponse, RagasError> {
@@ -571,6 +596,45 @@ mod tests {
 
         assert_eq!(parsed.content, "0.82");
         assert_eq!(parsed.usage.expect("usage").total_tokens, Some(13));
+    }
+
+    #[test]
+    fn chat_parser_accepts_normal_finish_reasons() {
+        for reason in ["stop", "STOP", "MAX_TOKENS", "eos_token", "end_turn"] {
+            let body = format!(
+                r#"{{"choices":[{{"message":{{"role":"assistant","content":"ok"}},"finish_reason":"{reason}"}}]}}"#
+            );
+            let parsed = parse_chat_response(&body).expect("a finished response parses");
+            assert_eq!(parsed.content, "ok");
+        }
+    }
+
+    #[test]
+    fn chat_parser_flags_truncated_generation_as_did_not_finish() {
+        // OpenAI signals truncation with finish_reason "length"; this must be a distinct, typed
+        // error (not an opaque downstream JSON parse failure) — ragas's LLMDidNotFinishException.
+        let body = r#"{"choices":[{"message":{"role":"assistant","content":"partial {\"a\":"},"finish_reason":"length"}]}"#;
+        let error = parse_chat_response(body).expect_err("a truncated response errors");
+        assert!(
+            matches!(&error, RagasError::LlmDidNotFinish { reason } if reason == "length"),
+            "unexpected error: {error}"
+        );
+
+        // content_filter is likewise treated as "did not finish".
+        let filtered = r#"{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":"content_filter"}]}"#;
+        assert!(matches!(
+            parse_chat_response(filtered),
+            Err(RagasError::LlmDidNotFinish { .. })
+        ));
+    }
+
+    #[test]
+    fn chat_parser_treats_missing_finish_reason_as_finished() {
+        // Lenient default (matches ragas's `all([]) == True`): providers that omit finish_reason
+        // (e.g. some OpenAI-compatible backends) must not error.
+        let body = r#"{"choices":[{"message":{"role":"assistant","content":"done"}}]}"#;
+        let parsed = parse_chat_response(body).expect("a missing finish_reason is finished");
+        assert_eq!(parsed.content, "done");
     }
 
     #[test]
