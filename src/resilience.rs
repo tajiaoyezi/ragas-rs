@@ -70,6 +70,12 @@ where
         match outcome {
             Ok(value) => return Ok(value),
             Err(error) => {
+                // A truncated generation is non-transient: re-issuing the same request will
+                // truncate again, so surface it immediately rather than burning the retry budget
+                // (mirrors ragas raising LLMDidNotFinishException outside its retry wrapper).
+                if matches!(error, RagasError::LlmDidNotFinish { .. }) {
+                    return Err(error);
+                }
                 last_error = Some(error);
                 if attempt < max_attempts {
                     let capped = backoff_ms.min(retry.max_backoff_ms.max(1));
@@ -420,6 +426,40 @@ mod tests {
             .expect("eventually succeeds");
         assert_eq!(response.content, "ok");
         assert_eq!(flaky.calls(), 3);
+    }
+
+    #[tokio::test]
+    async fn resilient_provider_does_not_retry_llm_did_not_finish() {
+        // A truncation (LlmDidNotFinish) is non-transient and must be surfaced on the first
+        // attempt, never retried — otherwise the retry budget is wasted on a guaranteed failure.
+        struct TruncatingLlm {
+            calls: Mutex<u32>,
+        }
+        #[async_trait]
+        impl LlmProvider for TruncatingLlm {
+            async fn generate(&self, _request: LlmRequest) -> Result<LlmResponse, RagasError> {
+                *self.calls.lock().expect("calls") += 1;
+                Err(RagasError::LlmDidNotFinish {
+                    reason: "length".to_string(),
+                })
+            }
+        }
+
+        let llm = Arc::new(TruncatingLlm {
+            calls: Mutex::new(0),
+        });
+        let provider = ResilientLlmProvider::new(llm.clone()).with_retry(fast_retry(5));
+
+        let error = provider
+            .generate(request())
+            .await
+            .expect_err("truncation propagates");
+        assert!(matches!(error, RagasError::LlmDidNotFinish { .. }));
+        assert_eq!(
+            *llm.calls.lock().expect("calls"),
+            1,
+            "a non-transient truncation must not be retried"
+        );
     }
 
     #[tokio::test]

@@ -526,6 +526,7 @@ fn cli_error_kind(error: &RagasError) -> &'static str {
         RagasError::Provider { .. } => "provider",
         RagasError::Parse { .. } => "parse",
         RagasError::Prompt { .. } => "prompt",
+        RagasError::LlmDidNotFinish { .. } => "llm_did_not_finish",
     }
 }
 
