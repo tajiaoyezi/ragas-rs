@@ -12,7 +12,9 @@ A prioritized plan to maximize **functional replication** of the Python
 `ragas evaluate` CLI default. Phase 4 🔶 (DataCompy + deterministic tool-call metrics shipped; the
 LLM agentic metrics remain). Phase 5 🔶 (retry/timeout + caching decorators; 2 of 3 critical bugs
 fixed). Wired count **28 single-turn `Metric`** of ~39 + **2 multi-turn tool-call metrics**
-(2026-06-06); all on `main`.
+(2026-06-06); all on `main`. `StringSimilarityMetric` now exposes a full `DistanceMeasure` selector
+(Levenshtein/Hamming/Jaro/Jaro-Winkler, rapidfuzz-verified) — the last purely-deterministic parity
+gap (2026-06-06); the metric count is **unchanged** (a variant on an existing `Metric`, not a new one).
 
 ## Goal & non-goals
 
@@ -97,12 +99,20 @@ AP@k accumulator, `Metric` trait). No new subsystems.*
 > `SingleTurnSample.reference_contexts` field) — all real `impl Metric`, offline unit-tested.
 > **Phase 2 complete** — `IdBasedContextPrecisionMetric` + `IdBasedContextRecallMetric` shipped
 > 2026-06-06 (new `SingleTurnSample.retrieved_context_ids` / `reference_context_ids` fields).
+> **DistanceMeasure 2026-06-06** — `StringSimilarityMetric` gained a `with_distance_measure`
+> selector + `string_distance_similarity_with` free fn: Hamming (rapidfuzz `pad=True`, max-len
+> denominator), Jaro, and Jaro-Winkler (p=0.1, prefix cap 4, **boost only when Jaro > 0.7**),
+> mirroring Python ragas's `NonLLMStringSimilarity`. Oracle cross-verified two ways (empirical
+> rapidfuzz 3.14.5 + independent hand derivation, zero disagreements); an adversarial differential
+> test then caught a missing Winkler boost threshold before merge. Case-sensitive; both-empty → 1.0.
+> The original Levenshtein-only `string_distance_similarity` is untouched (still backs the NonLLM
+> context metrics).
 
 | Metric | Effort | Value | Approach |
 |---|---|---|---|
 | **StringPresence** | S | medium | `response.contains(reference)` + `Metric` wrapper. |
 | **NonLLMContextPrecisionWithReference + NonLLMContextRecall** | S | medium | Per context, max `string_distance_similarity` over the other list → threshold → route through existing `context_precision_from_relevance()` / symmetric recall. Implement as a pair. |
-| **NonLLMStringSimilarity (DistanceMeasure enum)** | M | medium | Levenshtein done; add Hamming/Jaro/Jaro-Winkler (or `strsim`). Jaro-Winkler is reused by the Phase-6 OverlapScoreBuilder. |
+| **NonLLMStringSimilarity (DistanceMeasure enum)** ✅ | M | medium | DONE 2026-06-06 — Levenshtein + Hamming + Jaro + Jaro-Winkler (rapidfuzz-verified, boost-threshold-correct). Jaro-Winkler reused by the Phase-6 OverlapScoreBuilder. |
 | **BleuScore (BLEU-4)** | M | medium | Generalize `bleu_unigram` to n=1..4 modified precision + geometric mean + brevity penalty + smoothing. Functional, not sacrebleu byte-parity. |
 | **ChrfScore (real chrF/chrF++)** | M | medium | Current fn is char-**unigram** only; generalize to char n=1..N (default 6) F-beta, add word n-grams for chrF++. |
 | **IDBasedContextRecall** | S | low | `BTreeSet` intersection mirroring `id_based_context_precision`. Low value (datasets rarely carry context IDs). |
