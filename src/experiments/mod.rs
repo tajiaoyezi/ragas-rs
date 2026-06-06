@@ -138,6 +138,7 @@ mod tests {
     fn report(faithfulness: f64, relevancy: f64) -> EvaluationReport {
         EvaluationReport {
             metric_names: vec!["faithfulness".to_string(), "answer_relevancy".to_string()],
+            usage: Default::default(),
             results: vec![
                 SampleEvaluation {
                     sample_index: 0,

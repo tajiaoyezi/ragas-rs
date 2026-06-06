@@ -12,7 +12,9 @@ A prioritized plan to maximize **functional replication** of the Python
 `ragas evaluate` CLI default. Phase 4 ✅ (7/7) — DataCompy + deterministic tool-call metrics plus the
 LLM agentic metrics (`AgentGoalAccuracy` with/without reference, `TopicAdherence`,
 `InstanceSpecificRubrics`), all live-verified vs DeepSeek (2026-06-06). Phase 5 🔶 (retry/timeout +
-caching decorators; 2 of 3 critical bugs fixed). Wired count **29 single-turn `Metric`** of ~39 +
+caching decorators; 2 of 3 critical bugs fixed; plus `evaluate()` options — `column_map`,
+`raise_exceptions`, `usage_summary` on `EvaluationReport`, per-token cost API, optional tiktoken
+token counts). Wired count **29 single-turn `Metric`** of ~39 +
 **5 multi-turn metrics** (tool-call ×2, agent-goal-accuracy ×2, topic-adherence) (2026-06-06); all on
 `main`. `StringSimilarityMetric` now exposes a full `DistanceMeasure` selector
 (Levenshtein/Hamming/Jaro/Jaro-Winkler, rapidfuzz-verified) — the last purely-deterministic parity
@@ -214,6 +216,23 @@ latent bugs** — high value because they affect every metric.*
 > truly offline. **Still opt-in / TODO:** caching decorator into eval, callbacks/progress events,
 > `usage_summary` on the `EvaluationReport` struct (currently CLI-output only, since `evaluate_with`
 > can't see providers), tiktoken token counts, cost (rates) on the summary.
+
+> ✅ **`evaluate()` options + usage/cost wired 2026-06-06** — `EvaluationConfig` +
+> `evaluate_with_config(...) -> Result<EvaluationReport, _>`: `raise_exceptions` (fail-fast on the
+> first failing cell in `(sample, metric)` order — incl. panicked tasks — vs the default
+> collect-and-continue; `evaluate`/`evaluate_with` unchanged, refactored onto a shared
+> `run_scoring`). `EvaluationReport` gained a `usage: UsageSummary` field (`#[serde(default)]`),
+> now **populated by the library** from a shared `UsageTracker`; the CLI reads `report.usage`.
+> `column_map` dataset loaders (`from_jsonl_str_with_column_map` / `from_csv_str_with_column_map`,
+> faithful `{canonical: actual}` rename **at the load boundary** — a typed `EvaluationDataset` is
+> already mapped, mirroring Python's pre-validation column rename) + a binary `--column-map` flag.
+> `UsageSummary::estimated_cost` (raw per-single-token, matching Python `TokenUsage.cost`). Real
+> offline BPE token counting via **tiktoken-rs behind an optional `tokenizer` feature**
+> (`num_tokens_from_string` + `tiktoken_encoding_for_model`; off by default to keep the build lean,
+> covered by a dedicated CI step). Adversarially reviewed vs the ragas 0.4.3 source (orientation,
+> raise, per-token cost confirmed). **Still TODO:** `token_usage_parser`/`metric.init` hooks,
+> per-provider usage parsers, caching-into-eval, callbacks/progress, FixOutputFormat repair,
+> PydanticPrompt renderer + Loss.
 
 | Item | Effort | Value | Approach |
 |---|---|---|---|

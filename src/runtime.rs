@@ -73,6 +73,52 @@ impl LazyTokenizer {
     }
 }
 
+/// Map an OpenAI model name to a tiktoken encoding name. Unlike tiktoken-rs's `bpe_for_model`
+/// (which returns an error for non-OpenAI models), this always returns an encoding, defaulting
+/// unknown / non-OpenAI models (e.g. DeepSeek) to `o200k_base` — counts for those are
+/// approximate, since their real tokenizers differ. Fine-tune prefixes (`ft:`) are stripped.
+#[cfg(feature = "tokenizer")]
+pub fn tiktoken_encoding_for_model(model: &str) -> &'static str {
+    let model = model.strip_prefix("ft:").unwrap_or(model);
+    if model.starts_with("gpt-4o")
+        || model.starts_with("chatgpt-4o")
+        || model.starts_with("gpt-4.1")
+        || model.starts_with("gpt-5")
+        || model.starts_with("o1")
+        || model.starts_with("o3")
+        || model.starts_with("o4")
+    {
+        "o200k_base"
+    } else if model.starts_with("gpt-4")
+        || model.starts_with("gpt-3.5")
+        || model.starts_with("text-embedding-")
+    {
+        "cl100k_base"
+    } else {
+        "o200k_base"
+    }
+}
+
+/// Count BPE tokens in `text` using the named tiktoken encoding (`o200k_base`, `cl100k_base`,
+/// `p50k_base`, `r50k_base`). Unknown encoding names fall back to `o200k_base`. Fully offline —
+/// tiktoken-rs bakes the vocab into the binary, so this never touches the network.
+///
+/// Special-token literals in `text` (e.g. `<|endoftext|>`) are counted as single tokens; this
+/// only matters for inputs that contain such markup, not ordinary evaluation text.
+#[cfg(feature = "tokenizer")]
+pub fn num_tokens_from_string(text: &str, encoding: &str) -> usize {
+    use tiktoken_rs::{
+        cl100k_base_singleton, o200k_base_singleton, p50k_base_singleton, r50k_base_singleton,
+    };
+    let bpe = match encoding {
+        "cl100k_base" => cl100k_base_singleton(),
+        "p50k_base" | "p50k_edit" => p50k_base_singleton(),
+        "r50k_base" | "gpt2" => r50k_base_singleton(),
+        _ => o200k_base_singleton(),
+    };
+    bpe.encode_with_special_tokens(text).len()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelTokenUsage {
     pub input_tokens: u32,
@@ -573,6 +619,27 @@ impl UsageTracker {
 
     pub fn summary(&self) -> UsageSummary {
         self.summary.clone()
+    }
+}
+
+impl UsageSummary {
+    /// Estimated monetary cost of the recorded usage, mirroring Python ragas's `TokenUsage.cost`:
+    /// a raw per-**single-token** rate (NOT per 1K / per 1M — pre-divide published rates
+    /// yourself, e.g. a $0.50/1M model → `0.5 / 1e6`). `cost_per_output_token` defaults to the
+    /// input rate when `None`. Computed over the aggregate `total` tokens.
+    ///
+    /// Note the rate convention differs from the benchmarks module's `CostRates`, which is
+    /// per-**1K** tokens; this method (and [`ModelTokenUsage::cost`]) is per single token.
+    pub fn estimated_cost(
+        &self,
+        cost_per_input_token: f64,
+        cost_per_output_token: Option<f64>,
+    ) -> f64 {
+        let output_rate = cost_per_output_token.unwrap_or(cost_per_input_token);
+        round_cost(
+            self.total.prompt_tokens as f64 * cost_per_input_token
+                + self.total.completion_tokens as f64 * output_rate,
+        )
     }
 }
 
@@ -1083,5 +1150,65 @@ mod tests {
         let total = total_model_cost(&[combined, different], &rates).expect("rates present");
 
         assert_eq!(total, 0.63);
+    }
+
+    #[test]
+    fn usage_summary_estimated_cost_uses_raw_per_token_rates() {
+        let mut tracker = UsageTracker::new();
+        tracker.record(
+            "chat",
+            "faithfulness",
+            TokenUsage {
+                prompt_tokens: Some(1_000),
+                completion_tokens: Some(500),
+                total_tokens: Some(1_500),
+            },
+        );
+        let summary = tracker.summary();
+
+        // $0.50 / 1M input + $1.50 / 1M output -> per-token 0.5e-6 / 1.5e-6.
+        // 1000*0.5e-6 + 500*1.5e-6 = 0.0005 + 0.00075 = 0.00125
+        let cost = summary.estimated_cost(0.5e-6, Some(1.5e-6));
+        assert!((cost - 0.00125).abs() < 1e-12, "cost was {cost}");
+
+        // Output rate defaults to the input rate when None: 1500 * 0.5e-6 = 0.00075.
+        let flat = summary.estimated_cost(0.5e-6, None);
+        assert!((flat - 0.00075).abs() < 1e-12, "flat cost was {flat}");
+
+        // No usage -> no cost.
+        assert_eq!(UsageSummary::default().estimated_cost(1.0, Some(2.0)), 0.0);
+    }
+}
+
+#[cfg(all(test, feature = "tokenizer"))]
+mod tokenizer_tests {
+    use super::*;
+
+    #[test]
+    fn tiktoken_counts_tokens_offline_and_routes_models() {
+        // A real BPE count is nonzero, deterministic, and reproducible — no network involved.
+        let n = num_tokens_from_string("tiktoken is great", "cl100k_base");
+        assert!(n >= 3, "expected at least 3 BPE tokens, got {n}");
+        assert_eq!(
+            num_tokens_from_string("hello world", "o200k_base"),
+            num_tokens_from_string("hello world", "o200k_base"),
+        );
+        // An unknown encoding name falls back to o200k_base rather than panicking.
+        assert_eq!(
+            num_tokens_from_string("hello world", "does-not-exist"),
+            num_tokens_from_string("hello world", "o200k_base"),
+        );
+
+        // Model -> encoding routing.
+        assert_eq!(tiktoken_encoding_for_model("gpt-4o-mini"), "o200k_base");
+        assert_eq!(tiktoken_encoding_for_model("gpt-4"), "cl100k_base");
+        assert_eq!(tiktoken_encoding_for_model("gpt-3.5-turbo"), "cl100k_base");
+        // Non-OpenAI models default to o200k_base (approximate) instead of erroring.
+        assert_eq!(tiktoken_encoding_for_model("deepseek-chat"), "o200k_base");
+        // Fine-tune prefixes are stripped before routing.
+        assert_eq!(
+            tiktoken_encoding_for_model("ft:gpt-4o:org::abc"),
+            "o200k_base"
+        );
     }
 }

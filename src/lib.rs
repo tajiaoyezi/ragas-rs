@@ -45,7 +45,10 @@ pub use dataset::{
     EvaluationDataset, EvaluationDatasetBuilder, EvaluationSample, SingleTurnSample,
 };
 pub use error::RagasError;
-pub use eval::{EvaluationOptions, EvaluationReport, SampleEvaluation, evaluate, evaluate_with};
+pub use eval::{
+    EvaluationConfig, EvaluationOptions, EvaluationReport, SampleEvaluation, evaluate,
+    evaluate_with, evaluate_with_config,
+};
 pub use experiments::{
     ExperimentRecord, ExperimentSummary, RunComparison, compare_runs, summarize_experiment,
 };
@@ -121,6 +124,8 @@ pub use runtime::{
     RuntimeEvent, RuntimeEventKind, TimeoutConfig, UsageSummary, UsageTotals, UsageTracker,
     generate_runtime_cache_key, total_model_cost,
 };
+#[cfg(feature = "tokenizer")]
+pub use runtime::{num_tokens_from_string, tiktoken_encoding_for_model};
 pub use schema::{Message, MessageRole, MultiTurnSample, Rubric, ToolCall};
 pub use testset::{
     ExtractionBundle, GraphAdvancedQuery, GraphCluster, GraphEdge, GraphNode, GraphParityFixture,
