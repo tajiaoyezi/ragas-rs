@@ -14,6 +14,12 @@ pub struct SingleTurnSample {
     /// Optional: omitted from JSONL when empty, so existing datasets are unaffected.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reference_contexts: Vec<String>,
+    /// Retrieved / reference context IDs for the ID-based context metrics. Optional; omitted from
+    /// JSONL when empty (backward compatible).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retrieved_context_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reference_context_ids: Vec<String>,
     pub metadata: HashMap<String, String>,
 }
 
@@ -29,6 +35,8 @@ impl SingleTurnSample {
             retrieved_contexts,
             reference: None,
             reference_contexts: Vec::new(),
+            retrieved_context_ids: Vec::new(),
+            reference_context_ids: Vec::new(),
             metadata: HashMap::new(),
         }
     }
@@ -40,6 +48,16 @@ impl SingleTurnSample {
 
     pub fn with_reference_contexts(mut self, reference_contexts: Vec<String>) -> Self {
         self.reference_contexts = reference_contexts;
+        self
+    }
+
+    pub fn with_context_ids(
+        mut self,
+        retrieved_context_ids: Vec<String>,
+        reference_context_ids: Vec<String>,
+    ) -> Self {
+        self.retrieved_context_ids = retrieved_context_ids;
+        self.reference_context_ids = reference_context_ids;
         self
     }
 
@@ -413,6 +431,24 @@ mod tests {
             EvaluationSample::SingleTurn(single) => assert!(single.reference_contexts.is_empty()),
             other => panic!("expected single turn, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn context_ids_round_trip_through_jsonl() {
+        let sample = SingleTurnSample::new("q", "a", vec!["ctx".to_string()]).with_context_ids(
+            vec!["r1".to_string(), "r2".to_string()],
+            vec!["r1".to_string()],
+        );
+        let dataset = EvaluationDatasetBuilder::new()
+            .add_single_turn(sample)
+            .build()
+            .expect("dataset");
+        let jsonl = dataset.to_jsonl_string().expect("jsonl");
+        assert!(jsonl.contains("retrieved_context_ids"));
+        assert!(jsonl.contains("reference_context_ids"));
+        let restored =
+            EvaluationDataset::<EvaluationSample>::from_jsonl_str(&jsonl).expect("read jsonl");
+        assert_eq!(restored.samples(), dataset.samples());
     }
 
     #[test]

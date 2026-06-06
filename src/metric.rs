@@ -2289,6 +2289,107 @@ impl Metric for NonLlmContextRecallMetric {
     }
 }
 
+/// IDBasedContextPrecision — deterministic: fraction of `retrieved_context_ids` that are present
+/// in the `reference_context_ids` set. Reuses the tested [`crate::id_based_context_precision`].
+pub struct IdBasedContextPrecisionMetric;
+
+impl Default for IdBasedContextPrecisionMetric {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl IdBasedContextPrecisionMetric {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl Metric for IdBasedContextPrecisionMetric {
+    fn name(&self) -> &str {
+        "id_based_context_precision"
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        if sample.reference_context_ids.is_empty() {
+            return Err(RagasError::Parse {
+                message: "id_based_context_precision requires reference_context_ids".to_string(),
+            });
+        }
+        let score = crate::id_based_context_precision(
+            &sample.retrieved_context_ids,
+            &sample.reference_context_ids,
+        )
+        .score
+        .unwrap_or(0.0);
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score))
+                .with_reason("retrieved context-id overlap with the reference id set / retrieved"),
+        )
+    }
+}
+
+/// IDBasedContextRecall — deterministic: fraction of `reference_context_ids` that appear in the
+/// `retrieved_context_ids` set.
+pub struct IdBasedContextRecallMetric;
+
+impl Default for IdBasedContextRecallMetric {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl IdBasedContextRecallMetric {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl Metric for IdBasedContextRecallMetric {
+    fn name(&self) -> &str {
+        "id_based_context_recall"
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        if sample.reference_context_ids.is_empty() {
+            return Err(RagasError::Parse {
+                message: "id_based_context_recall requires reference_context_ids".to_string(),
+            });
+        }
+        let retrieved: BTreeSet<&str> = sample
+            .retrieved_context_ids
+            .iter()
+            .map(|id| id.trim())
+            .filter(|id| !id.is_empty())
+            .collect();
+        let reference: BTreeSet<&str> = sample
+            .reference_context_ids
+            .iter()
+            .map(|id| id.trim())
+            .filter(|id| !id.is_empty())
+            .collect();
+        if reference.is_empty() {
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(f64::NAN))
+                    .with_reason("reference_context_ids contained no non-empty ids"),
+            );
+        }
+        let matched = reference
+            .iter()
+            .filter(|id| retrieved.contains(*id))
+            .count();
+        let score = matched as f64 / reference.len() as f64;
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score)).with_reason(format!(
+                "{matched}/{} reference context ids were retrieved",
+                reference.len()
+            )),
+        )
+    }
+}
+
 /// Which component a [`DataCompyScoreMetric`] reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataCompyMode {
@@ -4399,5 +4500,69 @@ the surface while Collins stayed in orbit.",
     async fn datacompy_requires_a_reference() {
         let no_ref = SingleTurnSample::new("q", "a,b\n1,2", vec!["c".to_string()]);
         assert!(DataCompyScoreMetric::new().score(&no_ref).await.is_err());
+    }
+
+    // ---------------------------------------------------------------------
+    // ID-based context precision/recall — deterministic, use the *_context_ids fields.
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn id_based_context_metrics_score_id_overlap() {
+        // retrieved [c1,c2,c3], reference [c1,c2]:
+        //   precision = retrieved ids in reference / retrieved = 2/3; recall = matched / reference = 1.0.
+        let sample = SingleTurnSample::new("q", "resp", vec!["c".to_string()]).with_context_ids(
+            vec!["c1".to_string(), "c2".to_string(), "c3".to_string()],
+            vec!["c1".to_string(), "c2".to_string()],
+        );
+        let precision = numeric(
+            &IdBasedContextPrecisionMetric::new()
+                .score(&sample)
+                .await
+                .expect("precision"),
+        );
+        let recall = numeric(
+            &IdBasedContextRecallMetric::new()
+                .score(&sample)
+                .await
+                .expect("recall"),
+        );
+        assert!((precision - 2.0 / 3.0).abs() < 1e-9);
+        assert!((recall - 1.0).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn id_based_context_recall_misses_unretrieved_ids() {
+        // retrieved [c1], reference [c1,c2,c3] -> recall 1/3.
+        let sample = SingleTurnSample::new("q", "resp", vec!["c".to_string()]).with_context_ids(
+            vec!["c1".to_string()],
+            vec!["c1".to_string(), "c2".to_string(), "c3".to_string()],
+        );
+        assert!(
+            (numeric(
+                &IdBasedContextRecallMetric::new()
+                    .score(&sample)
+                    .await
+                    .expect("recall")
+            ) - 1.0 / 3.0)
+                .abs()
+                < 1e-9
+        );
+    }
+
+    #[tokio::test]
+    async fn id_based_context_metrics_require_reference_ids() {
+        let no_ids = SingleTurnSample::new("q", "resp", vec!["c".to_string()]);
+        assert!(
+            IdBasedContextPrecisionMetric::new()
+                .score(&no_ids)
+                .await
+                .is_err()
+        );
+        assert!(
+            IdBasedContextRecallMetric::new()
+                .score(&no_ids)
+                .await
+                .is_err()
+        );
     }
 }
