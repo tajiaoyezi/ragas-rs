@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use async_trait::async_trait;
@@ -2289,6 +2289,122 @@ impl Metric for NonLlmContextRecallMetric {
     }
 }
 
+/// Which component a [`DataCompyScoreMetric`] reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataCompyMode {
+    Precision,
+    Recall,
+    F1,
+}
+
+/// Parse `text` as CSV (headerless, flexible column counts); each row becomes one canonical
+/// string (cells joined by the unit separator) for multiset comparison.
+fn parse_csv_rows(text: &str) -> Result<Vec<String>, RagasError> {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .from_reader(text.as_bytes());
+    let mut rows = Vec::new();
+    for record in reader.records() {
+        let record = record.map_err(|error| RagasError::Parse {
+            message: format!("datacompy CSV parse failed: {error}"),
+        })?;
+        rows.push(record.iter().collect::<Vec<_>>().join("\u{1f}"));
+    }
+    Ok(rows)
+}
+
+/// Multiset overlap (sum of min counts) between two row collections.
+fn row_multiset_overlap(left: &[String], right: &[String]) -> usize {
+    let mut left_counts: BTreeMap<&String, usize> = BTreeMap::new();
+    for row in left {
+        *left_counts.entry(row).or_insert(0) += 1;
+    }
+    let mut right_counts: BTreeMap<&String, usize> = BTreeMap::new();
+    for row in right {
+        *right_counts.entry(row).or_insert(0) += 1;
+    }
+    left_counts
+        .iter()
+        .map(|(row, count)| (*count).min(*right_counts.get(*row).unwrap_or(&0)))
+        .sum()
+}
+
+/// DataCompyScore — deterministic row-level comparison of the response and reference as CSV
+/// tables. Rows are compared as a multiset: precision = matched / response rows, recall =
+/// matched / reference rows, F1 = harmonic mean. Reports the [`DataCompyMode`] component
+/// (default F1). NaN when the reference has no rows. No provider needed.
+pub struct DataCompyScoreMetric {
+    mode: DataCompyMode,
+}
+
+impl Default for DataCompyScoreMetric {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DataCompyScoreMetric {
+    pub fn new() -> Self {
+        Self {
+            mode: DataCompyMode::F1,
+        }
+    }
+
+    pub fn with_mode(mut self, mode: DataCompyMode) -> Self {
+        self.mode = mode;
+        self
+    }
+}
+
+#[async_trait]
+impl Metric for DataCompyScoreMetric {
+    fn name(&self) -> &str {
+        "datacompy_score"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::Response, SampleField::Reference],
+        )
+    }
+
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let reference = require_reference(sample, self.name())?;
+        let response_rows = parse_csv_rows(&sample.response)?;
+        let reference_rows = parse_csv_rows(reference)?;
+        if reference_rows.is_empty() {
+            return Ok(
+                MetricResult::success(self.name(), MetricValue::numeric(f64::NAN))
+                    .with_reason("reference CSV has no rows"),
+            );
+        }
+        let matched = row_multiset_overlap(&response_rows, &reference_rows);
+        let precision = if response_rows.is_empty() {
+            0.0
+        } else {
+            matched as f64 / response_rows.len() as f64
+        };
+        let recall = matched as f64 / reference_rows.len() as f64;
+        let f1 = if precision + recall == 0.0 {
+            0.0
+        } else {
+            2.0 * precision * recall / (precision + recall)
+        };
+        let score = match self.mode {
+            DataCompyMode::Precision => precision,
+            DataCompyMode::Recall => recall,
+            DataCompyMode::F1 => f1,
+        };
+        Ok(
+            MetricResult::success(self.name(), MetricValue::numeric(score)).with_reason(format!(
+                "{matched} matching rows (precision={precision:.3}, recall={recall:.3})"
+            )),
+        )
+    }
+}
+
 pub fn cosine_similarity(left: &[f32], right: &[f32]) -> f64 {
     let len = left.len().min(right.len());
     if len == 0 {
@@ -4221,5 +4337,67 @@ the surface while Collins stayed in orbit.",
             ),
             0.0
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // DataCompyScore — deterministic CSV row comparison.
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn datacompy_score_compares_csv_rows() {
+        // Identical CSV tables -> precision = recall = F1 = 1.0.
+        let identical =
+            SingleTurnSample::new("q", "id,name\n1,alice\n2,bob", vec!["c".to_string()])
+                .with_reference("id,name\n1,alice\n2,bob");
+        assert!(
+            (numeric(
+                &DataCompyScoreMetric::new()
+                    .score(&identical)
+                    .await
+                    .expect("identical")
+            ) - 1.0)
+                .abs()
+                < 1e-9
+        );
+
+        // Response = reference rows + 1 extra row: 4 response rows, 3 reference rows, 3 matched.
+        // precision = 3/4 = 0.75; recall = 3/3 = 1.0.
+        let partial = SingleTurnSample::new("q", "id,name\n1,a\n2,b\n3,c", vec!["c".to_string()])
+            .with_reference("id,name\n1,a\n2,b");
+        let precision = numeric(
+            &DataCompyScoreMetric::new()
+                .with_mode(DataCompyMode::Precision)
+                .score(&partial)
+                .await
+                .expect("precision"),
+        );
+        let recall = numeric(
+            &DataCompyScoreMetric::new()
+                .with_mode(DataCompyMode::Recall)
+                .score(&partial)
+                .await
+                .expect("recall"),
+        );
+        assert!((precision - 0.75).abs() < 1e-9);
+        assert!((recall - 1.0).abs() < 1e-9);
+
+        // Disjoint tables -> 0.
+        let disjoint = SingleTurnSample::new("q", "x,y\n9,z", vec!["c".to_string()])
+            .with_reference("id,name\n1,a");
+        assert_eq!(
+            numeric(
+                &DataCompyScoreMetric::new()
+                    .score(&disjoint)
+                    .await
+                    .expect("disjoint")
+            ),
+            0.0
+        );
+    }
+
+    #[tokio::test]
+    async fn datacompy_requires_a_reference() {
+        let no_ref = SingleTurnSample::new("q", "a,b\n1,2", vec!["c".to_string()]);
+        assert!(DataCompyScoreMetric::new().score(&no_ref).await.is_err());
     }
 }
