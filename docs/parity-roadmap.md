@@ -9,9 +9,10 @@ A prioritized plan to maximize **functional replication** of the Python
 
 **Status:** Phase 1 ✅; Phase 2 ✅ (complete, incl. ID-based context precision/recall); Phase 3 ✅
 (7/7) — all LLM metrics live-verified vs DeepSeek; `context_utilization` wired into the
-`ragas evaluate` CLI default. Phase 4 🔶 (DataCompyScore shipped; agentic LLM metrics remain).
-Phase 5 🔶 (retry/timeout + caching decorators; 2 of 3 critical bugs fixed). Wired metric count
-**5 → 28** of ~39 (2026-06-06); all on `main`.
+`ragas evaluate` CLI default. Phase 4 🔶 (DataCompy + deterministic tool-call metrics shipped; the
+LLM agentic metrics remain). Phase 5 🔶 (retry/timeout + caching decorators; 2 of 3 critical bugs
+fixed). Wired count **28 single-turn `Metric`** of ~39 + **2 multi-turn tool-call metrics**
+(2026-06-06); all on `main`.
 
 ## Goal & non-goals
 
@@ -134,10 +135,12 @@ them is multi-call and the bookkeeping must match Python. Keep the lexical versi
 additions (`reference_topics`) + transcript renderers. Share a transcript renderer + infer-outcome prompt.*
 
 > 🔶 **Shipped 2026-06-06** — `DataCompyScoreMetric` (deterministic CSV row precision/recall/F1,
-> `DataCompyMode`), the one Phase-4 metric that fits the single-turn `Metric` trait with no LLM.
-> **Remaining (deferred):** ToolCallAccuracy/F1, AgentGoalAccuracy, TopicAdherence, InstanceRubrics
-> — these need `MultiTurnSample` work (a `reference_tool_calls` / `reference_topics` field + a
-> `MultiTurnMetric` path, since the core `Metric` trait is single-turn) and/or live LLM verification.
+> `DataCompyMode`) on the single-turn `Metric` trait, plus `ToolCallAccuracyMetric` +
+> `ToolCallF1Metric` (`src/agentic.rs`, `impl MultiTurnMetric`, deterministic; new
+> `MultiTurnSample.reference_tool_calls` field; actual calls extracted from assistant messages,
+> matched on name+arguments). **All deterministic Phase-4 metrics done.** **Remaining (deferred —
+> need live LLM):** AgentGoalAccuracy, TopicAdherence, InstanceRubrics (TopicAdherence also needs a
+> `reference_topics` field; they run via the `MultiTurnMetric` / single-turn paths as appropriate).
 
 | Metric | Effort | Value | Approach |
 |---|---|---|---|
