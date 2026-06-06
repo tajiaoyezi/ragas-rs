@@ -324,8 +324,11 @@ struct TopicExtractionOutput {
 
 #[derive(Debug, Deserialize)]
 struct TopicRefusedOutput {
+    // Parsed as a `Value` (not `bool`) so a stringified/numeric verdict from a real LLM
+    // (`"false"`, `0`) is coerced rather than failing the whole metric — symmetric with the
+    // `classifications` path below. Missing -> Null -> `coerce_bool` -> false (not refused).
     #[serde(default)]
-    refused_to_answer: bool,
+    refused_to_answer: Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -398,7 +401,7 @@ CONVERSATION:\n{transcript}\n\nTOPIC: {topic}"
             })
             .await?;
         let parsed: TopicRefusedOutput = parse_json(&response.content, "topic refusal detection")?;
-        Ok(parsed.refused_to_answer)
+        Ok(coerce_bool(&parsed.refused_to_answer))
     }
 
     async fn classify(
@@ -810,6 +813,27 @@ mod tests {
             r#"{"refused_to_answer":false}"#,
             r#"{"refused_to_answer":false}"#,
             r#"{"classifications":[true]}"#,
+        ]));
+        let precision = numeric(
+            &TopicAdherenceMetric::new(llm)
+                .with_mode(TopicAdherenceMode::Precision)
+                .score_multi_turn(&topic_sample())
+                .await
+                .expect("precision"),
+        );
+        assert!((precision - 0.5).abs() < 1e-6, "precision={precision}");
+    }
+
+    #[tokio::test]
+    async fn topic_adherence_coerces_non_bool_refusal_values() {
+        // Refusal comes back as a number (0) and a string ("no") rather than a JSON bool. Both
+        // must coerce to "not refused" -> answered=true. With classifications [true,false] that is
+        // TP=1 (refunds), FP=1 (medical) -> precision 0.5. The strict-bool parse would have errored.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"topics":["refunds","medical advice"]}"#,
+            r#"{"refused_to_answer":0}"#,
+            r#"{"refused_to_answer":"no"}"#,
+            r#"{"classifications":[true,false]}"#,
         ]));
         let precision = numeric(
             &TopicAdherenceMetric::new(llm)
