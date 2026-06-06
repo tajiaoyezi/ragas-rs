@@ -38,6 +38,16 @@ adversarial one. Until such a run exists, the honest status of an LLM metric is
   model extracts the obvious named entities (Tesla + Musk/SpaceX) from an entity-rich passage and
   returns a non-empty summary shorter than the source.
 
+### Follow-up run — embedding cosine relationship builder (Phase 6)
+
+- **Date:** 2026-06-06
+- **Provider:** SiliconFlow (embeddings), same configuration.
+- **Command:** `cargo test --lib live_cosine_relationships_link_semantically_similar_nodes -- --ignored`
+- **Result:** **1 passed, 0 failed** (~7s) — the `EmbeddingExtractor` + `build_cosine_relationships`
+  gate marked **(CB)** below: real embeddings make two semantically similar sentences (two about
+  cats) score strictly higher than an unrelated sentence (stock market), so the cosine edge is
+  ordered correctly.
+
 ## Gates (all PASS)
 
 LLM metric discrimination gates (20):
@@ -69,12 +79,13 @@ LLM metric discrimination gates (20):
 `*` also exercises the embedding endpoint. **(P4)** = Phase-4 agentic metrics, run in the
 follow-up above.
 
-End-to-end / testset gates (4):
+End-to-end / testset gates (5):
 
 - CLI `evaluate` with a live provider — `live_evaluate_command_runs_llm_metrics`
 - LLM test-set synthesizer, single-hop — `test_31_2_7_live_synthesizer_generates_from_real_model`
 - LLM test-set synthesizer, multi-hop — `test_31_2_8_live_multi_hop_synthesizer_generates_two_context_sample`
 - LLM testset extractor **(EX)** — `live_llm_extractor_pulls_named_entities_and_summary`
+- Embedding cosine relationship builder **(CB)** — `live_cosine_relationships_link_semantically_similar_nodes`
 
 ## What this proves — and what it does NOT
 
