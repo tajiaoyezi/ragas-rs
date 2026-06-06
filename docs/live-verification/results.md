@@ -22,6 +22,13 @@ adversarial one. Until such a run exists, the honest status of an LLM metric is
   live_topic_adherence live_instance_specific_rubrics`
 - **Result:** **3 passed, 0 failed** (~26s) — the three gates added in the rows marked **(P4)** below.
 
+### Follow-up run — SemanticSimilarity (answer_similarity)
+
+- **Date:** 2026-06-06
+- **Provider:** SiliconFlow (embeddings), same configuration.
+- **Command:** `cargo test --lib live_semantic_similarity_scores_similar_above_dissimilar -- --ignored`
+- **Result:** **1 passed, 0 failed** (~1s) — the embedding-only gate marked **(SS)** below.
+
 ## Gates (all PASS)
 
 LLM metric discrimination gates (20):
@@ -30,6 +37,7 @@ LLM metric discrimination gates (20):
 |---|---|
 | Faithfulness | `live_faithfulness_scores_faithful_above_unfaithful` |
 | ResponseRelevancy * | `live_answer_relevancy_scores_relevant_above_irrelevant` |
+| SemanticSimilarity * (SS) | `live_semantic_similarity_scores_similar_above_dissimilar` |
 | ContextPrecision | `live_context_precision_ranks_useful_context_above_useless` |
 | LlmContextRecall | `live_context_recall_scores_supported_above_unsupported` |
 | ContextUtilization | `live_context_utilization_ranks_useful_context_above_useless` |

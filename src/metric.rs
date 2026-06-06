@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 use crate::validation::{MetricRequirements, SampleField};
 use crate::{
     AnswerCorrectnessWeights, ChatMessage, EmbeddingProvider, EmbeddingRequest,
-    FactualCorrectnessCounts, LlmProvider, LlmRequest, RagasError, SingleTurnSample,
-    answer_correctness, factual_correctness,
+    FactualCorrectnessCounts, LlmProvider, LlmRequest, RagasError, SemanticThresholdPolicy,
+    SingleTurnSample, answer_correctness, factual_correctness, semantic_similarity_from_vectors,
+    threshold_semantic_similarity,
 };
 
 pub type BoxMetricFuture = Pin<Box<dyn Future<Output = Result<MetricResult, RagasError>> + Send>>;
@@ -385,6 +386,92 @@ struct GeneratedQuestion {
     question: String,
     #[serde(default)]
     noncommittal: i64,
+}
+
+/// SemanticSimilarity (ragas' `answer_similarity`): embedding cosine similarity between the
+/// response and the reference. Embedding-only — no LLM. Optional `threshold` binarizes the score.
+pub struct SemanticSimilarityMetric {
+    embedding: Arc<dyn EmbeddingProvider>,
+    threshold: Option<f64>,
+}
+
+impl SemanticSimilarityMetric {
+    pub fn new(embedding: Arc<dyn EmbeddingProvider>) -> Self {
+        Self {
+            embedding,
+            threshold: None,
+        }
+    }
+
+    /// Binarize the score: `1.0` when cosine `>= threshold` (inclusive), else `0.0`. Without a
+    /// threshold the raw cosine (clamped to `[0, 1]`) is returned, matching ragas' default.
+    pub fn with_threshold(mut self, threshold: f64) -> Self {
+        self.threshold = Some(threshold);
+        self
+    }
+}
+
+#[async_trait]
+impl Metric for SemanticSimilarityMetric {
+    fn name(&self) -> &str {
+        "semantic_similarity"
+    }
+
+    fn requirements(&self) -> MetricRequirements {
+        MetricRequirements::new(
+            self.name(),
+            vec![SampleField::Response, SampleField::Reference],
+        )
+    }
+
+    /// Faithful port of ragas' SemanticSimilarity: embed the response and the reference, take the
+    /// cosine similarity of the two vectors (clamped to `[0, 1]` via
+    /// [`semantic_similarity_from_vectors`]). With a `threshold`, the score is binarized; otherwise
+    /// the raw cosine is returned. Requires a `reference`.
+    async fn score(&self, sample: &SingleTurnSample) -> Result<MetricResult, RagasError> {
+        let Some(reference) = sample.reference.as_ref() else {
+            return Err(RagasError::Parse {
+                message: "semantic_similarity requires a reference".to_string(),
+            });
+        };
+
+        let embedded = self
+            .embedding
+            .embed(EmbeddingRequest {
+                input: vec![sample.response.clone(), reference.clone()],
+            })
+            .await?;
+        if embedded.embeddings.len() != 2 {
+            return Err(RagasError::Parse {
+                message: "semantic_similarity expected two embeddings".to_string(),
+            });
+        }
+
+        let raw =
+            semantic_similarity_from_vectors(&embedded.embeddings[0], &embedded.embeddings[1])
+                .score
+                .ok_or_else(|| RagasError::Parse {
+                    message: "semantic_similarity produced no score".to_string(),
+                })?;
+
+        let (score, reason) = match self.threshold {
+            Some(threshold) => {
+                let passed = threshold_semantic_similarity(
+                    raw,
+                    SemanticThresholdPolicy::inclusive(threshold),
+                )
+                .score
+                .unwrap_or(0.0);
+                (
+                    passed,
+                    format!("cosine {raw:.6} vs inclusive threshold {threshold:.3} -> {passed}"),
+                )
+            }
+            None => (raw, format!("embedding cosine similarity {raw:.6}")),
+        };
+
+        Ok(MetricResult::success(self.name(), MetricValue::numeric(score)).with_reason(reason))
+    }
 }
 
 pub struct ContextPrecisionMetric {
@@ -3478,6 +3565,84 @@ mod tests {
         assert_eq!(adversarial_score, 0.0);
     }
 
+    #[tokio::test]
+    async fn semantic_similarity_scores_cosine_with_optional_threshold() {
+        fn provider(pairs: &[(&str, Vec<f32>)]) -> Arc<MapEmbeddingProvider> {
+            Arc::new(MapEmbeddingProvider {
+                vectors: pairs
+                    .iter()
+                    .map(|(text, vector)| (text.to_string(), vector.clone()))
+                    .collect(),
+            })
+        }
+        let sample = |response: &str, reference: &str| {
+            SingleTurnSample::new("q", response, vec!["c".to_string()]).with_reference(reference)
+        };
+
+        // Parallel vectors -> cosine 1.0.
+        let parallel = provider(&[("p", vec![1.0, 0.0, 0.0]), ("pr", vec![2.0, 0.0, 0.0])]);
+        let score = numeric(
+            &SemanticSimilarityMetric::new(parallel)
+                .score(&sample("p", "pr"))
+                .await
+                .expect("score"),
+        );
+        assert!(
+            (score - 1.0).abs() < 1e-9,
+            "parallel cosine is 1.0, got {score}"
+        );
+
+        // Orthogonal vectors -> cosine 0.0.
+        let orthogonal = provider(&[("a", vec![1.0, 0.0]), ("b", vec![0.0, 1.0])]);
+        let score = numeric(
+            &SemanticSimilarityMetric::new(orthogonal)
+                .score(&sample("a", "b"))
+                .await
+                .expect("score"),
+        );
+        assert!(score.abs() < 1e-9, "orthogonal cosine is 0.0, got {score}");
+
+        // Partial overlap -> cosine ~0.7071; threshold gates it inclusively.
+        let partial = provider(&[("e", vec![1.0, 1.0]), ("f", vec![1.0, 0.0])]);
+        let raw = numeric(
+            &SemanticSimilarityMetric::new(partial.clone())
+                .score(&sample("e", "f"))
+                .await
+                .expect("raw"),
+        );
+        assert!(
+            (raw - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-6,
+            "got {raw}"
+        );
+        let pass = numeric(
+            &SemanticSimilarityMetric::new(partial.clone())
+                .with_threshold(0.7)
+                .score(&sample("e", "f"))
+                .await
+                .expect("pass"),
+        );
+        assert_eq!(pass, 1.0, "0.7071 >= 0.7 inclusive -> 1.0");
+        let fail = numeric(
+            &SemanticSimilarityMetric::new(partial)
+                .with_threshold(0.8)
+                .score(&sample("e", "f"))
+                .await
+                .expect("fail"),
+        );
+        assert_eq!(fail, 0.0, "0.7071 < 0.8 -> 0.0");
+
+        // A missing reference is a hard error (the metric is reference-based).
+        let no_reference = SingleTurnSample::new("q", "resp", vec!["c".to_string()]);
+        let error = SemanticSimilarityMetric::new(provider(&[]))
+            .score(&no_reference)
+            .await
+            .expect_err("reference is required");
+        assert!(
+            error.to_string().contains("requires a reference"),
+            "{error}"
+        );
+    }
+
     // ---------------------------------------------------------------------
     // LIVE discrimination gate (IGNORED unless OPENAI_API_KEY is set).
     //
@@ -3564,6 +3729,35 @@ mod tests {
         assert!(
             relevant_score > irrelevant_score,
             "relevant={relevant_score} must exceed irrelevant={irrelevant_score}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_semantic_similarity_scores_similar_above_dissimilar() {
+        let Some(embedding) = live_embedding_client() else {
+            return;
+        };
+        let metric = SemanticSimilarityMetric::new(embedding);
+
+        let similar = SingleTurnSample::new(
+            "Where is the Eiffel Tower?",
+            "The Eiffel Tower is located in Paris, France.",
+            vec!["c".to_string()],
+        )
+        .with_reference("Paris, France is home to the Eiffel Tower.");
+        let dissimilar = SingleTurnSample::new(
+            "Where is the Eiffel Tower?",
+            "The Eiffel Tower is located in Paris, France.",
+            vec!["c".to_string()],
+        )
+        .with_reference("Photosynthesis converts sunlight into chemical energy in plants.");
+
+        let high = numeric(&metric.score(&similar).await.expect("similar"));
+        let low = numeric(&metric.score(&dissimilar).await.expect("dissimilar"));
+        assert!(
+            high > low,
+            "semantically-similar reference={high} must exceed dissimilar={low}"
         );
     }
 
