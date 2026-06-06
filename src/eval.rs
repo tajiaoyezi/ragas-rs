@@ -94,10 +94,12 @@ fn metric_names(metrics: &[Arc<dyn Metric>]) -> Vec<String> {
 /// (nondeterministic), and it stops scheduling further work; this implementation lets all in-flight
 /// cells finish, then returns the order-deterministic first error.
 ///
-/// `callbacks` receive a [`RuntimeEvent::metric_started`] before each cell and a
-/// [`RuntimeEvent::metric_succeeded`] / [`RuntimeEvent::metric_failed`] after; an empty
-/// [`CallbackManager`] makes every emit a no-op. Events fire from the concurrent scoring tasks, so
-/// they interleave across cells in scheduling-nondeterministic order.
+/// `callbacks` receive a [`RuntimeEvent::metric_started`] before each cell and a terminating
+/// [`RuntimeEvent::metric_succeeded`] / [`RuntimeEvent::metric_failed`] after — including a
+/// `metric_failed` for a panicked/cancelled task (emitted from the joining side), so every
+/// `metric_started` is balanced by exactly one terminator. An empty [`CallbackManager`] makes
+/// every emit a no-op. Per-cell events fire from the concurrent scoring tasks, so they interleave
+/// in scheduling-nondeterministic order.
 async fn run_scoring(
     dataset: &EvaluationDataset,
     metrics: &[Arc<dyn Metric>],
@@ -156,6 +158,20 @@ async fn run_scoring(
             && let Some(cell) = row.get_mut(metric_index)
         {
             *cell = Some(outcome);
+        }
+    }
+
+    // A None cell is a join failure (panic/cancel): its task emitted MetricStarted but unwound
+    // before it could emit a terminator, so emit MetricFailed here to keep callbacks balanced.
+    for (sample_index, row) in cells.iter().enumerate() {
+        for (metric_index, cell) in row.iter().enumerate() {
+            if cell.is_none() {
+                callbacks.emit(RuntimeEvent::metric_failed(
+                    run_id,
+                    &names[metric_index],
+                    sample_index,
+                ));
+            }
         }
     }
 
@@ -521,5 +537,44 @@ mod tests {
         assert_eq!(count(RuntimeEventKind::MetricStarted), 4);
         assert_eq!(count(RuntimeEventKind::MetricSucceeded), 2); // ok metric over 2 samples
         assert_eq!(count(RuntimeEventKind::MetricFailed), 2); // failing metric over 2 samples
+    }
+
+    #[tokio::test]
+    async fn evaluate_with_config_callbacks_terminate_even_a_panicked_cell() {
+        use crate::RuntimeEventKind;
+
+        // A panicking metric's task emits MetricStarted then unwinds; the joining side must still
+        // emit MetricFailed so every started cell is terminated. raise_exceptions stays false so
+        // the run completes (EvaluationFinished emitted). The runtime's panic backtrace on stderr
+        // during this test is expected and harmless.
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        let callbacks = CallbackManager::new().with_callback(move |event: &RuntimeEvent| {
+            captured.lock().unwrap().push(event.kind.clone());
+        });
+        let dataset = one_sample_dataset();
+        let panicking = Arc::new(FnMetric::new("panic", |_: &SingleTurnSample| {
+            Box::pin(async { panic!("metric blew up") })
+        }));
+        let metrics: Vec<Arc<dyn Metric>> = vec![panicking];
+
+        let config = EvaluationConfig::new(RunConfig::default()).with_callbacks(callbacks);
+        let report = evaluate_with_config(&dataset, &metrics, &config)
+            .await
+            .expect("collect-and-continue succeeds even when a cell panics");
+
+        let kinds = events.lock().unwrap().clone();
+        let count = |kind: RuntimeEventKind| kinds.iter().filter(|k| **k == kind).count();
+        assert_eq!(count(RuntimeEventKind::MetricStarted), 1);
+        let terminators =
+            count(RuntimeEventKind::MetricSucceeded) + count(RuntimeEventKind::MetricFailed);
+        assert_eq!(
+            terminators, 1,
+            "every MetricStarted must be balanced by exactly one terminator"
+        );
+        assert_eq!(count(RuntimeEventKind::MetricFailed), 1);
+        assert_eq!(kinds.last(), Some(&RuntimeEventKind::EvaluationFinished));
+        // The panicked cell is recorded as a failure in the report.
+        assert!(report.results[0].results[0].error.is_some());
     }
 }
