@@ -614,12 +614,14 @@ mod tests {
             .save("datasets/fixture", &fixture_dataset())
             .expect("save fixture dataset");
 
-        let output = run_cli_command(
+        // Offline (None provider) keeps this deterministic; no live provider resolved from `.env`.
+        let output = run_cli_command_with_provider(
             &mut runtime,
             CliCommand::Evaluate {
                 input: "datasets/fixture".to_string(),
                 report: "reports/run-1".to_string(),
             },
+            None,
         )
         .expect("evaluate command");
 
@@ -668,12 +670,16 @@ mod tests {
             .save("datasets/scorable", &dataset)
             .expect("save dataset");
 
-        let output = run_cli_command(
+        // Inject None so this stays a deterministic OFFLINE test: with a real key in `.env`,
+        // `run_cli_command` would resolve a live provider and make network calls. The env path is
+        // covered by the `#[ignore]` live test instead.
+        let output = run_cli_command_with_provider(
             &mut runtime,
             CliCommand::Evaluate {
                 input: "datasets/scorable".to_string(),
                 report: "reports/rouge".to_string(),
             },
+            None,
         )
         .expect("evaluate command");
 
@@ -732,12 +738,15 @@ mod tests {
             .save("datasets/noref", &dataset)
             .expect("save dataset");
 
-        let output = run_cli_command(
+        // Offline (None provider): only the deterministic ROUGE metric runs, so the no-reference
+        // error is exercised without any live LLM call.
+        let output = run_cli_command_with_provider(
             &mut runtime,
             CliCommand::Evaluate {
                 input: "datasets/noref".to_string(),
                 report: "reports/noref".to_string(),
             },
+            None,
         )
         .expect("evaluate command");
 
@@ -1095,12 +1104,15 @@ mod tests {
             .save("datasets/fixture", &fixture_dataset())
             .expect("save fixture dataset");
 
-        let output = run_cli_command(
+        // Offline (None provider): the contract snapshot must be deterministic, so it must not
+        // resolve a live provider from `.env`.
+        let output = run_cli_command_with_provider(
             &mut runtime,
             CliCommand::Evaluate {
                 input: "datasets/fixture".to_string(),
                 report: "reports/run-21-2".to_string(),
             },
+            None,
         )
         .expect("evaluate command");
         let snapshot = cli_contract_snapshot(&output).expect("CLI snapshot");
