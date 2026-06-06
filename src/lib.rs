@@ -42,7 +42,7 @@ pub use dataset::{
     EvaluationDataset, EvaluationDatasetBuilder, EvaluationSample, SingleTurnSample,
 };
 pub use error::RagasError;
-pub use eval::{EvaluationOptions, EvaluationReport, SampleEvaluation, evaluate};
+pub use eval::{EvaluationOptions, EvaluationReport, SampleEvaluation, evaluate, evaluate_with};
 pub use experiments::{
     ExperimentRecord, ExperimentSummary, RunComparison, compare_runs, summarize_experiment,
 };

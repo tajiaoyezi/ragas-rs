@@ -99,6 +99,28 @@ pub async fn evaluate(
     }
 }
 
+/// RunConfig-driven evaluation entry point. Runs the same fan-out as [`evaluate`] but takes a
+/// [`RunConfig`] instead of bare [`EvaluationOptions`], deriving concurrency via
+/// [`EvaluationOptions::from_run_config`]. This is the carrier for run-level concerns — today it
+/// governs concurrency; it is the extension point for cancellation/callbacks/usage. The minimal
+/// options-only [`evaluate`] is unchanged.
+///
+/// Note: provider retry/timeout from the `RunConfig` is applied at provider-construction time
+/// (wrap the provider with [`crate::ResilientLlmProvider`] before building the metrics), not inside
+/// this loop — providers are owned by the metrics, so this function never sees them directly.
+pub async fn evaluate_with(
+    dataset: &EvaluationDataset,
+    metrics: &[Arc<dyn Metric>],
+    run_config: &RunConfig,
+) -> EvaluationReport {
+    evaluate(
+        dataset,
+        metrics,
+        EvaluationOptions::from_run_config(run_config),
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +161,33 @@ mod tests {
                 Some("provider error: provider failed")
             );
         }
+    }
+
+    #[tokio::test]
+    async fn evaluate_with_runs_metrics_via_run_config() {
+        // The RunConfig-driven carrier runs the same fan-out as evaluate(), deriving concurrency
+        // from the RunConfig. Scores match the responses, proving the real metrics ran in order.
+        let dataset = EvaluationDataset::new(vec![
+            SingleTurnSample::new("q1", "a1", vec!["c1".to_string()]),
+            SingleTurnSample::new("q2", "aaa2", vec!["c2".to_string()]),
+        ])
+        .expect("dataset");
+        let len_metric = Arc::new(FnMetric::new("len", |sample: &SingleTurnSample| {
+            let score = sample.response.len() as f64;
+            Box::pin(async move { Ok(MetricResult::success("len", MetricValue::numeric(score))) })
+        }));
+        let metrics: Vec<Arc<dyn Metric>> = vec![len_metric];
+
+        let run_config = RunConfig {
+            concurrency: 2,
+            ..RunConfig::default()
+        };
+        let report = evaluate_with(&dataset, &metrics, &run_config).await;
+
+        assert_eq!(report.metric_names, vec!["len"]);
+        assert_eq!(report.results.len(), 2);
+        let score = |index: usize| report.results[index].results[0].value.clone();
+        assert_eq!(score(0), Some(MetricValue::numeric(2.0)));
+        assert_eq!(score(1), Some(MetricValue::numeric(4.0)));
     }
 }

@@ -5,12 +5,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    ContextUtilizationMetric, DatasetBackend, EvaluationDataset, EvaluationOptions,
-    EvaluationReport, EvaluationSample, ExtractionBundle, FaithfulnessMetric, FnMetric, GraphNode,
+    ContextUtilizationMetric, DatasetBackend, EvaluationDataset, EvaluationReport,
+    EvaluationSample, ExtractionBundle, FaithfulnessMetric, FnMetric, GraphNode,
     InMemoryDatasetBackend, KnowledgeGraph, LlmContextRecallMetric, LlmProvider, Metric,
-    MetricResult, MetricValue, PersonaGenerator, RagasError, SingleTurnSample, attach_extractions,
-    build_chunk_relationships, evaluate, rouge_l_recall, split_text_into_chunks,
-    synthesize_single_hop_sample,
+    MetricResult, MetricValue, PersonaGenerator, RagasError, ResilientLlmProvider, RetryConfig,
+    RunConfig, SingleTurnSample, TimeoutConfig, attach_extractions, build_chunk_relationships,
+    evaluate_with, rouge_l_recall, split_text_into_chunks, synthesize_single_hop_sample,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,13 +177,14 @@ fn run_evaluate(
     } else {
         let any_reference = single_turn.iter().any(|sample| sample.reference.is_some());
         let scorable = EvaluationDataset::new(single_turn)?;
+        // Apply conservative retry + per-operation timeout to the provider so a transient API
+        // failure does not surface as a metric error (the provider's retry/timeout config was
+        // previously inert — nothing in the eval path applied it).
+        let run_config = eval_run_config();
+        let provider = provider.map(|provider| resilient_eval_provider(provider, &run_config));
         let metrics = build_evaluate_metrics(provider, any_reference);
         // Drive the async evaluation pipeline from this synchronous CLI entry point.
-        let report = run_async(evaluate(
-            &scorable,
-            &metrics,
-            EvaluationOptions { concurrency: 1 },
-        ));
+        let report = run_async(evaluate_with(&scorable, &metrics, &run_config));
         Some(report)
     };
 
@@ -274,6 +275,36 @@ fn build_evaluate_metrics(
     }
 
     metrics
+}
+
+/// Conservative resilience config for the CLI evaluate path. Deliberately NOT
+/// [`RunConfig::default`] (10 retries / up-to-60s backoff / 180s per-op timeout, which can stack a
+/// persistently-failing call into a multi-minute hang): a few quick retries with a bounded per-call
+/// timeout. `concurrency` stays 1, unchanged from the prior CLI behavior.
+fn eval_run_config() -> RunConfig {
+    RunConfig {
+        retry: RetryConfig {
+            max_attempts: 3,
+            initial_backoff_ms: 250,
+            max_backoff_ms: 2_000,
+        },
+        timeout: TimeoutConfig {
+            per_operation_ms: 60_000,
+            total_ms: None,
+        },
+        concurrency: 1,
+        ..RunConfig::default()
+    }
+}
+
+/// Wrap the chat provider so the evaluate path's metrics inherit retry + per-operation timeout.
+/// Resilience is applied here (at provider construction) because each metric owns its provider —
+/// `evaluate_with` never sees the provider directly.
+fn resilient_eval_provider(
+    provider: Arc<dyn LlmProvider>,
+    run_config: &RunConfig,
+) -> Arc<dyn LlmProvider> {
+    Arc::new(ResilientLlmProvider::from_run_config(provider, run_config))
 }
 
 /// Per-metric numeric aggregate over an [`EvaluationReport`]: count of finite scores, their
@@ -466,6 +497,7 @@ mod tests {
     use async_trait::async_trait;
     use serde_json::Value;
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Mock LLM that routes on the prompt content rather than a strict FIFO queue, because
     /// `evaluate()` drives several metrics as concurrently-spawned tasks whose call order is
@@ -521,6 +553,42 @@ mod tests {
                 content: content.to_string(),
                 usage: None,
             })
+        }
+    }
+
+    /// Wraps [`PromptRoutingLlm`] but fails the first `fail_first` calls with a transient provider
+    /// error before delegating. Proves the CLI evaluate path now retries via the resilience
+    /// wrapper: without it, that first failure would surface as a metric error.
+    struct FlakyThenRoutingLlm {
+        inner: PromptRoutingLlm,
+        calls: AtomicUsize,
+        fail_first: usize,
+    }
+
+    impl FlakyThenRoutingLlm {
+        fn new(fail_first: usize) -> Self {
+            Self {
+                inner: PromptRoutingLlm::new(),
+                calls: AtomicUsize::new(0),
+                fail_first,
+            }
+        }
+
+        fn total_calls(&self) -> usize {
+            self.calls.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for FlakyThenRoutingLlm {
+        async fn generate(&self, request: LlmRequest) -> Result<LlmResponse, RagasError> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n < self.fail_first {
+                return Err(RagasError::Provider {
+                    message: "transient upstream failure (HTTP 503)".to_string(),
+                });
+            }
+            self.inner.generate(request).await
         }
     }
 
@@ -810,6 +878,68 @@ mod tests {
             report_metrics
                 .iter()
                 .any(|m| m["metric"] == "context_recall")
+        );
+    }
+
+    #[test]
+    fn evaluate_command_retries_transient_provider_failures() {
+        // The CLI evaluate path wraps the provider in retry/timeout (resilient_eval_provider).
+        // A provider that fails its first call transiently must NOT produce a metric error: the
+        // resilience wrapper retries and the LLM metrics still score. Without the wiring, this
+        // first failure would surface as errors >= 1.
+        let dataset = EvaluationDataset::<EvaluationSample>::from_samples(vec![
+            EvaluationSample::SingleTurn(
+                SingleTurnSample::new(
+                    "What is Ragas and who maintains it?",
+                    "Ragas evaluates LLM applications. It is maintained by Exploding Gradients.",
+                    vec!["Ragas is a framework to evaluate LLM applications.".to_string()],
+                )
+                .with_reference("Ragas evaluates RAG applications."),
+            ),
+        ])
+        .expect("dataset");
+
+        let mut runtime = CliRuntime::new();
+        runtime
+            .datasets_mut()
+            .save("datasets/flaky", &dataset)
+            .expect("save dataset");
+
+        // Fail exactly the first generate() call; the resilience wrapper should retry it.
+        let provider = Arc::new(FlakyThenRoutingLlm::new(1));
+        let output = run_cli_command_with_provider(
+            &mut runtime,
+            CliCommand::Evaluate {
+                input: "datasets/flaky".to_string(),
+                report: "reports/flaky".to_string(),
+            },
+            Some(Arc::clone(&provider) as Arc<dyn LlmProvider>),
+        )
+        .expect("evaluate command");
+
+        let stdout_json: Value = serde_json::from_str(&output.stdout).expect("stdout JSON");
+        let metrics = stdout_json["metrics"].as_array().expect("metrics array");
+        // Every LLM metric scored with zero errors despite the first call failing transiently.
+        for name in ["faithfulness", "context_utilization", "context_recall"] {
+            let metric = metrics
+                .iter()
+                .find(|m| m["metric"] == name)
+                .unwrap_or_else(|| panic!("metric {name} missing from {metrics:#?}"));
+            assert_eq!(
+                metric["errors"], 0,
+                "{name} should have retried: {metric:#?}"
+            );
+            assert_eq!(
+                metric["count"], 1,
+                "{name} should have one score: {metric:#?}"
+            );
+        }
+        // 4 successful metric calls (faithfulness x2, context_utilization, context_recall) plus
+        // the single retried failure = 5 total provider invocations.
+        assert_eq!(
+            provider.total_calls(),
+            5,
+            "expected one retry over four successful calls"
         );
     }
 
