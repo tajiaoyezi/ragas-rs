@@ -14,8 +14,10 @@ LLM agentic metrics (`AgentGoalAccuracy` with/without reference, `TopicAdherence
 `InstanceSpecificRubrics`), all live-verified vs DeepSeek (2026-06-06). Phase 5 🔶 (retry/timeout +
 caching decorators; 2 of 3 critical bugs fixed; plus `evaluate()` options — `column_map`,
 `raise_exceptions`, `usage_summary` on `EvaluationReport`, per-token cost API, optional tiktoken
-token counts; `LLMDidNotFinish` truncation detection; lifecycle callbacks). Wired count
-**29 single-turn `Metric`** of ~39 +
+token counts; `LLMDidNotFinish` truncation detection; lifecycle callbacks). Added
+`SemanticSimilarityMetric` (ragas `answer_similarity` — embedding cosine of response vs reference,
+optional threshold; live-verified vs SiliconFlow embeddings 2026-06-06). Wired count
+**30 single-turn `Metric`** of ~39 +
 **5 multi-turn metrics** (tool-call ×2, agent-goal-accuracy ×2, topic-adherence) (2026-06-06); all on
 `main`. `StringSimilarityMetric` now exposes a full `DistanceMeasure` selector
 (Levenshtein/Hamming/Jaro/Jaro-Winkler, rapidfuzz-verified) — the last purely-deterministic parity
