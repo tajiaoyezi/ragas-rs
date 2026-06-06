@@ -939,9 +939,14 @@ fn jaro_similarity(left: &[char], right: &[char]) -> f64 {
 }
 
 /// Jaro-Winkler similarity: Jaro boosted by the common prefix (capped at 4) times the standard
-/// scaling factor p = 0.1 (rapidfuzz default).
+/// scaling factor p = 0.1 (rapidfuzz default). Matching rapidfuzz/Winkler, the prefix bonus is
+/// applied only when the underlying Jaro similarity exceeds the 0.7 boost threshold; at or below
+/// it the unboosted Jaro value is returned.
 fn jaro_winkler_similarity(left: &[char], right: &[char]) -> f64 {
     let jaro = jaro_similarity(left, right);
+    if jaro <= 0.7 {
+        return jaro;
+    }
     let prefix = left
         .iter()
         .zip(right.iter())
@@ -1034,6 +1039,11 @@ mod tests {
             ("DWAYNE", "DUANE", JaroWinkler, 21.0 / 25.0),
             ("DIXON", "DICKSONX", Jaro, 23.0 / 30.0),
             ("DIXON", "DICKSONX", JaroWinkler, 61.0 / 75.0),
+            // Jaro-Winkler boost threshold (rapidfuzz: bonus only when Jaro > 0.7). Both pairs
+            // share a prefix but have Jaro = 2/3 <= 0.7, so Jaro-Winkler must NOT boost.
+            ("abcde12345", "abcde67890", Jaro, 2.0 / 3.0),
+            ("abcde12345", "abcde67890", JaroWinkler, 2.0 / 3.0),
+            ("abcd1234", "abcd5678", JaroWinkler, 2.0 / 3.0),
             ("karolin", "kathrin", Hamming, 4.0 / 7.0),
             ("abc", "abcd", Hamming, 3.0 / 4.0),
             ("color", "colour", Hamming, 2.0 / 3.0),

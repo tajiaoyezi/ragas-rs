@@ -6,6 +6,9 @@ target/
 # Local provider secrets — never commit. Use .env.example as the template.
 .env
 
+# Claude Code local state (agent worktrees, transcripts) — never commit.
+.claude/
+
 # Internal analysis notes + Python venv — not part of the published library.
 docs/mission-analysis/
 
