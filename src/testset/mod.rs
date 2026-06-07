@@ -3019,6 +3019,221 @@ impl MultiHopAbstractSynthesizer {
     }
 }
 
+/// The three named query synthesizers a [`TestsetGenerator`] can draw from — the analog of the
+/// classes in Python ragas's `QueryDistribution`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SynthesizerKind {
+    SingleHopSpecific,
+    MultiHopAbstract,
+    MultiHopSpecific,
+}
+
+impl SynthesizerKind {
+    /// The synthesizer's name, recorded on each generated sample (matches Python's `.name`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::SingleHopSpecific => "single_hop_specific_query_synthesizer",
+            Self::MultiHopAbstract => "multi_hop_abstract_query_synthesizer",
+            Self::MultiHopSpecific => "multi_hop_specific_query_synthesizer",
+        }
+    }
+
+    /// Whether this synthesizer has the graph structure it needs (the non-LLM `get_node_clusters`
+    /// check Python uses to build the default distribution).
+    fn is_available(self, graph: &KnowledgeGraph) -> bool {
+        match self {
+            Self::SingleHopSpecific => !select_entity_nodes(graph).is_empty(),
+            Self::MultiHopSpecific => !entity_overlap_clusters(graph).is_empty(),
+            Self::MultiHopAbstract => find_n_indirect_clusters(graph, 1, 3, true, |edge| {
+                edge.relationship == "cosine_similarity"
+                    || edge.properties.contains_key("summary_similarity")
+            })
+            .map(|clusters| !clusters.is_empty())
+            .unwrap_or(false),
+        }
+    }
+}
+
+/// Build the default query distribution for a knowledge graph — a port of Python ragas's
+/// `default_query_distribution`. Includes only the synthesizers whose structure is present in the
+/// graph (single-hop needs entity nodes; multi-hop-specific needs `entities_overlap` edges;
+/// multi-hop-abstract needs similarity clusters), in the canonical order, with uniform weights.
+/// Errors if none are compatible.
+pub fn default_query_distribution(
+    graph: &KnowledgeGraph,
+) -> Result<Vec<(SynthesizerKind, f64)>, RagasError> {
+    let available: Vec<SynthesizerKind> = [
+        SynthesizerKind::SingleHopSpecific,
+        SynthesizerKind::MultiHopAbstract,
+        SynthesizerKind::MultiHopSpecific,
+    ]
+    .into_iter()
+    .filter(|kind| kind.is_available(graph))
+    .collect();
+    if available.is_empty() {
+        return Err(RagasError::Parse {
+            message: "default query distribution: no compatible query synthesizer for the \
+knowledge graph (needs entity nodes, entity-overlap edges, or similarity clusters)"
+                .to_string(),
+        });
+    }
+    let weight = 1.0 / available.len() as f64;
+    Ok(available.into_iter().map(|kind| (kind, weight)).collect())
+}
+
+/// Split `n` samples across a distribution's weights — a port of Python's `calculate_split_values`
+/// (`splits[i] = ceil(n * prob[i])`). The per-weight ceilings can sum to slightly more than `n`;
+/// the generator still caps the total at `n`.
+fn calculate_split_values(probs: &[f64], n: usize) -> Vec<usize> {
+    probs
+        .iter()
+        .map(|prob| (n as f64 * prob).ceil() as usize)
+        .collect()
+}
+
+/// End-to-end test-set generator — the runnable analog of Python ragas's `TestsetGenerator`. Given
+/// a transformed [`KnowledgeGraph`] and an LLM, it derives (or accepts) personas and a query
+/// distribution, splits `testset_size` across the distribution, runs each named synthesizer, and
+/// merges the results into one [`EvaluationDataset`] (each sample tagged with `synthesizer_name`).
+///
+/// **Documented divergences:** the default distribution and persona handling drop Python's
+/// `random.shuffle` (RNG is a non-goal) — personas are used in order and the distribution is the
+/// deterministic [`default_query_distribution`]. A synthesizer in the distribution that produces no
+/// samples (its scenario prep found nothing) is non-fatal — it contributes zero and generation
+/// continues; `RagasError::EmptyDataset` is returned only if *no* synthesizer yields any sample.
+/// Building the graph (chunking + transforms) is the caller's job; this drives generation over an
+/// already-built graph (mirroring Python's `generate`, not `generate_with_langchain_docs`).
+pub struct TestsetGenerator {
+    llm: Arc<dyn LlmProvider>,
+    knowledge_graph: KnowledgeGraph,
+    persona_list: Option<Vec<Persona>>,
+    llm_context: Option<String>,
+    query_distribution: Option<Vec<(SynthesizerKind, f64)>>,
+}
+
+impl TestsetGenerator {
+    /// Create a generator over a knowledge graph and LLM provider.
+    pub fn new(llm: Arc<dyn LlmProvider>, knowledge_graph: KnowledgeGraph) -> Self {
+        Self {
+            llm,
+            knowledge_graph,
+            persona_list: None,
+            llm_context: None,
+            query_distribution: None,
+        }
+    }
+
+    /// Use a fixed persona list instead of deriving personas from the graph.
+    pub fn with_personas(mut self, persona_list: Vec<Persona>) -> Self {
+        self.persona_list = Some(persona_list);
+        self
+    }
+
+    /// Optional guidance string threaded into every synthesizer (Python's `llm_context`).
+    pub fn with_llm_context(mut self, llm_context: impl Into<String>) -> Self {
+        self.llm_context = Some(llm_context.into());
+        self
+    }
+
+    /// Use a fixed query distribution instead of [`default_query_distribution`]. Weights need not
+    /// sum to 1; each synthesizer's share is `ceil(testset_size * weight)`, capped at `testset_size`.
+    pub fn with_query_distribution(mut self, distribution: Vec<(SynthesizerKind, f64)>) -> Self {
+        self.query_distribution = Some(distribution);
+        self
+    }
+
+    /// Generate a test set of up to `testset_size` samples, using up to `num_personas` personas
+    /// (Python's default is 3). Derives personas from the graph when none were supplied, picks the
+    /// distribution, runs each synthesizer over its split, and merges the samples. Returns
+    /// `RagasError::EmptyDataset` if nothing could be generated; propagates provider/parse errors.
+    pub async fn generate(
+        &self,
+        testset_size: usize,
+        num_personas: usize,
+    ) -> Result<EvaluationDataset, RagasError> {
+        let personas = match &self.persona_list {
+            Some(personas) => personas.clone(),
+            None => {
+                generate_personas_from_kg(self.llm.clone(), &self.knowledge_graph, num_personas)
+                    .await?
+            }
+        };
+        let personas: Vec<Persona> = personas.into_iter().take(num_personas).collect();
+
+        let distribution = match &self.query_distribution {
+            Some(distribution) => distribution.clone(),
+            None => default_query_distribution(&self.knowledge_graph)?,
+        };
+        let probs: Vec<f64> = distribution.iter().map(|(_, weight)| *weight).collect();
+        let splits = calculate_split_values(&probs, testset_size);
+
+        let mut samples = Vec::new();
+        for (index, (kind, _weight)) in distribution.iter().enumerate() {
+            let split = splits[index];
+            if split == 0 || samples.len() >= testset_size {
+                continue;
+            }
+            let remaining = testset_size - samples.len();
+            let n = split.min(remaining);
+            let result = self.run_synthesizer(*kind, &personas, n).await;
+            match result {
+                Ok(dataset) => {
+                    for sample in dataset.iter() {
+                        samples.push(
+                            sample
+                                .clone()
+                                .with_metadata("synthesizer_name", kind.name()),
+                        );
+                    }
+                }
+                // A synthesizer whose scenario prep found nothing contributes zero samples; that is
+                // not a generation failure, so keep going with the other synthesizers.
+                Err(RagasError::EmptyDataset) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        EvaluationDataset::new(samples)
+    }
+
+    /// Run one named synthesizer over the graph for `n` samples, threading `llm_context`.
+    async fn run_synthesizer(
+        &self,
+        kind: SynthesizerKind,
+        personas: &[Persona],
+        n: usize,
+    ) -> Result<EvaluationDataset, RagasError> {
+        match kind {
+            SynthesizerKind::SingleHopSpecific => {
+                let mut synthesizer = SingleHopSpecificSynthesizer::new(self.llm.clone());
+                if let Some(context) = &self.llm_context {
+                    synthesizer = synthesizer.with_llm_context(context.clone());
+                }
+                synthesizer
+                    .generate(&self.knowledge_graph, personas, n)
+                    .await
+            }
+            SynthesizerKind::MultiHopAbstract => {
+                let mut synthesizer = MultiHopAbstractSynthesizer::new(self.llm.clone());
+                if let Some(context) = &self.llm_context {
+                    synthesizer = synthesizer.with_llm_context(context.clone());
+                }
+                synthesizer
+                    .generate(&self.knowledge_graph, personas, n)
+                    .await
+            }
+            SynthesizerKind::MultiHopSpecific => {
+                let mut synthesizer = MultiHopSpecificSynthesizer::new(self.llm.clone());
+                if let Some(context) = &self.llm_context {
+                    synthesizer = synthesizer.with_llm_context(context.clone());
+                }
+                synthesizer
+                    .generate(&self.knowledge_graph, personas, n)
+                    .await
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6767,6 +6982,255 @@ Astronomers use telescopes to observe distant galaxies and measure their redshif
             assert_eq!(
                 sample.metadata.get("synthesis_type").map(String::as_str),
                 Some("multi-hop-abstract")
+            );
+        }
+    }
+
+    #[test]
+    fn calculate_split_values_ceils_each_weight() {
+        assert_eq!(
+            calculate_split_values(&[0.5, 0.25, 0.25], 10),
+            vec![5, 3, 3]
+        );
+        assert_eq!(calculate_split_values(&[1.0], 2), vec![2]);
+        assert_eq!(
+            calculate_split_values(&[0.34, 0.33, 0.33], 3),
+            vec![2, 1, 1]
+        );
+    }
+
+    #[test]
+    fn default_query_distribution_selects_available_synthesizers() {
+        // Only entity nodes -> just single-hop.
+        let single_only = KnowledgeGraph::new().add_node(entitied_text_chunk("c1", &["a"], "text"));
+        let dist = default_query_distribution(&single_only).expect("distribution");
+        assert_eq!(dist, vec![(SynthesizerKind::SingleHopSpecific, 1.0)]);
+
+        // Entity nodes + an overlap edge + a similarity edge -> all three, uniform weight.
+        let all = KnowledgeGraph::new()
+            .add_node(entitied_text_chunk("c1", &["a"], "t1"))
+            .add_node(entitied_text_chunk("c2", &["a"], "t2"))
+            .add_edge(
+                GraphEdge::new("c1", "c2", "entities_overlap").with_property(
+                    "overlapped_items",
+                    GraphProperty::TextList(vec!["a => a".to_string()]),
+                ),
+            )
+            .add_edge(cosine_edge("c1", "c2"));
+        let dist = default_query_distribution(&all).expect("distribution");
+        assert_eq!(dist.len(), 3);
+        assert_eq!(dist[0].0, SynthesizerKind::SingleHopSpecific);
+        assert_eq!(dist[1].0, SynthesizerKind::MultiHopAbstract);
+        assert_eq!(dist[2].0, SynthesizerKind::MultiHopSpecific);
+        assert!(dist.iter().all(|(_, w)| (*w - 1.0 / 3.0).abs() < 1e-9));
+    }
+
+    #[test]
+    fn default_query_distribution_errors_without_structure() {
+        // A plain node with no entities and no edges supports no synthesizer.
+        let graph = KnowledgeGraph::new().add_node(GraphNode::new("c1", "chunk"));
+        assert!(matches!(
+            default_query_distribution(&graph),
+            Err(RagasError::Parse { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn testset_generator_runs_distribution_and_tags_samples() {
+        // One entity chunk, single-hop-only distribution, n=2 -> two tagged samples.
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"P": ["alpha", "beta"]}}"#,
+            r#"{"query": "Q1?", "answer": "A1."}"#,
+            r#"{"query": "Q2?", "answer": "A2."}"#,
+        ]));
+        let graph = KnowledgeGraph::new().add_node(entitied_text_chunk(
+            "c1",
+            &["alpha", "beta"],
+            "alpha and beta content",
+        ));
+
+        let dataset = TestsetGenerator::new(llm, graph)
+            .with_personas(vec![persona("P", "r")])
+            .with_query_distribution(vec![(SynthesizerKind::SingleHopSpecific, 1.0)])
+            .generate(2, 3)
+            .await
+            .expect("dataset");
+
+        assert_eq!(dataset.len(), 2);
+        for sample in dataset.iter() {
+            assert_eq!(
+                sample.metadata.get("synthesizer_name").map(String::as_str),
+                Some("single_hop_specific_query_synthesizer")
+            );
+            assert_eq!(
+                sample.metadata.get("synthesis_type").map(String::as_str),
+                Some("single-hop")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn testset_generator_merges_multiple_synthesizers() {
+        // Single-hop + multi-hop-specific, each split 1 of 2 -> one sample from each, both tagged.
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+            // Single-hop: one mapping (first entity node) + one query/answer.
+            r#"{"mapping": {"P": ["alpha"]}}"#,
+            r#"{"query": "SH?", "answer": "SH answer."}"#,
+            // Multi-hop-specific: one mapping (the overlap cluster) + one query/answer.
+            r#"{"mapping": {"P": ["alpha"]}}"#,
+            r#"{"query": "MH?", "answer": "MH answer."}"#,
+        ]));
+        let graph = KnowledgeGraph::new()
+            .add_node(entitied_text_chunk("c1", &["alpha", "beta"], "c1 text"))
+            .add_node(entitied_text_chunk("c2", &["alpha"], "c2 text"))
+            .add_edge(
+                GraphEdge::new("c1", "c2", "entities_overlap").with_property(
+                    "overlapped_items",
+                    GraphProperty::TextList(vec!["alpha => alpha".to_string()]),
+                ),
+            );
+
+        let dataset = TestsetGenerator::new(llm, graph)
+            .with_personas(vec![persona("P", "r")])
+            .with_query_distribution(vec![
+                (SynthesizerKind::SingleHopSpecific, 0.5),
+                (SynthesizerKind::MultiHopSpecific, 0.5),
+            ])
+            .generate(2, 3)
+            .await
+            .expect("dataset");
+
+        assert_eq!(dataset.len(), 2);
+        let names: BTreeSet<String> = dataset
+            .iter()
+            .filter_map(|s| s.metadata.get("synthesizer_name").cloned())
+            .collect();
+        assert!(names.contains("single_hop_specific_query_synthesizer"));
+        assert!(names.contains("multi_hop_specific_query_synthesizer"));
+    }
+
+    #[tokio::test]
+    async fn testset_generator_generates_personas_when_none_provided() {
+        // No persona_list -> personas are derived from the graph (one summary+embedding node),
+        // then used by the single-hop synthesizer.
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+            r#"{"name": "Researcher", "role_description": "studies the subject"}"#,
+            r#"{"mapping": {"Researcher": ["alpha"]}}"#,
+            r#"{"query": "Q?", "answer": "A."}"#,
+        ]));
+        let graph = KnowledgeGraph::new()
+            .add_node(
+                GraphNode::new("d1", "document")
+                    .with_property(
+                        "summary",
+                        GraphProperty::Text("A document summary.".to_string()),
+                    )
+                    .with_property("summary_embedding", GraphProperty::Vector(vec![1.0, 0.0])),
+            )
+            .add_node(entitied_text_chunk("c1", &["alpha"], "alpha content"));
+
+        let dataset = TestsetGenerator::new(llm, graph)
+            .with_query_distribution(vec![(SynthesizerKind::SingleHopSpecific, 1.0)])
+            .generate(1, 1)
+            .await
+            .expect("dataset");
+
+        assert_eq!(dataset.len(), 1);
+        assert_eq!(
+            dataset.samples()[0]
+                .metadata
+                .get("persona_name")
+                .map(String::as_str),
+            Some("Researcher")
+        );
+        assert_eq!(
+            dataset.samples()[0]
+                .metadata
+                .get("synthesizer_name")
+                .map(String::as_str),
+            Some("single_hop_specific_query_synthesizer")
+        );
+    }
+
+    /// Live gate (env-gated): the end-to-end generator runs the default distribution (all three
+    /// synthesizers, since the graph has entity nodes + an overlap edge + a similarity edge) over a
+    /// two-chunk graph and merges a non-empty, synthesizer-tagged, grounded test set.
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; run with --ignored"]
+    async fn live_testset_generator_generates_mixed_testset() {
+        let Some(client) = crate::ProviderConfig::from_env().chat_client() else {
+            eprintln!("skipping live testset generator: OPENAI_API_KEY not set");
+            return;
+        };
+        let llm: Arc<dyn LlmProvider> = Arc::new(client);
+        let c1 = entitied_text_chunk(
+            "c1",
+            &["Einstein", "relativity"],
+            "Albert Einstein developed the theory of relativity, introducing spacetime.",
+        )
+        .with_property(
+            "themes",
+            GraphProperty::TextList(vec!["physics".to_string(), "relativity".to_string()]),
+        );
+        let c2 = entitied_text_chunk(
+            "c2",
+            &["Einstein", "eclipse"],
+            "The 1919 solar eclipse confirmed Einstein's theory by showing light bending.",
+        )
+        .with_property(
+            "themes",
+            GraphProperty::TextList(vec!["astronomy".to_string(), "observation".to_string()]),
+        );
+        let graph = KnowledgeGraph::new()
+            .add_node(c1)
+            .add_node(c2)
+            .add_edge(
+                GraphEdge::new("c1", "c2", "entities_overlap").with_property(
+                    "overlapped_items",
+                    GraphProperty::TextList(vec!["Einstein => Einstein".to_string()]),
+                ),
+            )
+            .add_edge(cosine_edge("c1", "c2"));
+
+        let dataset = TestsetGenerator::new(llm, graph)
+            .with_personas(vec![
+                persona(
+                    "Historian",
+                    "Studies scientific milestones and their impact.",
+                ),
+                persona("Chef", "Cooks food and develops recipes."),
+            ])
+            .generate(3, 2)
+            .await
+            .expect("live dataset");
+
+        assert!(!dataset.is_empty());
+        let valid_names = [
+            "single_hop_specific_query_synthesizer",
+            "multi_hop_abstract_query_synthesizer",
+            "multi_hop_specific_query_synthesizer",
+        ];
+        for sample in dataset.iter() {
+            assert!(!sample.user_input.trim().is_empty(), "empty query");
+            assert!(
+                sample
+                    .reference
+                    .as_deref()
+                    .is_some_and(|r| !r.trim().is_empty()),
+                "empty grounded answer"
+            );
+            assert!(
+                !sample.reference_contexts.is_empty(),
+                "no reference context"
+            );
+            let name = sample
+                .metadata
+                .get("synthesizer_name")
+                .map(String::as_str)
+                .unwrap_or("");
+            assert!(
+                valid_names.contains(&name),
+                "unexpected synthesizer tag: {name}"
             );
         }
     }

@@ -117,6 +117,18 @@ adversarial one. Until such a run exists, the honest status of an LLM metric is
   set end-to-end — the LLM forms a cross-document concept combination, and every sample carries a
   grounded answer over hop-tagged contexts anchored on the analyst (not the chef).
 
+### Follow-up run — TestsetGenerator orchestrator (Phase 6)
+
+- **Date:** 2026-06-07
+- **Provider:** DeepSeek (chat), same configuration.
+- **Command:** `cargo test --lib live_testset_generator_generates_mixed_testset -- --ignored`
+- **Result:** **1 passed, 0 failed** (~72s) — the `TestsetGenerator::generate` gate marked **(TG)**
+  below: over a two-chunk graph carrying entity nodes + an `entities_overlap` edge + a
+  `cosine_similarity` edge, the generator picks the default distribution (all three synthesizers),
+  splits the requested size across them, runs each, and merges a non-empty test set where every
+  sample is tagged with its `synthesizer_name` and carries a non-empty grounded answer + reference
+  contexts — the full single/multi-hop testset stack end-to-end against a real model.
+
 ## Gates (all PASS)
 
 LLM metric discrimination gates (20):
@@ -148,7 +160,7 @@ LLM metric discrimination gates (20):
 `*` also exercises the embedding endpoint. **(P4)** = Phase-4 agentic metrics, run in the
 follow-up above.
 
-End-to-end / testset gates (12):
+End-to-end / testset gates (13):
 
 - CLI `evaluate` with a live provider — `live_evaluate_command_runs_llm_metrics`
 - LLM test-set synthesizer, single-hop — `test_31_2_7_live_synthesizer_generates_from_real_model`
@@ -162,6 +174,7 @@ End-to-end / testset gates (12):
 - Single-hop specific synthesizer **(SHS)** — `live_single_hop_specific_synthesizer_generates_grounded_testset`
 - Multi-hop specific synthesizer **(MHS)** — `live_multi_hop_specific_synthesizer_generates_grounded_testset`
 - Multi-hop abstract synthesizer **(MHA)** — `live_multi_hop_abstract_synthesizer_generates_grounded_testset`
+- TestsetGenerator orchestrator **(TG)** — `live_testset_generator_generates_mixed_testset`
 
 ## What this proves — and what it does NOT
 
