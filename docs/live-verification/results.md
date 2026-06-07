@@ -141,6 +141,17 @@ adversarial one. Until such a run exists, the honest status of an LLM metric is
   synthesizers into a non-empty, `synthesizer_name`-tagged test set. This is the **entire Phase 6
   stack — raw text → test set — end-to-end against real models.**
 
+### Follow-up run — FixOutputFormat parse-repair (Phase 5)
+
+- **Date:** 2026-06-07
+- **Provider:** DeepSeek (chat), same configuration.
+- **Command:** `cargo test --lib live_fix_output_format_repairs_malformed_output -- --ignored`
+- **Result:** **1 passed, 0 failed** (~5s) — the `generate_and_parse` repair gate marked **(FX)**
+  below: a deliberately malformed first response (prose, no JSON) carrying the answer `42` is fed
+  back to the real model through the `FixOutputFormat` repair prompt, which returns valid
+  `{"value": 42}` JSON — proving the second-stage repair recovers the correct value, not just any
+  parse. Every LLM metric now routes through this path.
+
 ## Gates (all PASS)
 
 LLM metric discrimination gates (20):
@@ -188,6 +199,10 @@ End-to-end / testset gates (14):
 - Multi-hop abstract synthesizer **(MHA)** — `live_multi_hop_abstract_synthesizer_generates_grounded_testset`
 - TestsetGenerator orchestrator **(TG)** — `live_testset_generator_generates_mixed_testset`
 - Default transforms → testset, end-to-end **(DT)** — `live_default_transforms_then_testset_end_to_end`
+
+Runtime hardening gates (1):
+
+- FixOutputFormat parse-repair **(FX)** — `live_fix_output_format_repairs_malformed_output`
 
 ## What this proves — and what it does NOT
 
