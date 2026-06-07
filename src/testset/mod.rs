@@ -1805,6 +1805,110 @@ fn apply_property_updates(
     }
 }
 
+/// Generate up to `num_personas` personas from a knowledge graph by clustering similar node
+/// summaries — a faithful port of Python ragas's `generate_personas_from_kg`.
+///
+/// Eligible nodes are those carrying both a `summary` ([`GraphProperty::Text`]) and a
+/// `summary_embedding` ([`GraphProperty::Vector`], e.g. from an [`EmbeddingExtractor`] with
+/// `property_name = "summary_embedding"`, `embed_property_name = "summary"`). Their embeddings
+/// are greedily clustered (cosine `> 0.75`); each cluster's **longest** summary is its
+/// representative, and the first `num_personas` representatives are turned into [`Persona`]s by
+/// the LLM (`{name, role_description}` → `Persona { name, role: role_description, goals: [] }`).
+///
+/// Returns the KG-derived personas (vs the manual seed [`PersonaGenerator`]). **Documented
+/// divergences:** Python pads with `np.random` duplicates when there are fewer clusters than
+/// `num_personas` — we don't (RNG is a non-goal, and padding only repeats personas), so the
+/// result may be shorter than `num_personas`; ties for the longest summary resolve to the
+/// first (Python's `max(key=len)` semantics). Errors if no node is eligible.
+pub async fn generate_personas_from_kg(
+    llm: Arc<dyn LlmProvider>,
+    graph: &KnowledgeGraph,
+    num_personas: usize,
+) -> Result<Vec<Persona>, RagasError> {
+    let eligible: Vec<(&str, &Vec<f32>)> = graph
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            let summary = text_property(node, "summary")?;
+            match node.properties.get("summary_embedding") {
+                Some(GraphProperty::Vector(embedding)) => Some((summary, embedding)),
+                _ => None,
+            }
+        })
+        .collect();
+    if eligible.is_empty() {
+        return Err(RagasError::Parse {
+            message: "persona generation: no node has both a summary and a summary_embedding"
+                .to_string(),
+        });
+    }
+
+    // Greedy clustering: each unvisited node seeds a group with every later node whose summary
+    // embedding has cosine similarity > 0.75.
+    let count = eligible.len();
+    let mut visited = vec![false; count];
+    let mut representatives: Vec<&str> = Vec::new();
+    for i in 0..count {
+        if visited[i] {
+            continue;
+        }
+        visited[i] = true;
+        let mut longest = eligible[i].0;
+        for j in (i + 1)..count {
+            if !visited[j] && cosine_similarity(eligible[i].1, eligible[j].1) > 0.75 {
+                visited[j] = true;
+                // Longest summary is the representative; keep the first on a length tie.
+                if eligible[j].0.len() > longest.len() {
+                    longest = eligible[j].0;
+                }
+            }
+        }
+        representatives.push(longest);
+    }
+    representatives.truncate(num_personas);
+
+    let mut personas = Vec::with_capacity(representatives.len());
+    for summary in representatives {
+        personas.push(generate_persona(&llm, summary).await?);
+    }
+    Ok(personas)
+}
+
+async fn generate_persona(
+    llm: &Arc<dyn LlmProvider>,
+    summary: &str,
+) -> Result<Persona, RagasError> {
+    let prompt = format!(
+        "Using the provided summary, generate a single persona who would likely interact with or \
+benefit from the content. Include a unique name and a concise role description of who they are. \
+Return ONLY JSON of the form {{\"name\": \"...\", \"role_description\": \"...\"}}.\n\nSUMMARY:\n{summary}"
+    );
+    let response = llm
+        .generate(LlmRequest {
+            messages: vec![ChatMessage::user(prompt)],
+            // Python uses temperature 1.0 here for persona diversity.
+            temperature: Some(1.0),
+        })
+        .await?;
+    let value = parse_json_block(&response.content, "persona generation")?;
+    let field = |key: &str| -> Result<String, RagasError> {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| RagasError::Parse {
+                message: format!("persona generation: missing non-empty '{key}'"),
+            })
+    };
+    Ok(Persona {
+        name: field("name")?,
+        role: field("role_description")?,
+        goals: Vec::new(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4005,5 +4109,137 @@ free vacation!!!",
                 .contains_key("embedding")
         );
         assert_eq!(out.edges_by_relationship("cosine_similarity").len(), 1);
+    }
+
+    /// A node carrying a summary + summary_embedding, the layout `generate_personas_from_kg`
+    /// clusters over.
+    fn summarized_node(id: &str, summary: &str, embedding: Vec<f32>) -> GraphNode {
+        GraphNode::new(id, "chunk")
+            .with_property("summary", GraphProperty::Text(summary.to_string()))
+            .with_property("summary_embedding", GraphProperty::Vector(embedding))
+    }
+
+    #[tokio::test]
+    async fn generate_personas_from_kg_clusters_and_uses_longest_representative() {
+        // n0 and n1 share an embedding (cosine 1.0 > 0.75) -> one cluster whose representative is
+        // the LONGER summary (n1); n2 is orthogonal -> its own cluster. Two personas, in order.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"name": "Pet Owner", "role_description": "Cares for domestic cats."}"#,
+            r#"{"name": "Investor", "role_description": "Follows the markets."}"#,
+        ]));
+        let graph = KnowledgeGraph::new()
+            .add_node(summarized_node("n0", "Cats.", vec![1.0, 0.0]))
+            .add_node(summarized_node(
+                "n1",
+                "Cats are domestic felines kept as pets.",
+                vec![1.0, 0.0],
+            ))
+            .add_node(summarized_node(
+                "n2",
+                "The stock market fell.",
+                vec![0.0, 1.0],
+            ));
+
+        let personas = generate_personas_from_kg(llm.clone(), &graph, 3)
+            .await
+            .expect("personas");
+        assert_eq!(
+            personas.len(),
+            2,
+            "two clusters -> two personas (no random padding)"
+        );
+        assert_eq!(personas[0].name, "Pet Owner");
+        assert_eq!(personas[0].role, "Cares for domestic cats.");
+        assert!(
+            personas[0].goals.is_empty(),
+            "KG personas leave goals empty"
+        );
+        // The first cluster's prompt carried the LONGER summary (n1), not n0's "Cats.".
+        assert!(llm.prompts()[0].contains("Cats are domestic felines kept as pets."));
+    }
+
+    #[tokio::test]
+    async fn generate_personas_from_kg_skips_nodes_without_summary_embedding() {
+        // Only n1 has both summary + summary_embedding; n0 (summary, no embedding) is ignored.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"name": "Reader", "role_description": "Reads the guide."}"#,
+        ]));
+        let graph = KnowledgeGraph::new()
+            .add_node(
+                GraphNode::new("n0", "chunk")
+                    .with_property("summary", GraphProperty::Text("no embedding".to_string())),
+            )
+            .add_node(summarized_node("n1", "has both", vec![1.0, 0.0]));
+        let personas = generate_personas_from_kg(llm.clone(), &graph, 3)
+            .await
+            .expect("personas");
+        assert_eq!(personas.len(), 1);
+        assert_eq!(llm.prompts().len(), 1, "only the eligible node was used");
+    }
+
+    #[tokio::test]
+    async fn generate_personas_from_kg_errors_when_no_eligible_nodes() {
+        let llm = Arc::new(ScriptedLlm::new(vec![]));
+        let graph = KnowledgeGraph::new().add_node(text_node("c1", "text but no summary"));
+        let result = generate_personas_from_kg(llm, &graph, 3).await;
+        assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    #[tokio::test]
+    async fn generate_personas_from_kg_caps_at_num_personas() {
+        // Three orthogonal clusters but num_personas = 2 -> two personas, two LLM calls.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"name": "A", "role_description": "a"}"#,
+            r#"{"name": "B", "role_description": "b"}"#,
+        ]));
+        let graph = KnowledgeGraph::new()
+            .add_node(summarized_node("n0", "alpha", vec![1.0, 0.0, 0.0]))
+            .add_node(summarized_node("n1", "beta", vec![0.0, 1.0, 0.0]))
+            .add_node(summarized_node("n2", "gamma", vec![0.0, 0.0, 1.0]));
+        let personas = generate_personas_from_kg(llm.clone(), &graph, 2)
+            .await
+            .expect("personas");
+        assert_eq!(personas.len(), 2);
+        assert_eq!(llm.prompts().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn generate_personas_from_kg_malformed_output_errors() {
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"name": ""}"#]));
+        let graph = KnowledgeGraph::new().add_node(summarized_node("n0", "s", vec![1.0]));
+        // Empty name (and missing role_description) -> a typed parse error.
+        let result = generate_personas_from_kg(llm, &graph, 1).await;
+        assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    /// Live gate (env-gated): the real model turns a KG node summary into a usable persona
+    /// (non-empty name + role description).
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; run with --ignored"]
+    async fn live_generate_personas_from_kg_builds_a_persona() {
+        let Some(client) = crate::ProviderConfig::from_env().chat_client() else {
+            eprintln!("skipping live persona generation: OPENAI_API_KEY not set");
+            return;
+        };
+        let llm: Arc<dyn LlmProvider> = Arc::new(client);
+        // Two near-identical embeddings -> one cluster -> one persona from the longer summary.
+        let graph = KnowledgeGraph::new()
+            .add_node(summarized_node(
+                "n0",
+                "A guide to digital marketing strategies for engaging online audiences across \
+social platforms, SEO, and email campaigns.",
+                vec![1.0, 0.0],
+            ))
+            .add_node(summarized_node("n1", "Marketing overview.", vec![1.0, 0.0]));
+
+        let personas = generate_personas_from_kg(llm, &graph, 1)
+            .await
+            .expect("live personas");
+        assert_eq!(personas.len(), 1);
+        assert!(!personas[0].name.trim().is_empty(), "persona needs a name");
+        assert!(
+            !personas[0].role.trim().is_empty(),
+            "persona needs a role description"
+        );
     }
 }

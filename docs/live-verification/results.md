@@ -66,6 +66,15 @@ adversarial one. Until such a run exists, the honest status of an LLM metric is
   real `[Embed(chunks) -> Cosine]` pipeline through the engine embeds the chunks (node-type filter
   skips the doc) and links the two similar chunks with a cosine edge, end-to-end.
 
+### Follow-up run — KG persona generation (Phase 6)
+
+- **Date:** 2026-06-07
+- **Provider:** DeepSeek (chat), same configuration.
+- **Command:** `cargo test --lib live_generate_personas_from_kg_builds_a_persona -- --ignored`
+- **Result:** **1 passed, 0 failed** (~7s) — the `generate_personas_from_kg` gate marked **(PG)**
+  below: the real model turns a clustered KG node summary into a usable persona (non-empty name +
+  role description).
+
 ## Gates (all PASS)
 
 LLM metric discrimination gates (20):
@@ -97,7 +106,7 @@ LLM metric discrimination gates (20):
 `*` also exercises the embedding endpoint. **(P4)** = Phase-4 agentic metrics, run in the
 follow-up above.
 
-End-to-end / testset gates (7):
+End-to-end / testset gates (8):
 
 - CLI `evaluate` with a live provider — `live_evaluate_command_runs_llm_metrics`
 - LLM test-set synthesizer, single-hop — `test_31_2_7_live_synthesizer_generates_from_real_model`
@@ -106,6 +115,7 @@ End-to-end / testset gates (7):
 - Embedding cosine relationship builder **(CB)** — `live_cosine_relationships_link_semantically_similar_nodes`
 - CustomNodeFilter **(NF)** — `live_custom_node_filter_drops_irrelevant_chunk`
 - Transforms engine **(TE)** — `live_apply_transforms_embed_then_cosine_pipeline`
+- KG persona generation **(PG)** — `live_generate_personas_from_kg_builds_a_persona`
 
 ## What this proves — and what it does NOT
 
