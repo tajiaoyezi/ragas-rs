@@ -2503,20 +2503,23 @@ Return ONLY JSON of the form {{\"query\": \"...\", \"answer\": \"...\"}}.",
 }
 
 /// Build the hop-tagged reference contexts for a multi-hop scenario: each node's text prefixed with
-/// `<{i+1}-hop>` (Python's `make_contexts`). Nodes without usable text are dropped.
+/// `<{i+1}-hop>` — a faithful port of Python's `make_contexts`. The hop number is the node's
+/// position in the cluster (`enumerate`, never renumbered), and a node with missing/empty text still
+/// yields its tag-only `"<N-hop>\n\n"` entry (matching Python's `.get("page_content", "")`); the tag
+/// prefix keeps every context non-blank, so the dataset's non-empty-context invariant still holds.
 fn multi_hop_contexts(graph: &KnowledgeGraph, scenario: &MultiHopScenario) -> Vec<String> {
-    let mut contexts = Vec::new();
-    for node_id in &scenario.node_ids {
-        if let Some(text) = graph
-            .node(node_id)
-            .and_then(|node| text_property(node, "text"))
-            && !text.trim().is_empty()
-        {
-            let hop = contexts.len() + 1;
-            contexts.push(format!("<{hop}-hop>\n\n{text}"));
-        }
-    }
-    contexts
+    scenario
+        .node_ids
+        .iter()
+        .enumerate()
+        .map(|(i, node_id)| {
+            let text = graph
+                .node(node_id)
+                .and_then(|node| text_property(node, "text"))
+                .unwrap_or("");
+            format!("<{hop}-hop>\n\n{text}", hop = i + 1)
+        })
+        .collect()
 }
 
 /// Entity-overlap multi-hop test-set synthesizer — the runnable analog of Python ragas's
@@ -2528,7 +2531,8 @@ fn multi_hop_contexts(graph: &KnowledgeGraph, scenario: &MultiHopScenario) -> Ve
 /// **Documented divergence (same as [`SingleHopSpecificSynthesizer`]):** Python's `_generate_sample`
 /// sets only `reference` + `reference_contexts`; this crate's [`EvaluationDataset`] requires a
 /// non-empty `response`/`retrieved_contexts`, so the generated answer and contexts are mirrored into
-/// them. Scenarios whose nodes have no usable text are skipped.
+/// them. Contexts follow Python's `make_contexts` exactly (one tag per node, hop = node position), so
+/// a textless node keeps its tag-only slot rather than being dropped.
 pub struct MultiHopSpecificSynthesizer {
     llm: Arc<dyn LlmProvider>,
     llm_context: Option<String>,
@@ -2567,7 +2571,8 @@ impl MultiHopSpecificSynthesizer {
         let scenarios = prepare_multi_hop_specific_scenarios(&self.llm, graph, personas, n).await?;
         let mut samples = Vec::new();
         for scenario in &scenarios {
-            // Hop-tagged contexts; skip scenarios whose nodes carry no usable text.
+            // Hop-tagged contexts (one per cluster node). Empty only if a scenario somehow has no
+            // nodes, which scenario prep prevents; guarded defensively so it can't poison the dataset.
             let contexts = multi_hop_contexts(graph, scenario);
             if contexts.is_empty() {
                 continue;
@@ -5693,6 +5698,8 @@ Astronomers use telescopes to observe distant galaxies and measure their redshif
             .expect("dataset");
 
         assert_eq!(dataset.len(), 1);
+        // Exactly one theme-persona mapping call + one query/answer generation call.
+        assert_eq!(llm.prompts().len(), 2);
         let sample = &dataset.samples()[0];
         assert_eq!(
             sample.user_input,
@@ -5742,17 +5749,21 @@ Astronomers use telescopes to observe distant galaxies and measure their redshif
     async fn prepare_multi_hop_specific_scenarios_skips_theme_no_cluster_node_carries() {
         // The overlap items name themes that neither node actually lists in `entities` -> no
         // scenario can be anchored, so the result is empty (Python's valid_nodes filter).
-        let llm: Arc<dyn LlmProvider> =
-            Arc::new(ScriptedLlm::new(vec![r#"{"mapping": {"P": ["X", "Y"]}}"#]));
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"mapping": {"P": ["X", "Y"]}}"#]));
+        let llm_dyn: Arc<dyn LlmProvider> = llm.clone();
         let graph = overlap_cluster_graph(
             ("c1", &["A"], "text one"),
             ("c2", &["B"], "text two"),
             &["X => Y"],
         );
-        let scenarios = prepare_multi_hop_specific_scenarios(&llm, &graph, &[persona("P", "r")], 5)
-            .await
-            .expect("scenarios");
+        let scenarios =
+            prepare_multi_hop_specific_scenarios(&llm_dyn, &graph, &[persona("P", "r")], 5)
+                .await
+                .expect("scenarios");
         assert!(scenarios.is_empty());
+        // The theme-persona mapping WAS performed (the cluster's themes were extracted); the
+        // scenarios are empty only because no node carries them, not because matching was skipped.
+        assert_eq!(llm.prompts().len(), 1);
     }
 
     #[tokio::test]
@@ -5819,6 +5830,8 @@ Astronomers use telescopes to observe distant galaxies and measure their redshif
             .await
             .expect("dataset");
 
+        // Exactly one mapping call + one generation call; prompts[1] is the generation prompt.
+        assert_eq!(llm.prompts().len(), 2);
         let qa_prompt = &llm.prompts()[1];
         assert!(
             qa_prompt.contains("<1-hop>"),
@@ -5841,19 +5854,23 @@ Astronomers use telescopes to observe distant galaxies and measure their redshif
 
     #[tokio::test]
     async fn multi_hop_specific_synthesizer_errors_on_missing_field() {
-        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+        let llm = Arc::new(ScriptedLlm::new(vec![
             r#"{"mapping": {"P": ["alpha"]}}"#,
             r#"{"query": "q only"}"#,
         ]));
+        let llm_dyn: Arc<dyn LlmProvider> = llm.clone();
         let graph = overlap_cluster_graph(
             ("c1", &["alpha"], "text one"),
             ("c2", &["alpha"], "text two"),
             &["alpha => alpha"],
         );
-        let result = MultiHopSpecificSynthesizer::new(llm)
+        let result = MultiHopSpecificSynthesizer::new(llm_dyn)
             .generate(&graph, &[persona("P", "r")], 5)
             .await;
         assert!(matches!(result, Err(RagasError::Parse { .. })));
+        // The error came from parsing the generation response, after both the mapping call and the
+        // (malformed) generation call were made — not from skipping the LLM entirely.
+        assert_eq!(llm.prompts().len(), 2);
     }
 
     /// Live gate (env-gated): the real model turns an entity-overlap cluster (two chunks sharing
@@ -5915,6 +5932,36 @@ Astronomers use telescopes to observe distant galaxies and measure their redshif
                 sample.metadata.get("persona_name").map(String::as_str),
                 Some("Historian"),
                 "the shared entity should anchor on the historian, not the chef"
+            );
+            // The answer must be grounded in the source contexts — a no-op/echo generator that
+            // just emitted hop tags would not reproduce these facts. (We ground-check the answer,
+            // not the query: the query's style may be "misspelled", which mangles theme words.)
+            let answer = sample
+                .reference
+                .as_deref()
+                .unwrap_or_default()
+                .to_lowercase();
+            assert!(
+                ["1919", "eclipse", "relativity", "spacetime", "gravity"]
+                    .iter()
+                    .any(|kw| answer.contains(kw)),
+                "answer should be grounded in the contexts: {:?}",
+                sample.reference
+            );
+            // Full synthesizer contract: synthesis type + theme + style/length metadata recorded.
+            assert_eq!(
+                sample.metadata.get("synthesis_type").map(String::as_str),
+                Some("multi-hop")
+            );
+            assert_eq!(
+                sample.metadata.get("themes").map(String::as_str),
+                Some("Einstein")
+            );
+            assert!(
+                sample.metadata.contains_key("query_style")
+                    && sample.metadata.contains_key("query_length"),
+                "missing style/length metadata: {:?}",
+                sample.metadata
             );
         }
     }
