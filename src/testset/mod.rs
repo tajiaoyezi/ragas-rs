@@ -261,14 +261,14 @@ pub fn find_n_indirect_clusters(
                 .or_default()
                 .insert(edge.source_id.clone());
         }
-        if edge.source_id != edge.target_id {
-            let pair = if edge.source_id <= edge.target_id {
-                (edge.source_id.clone(), edge.target_id.clone())
-            } else {
-                (edge.target_id.clone(), edge.source_id.clone())
-            };
-            unique_edges.insert(pair);
-        }
+        // The undirected edge as a normalized pair (Python's `frozenset({source, target})`); a
+        // self-loop collapses to `(a, a)`, matching Python's single-element frozenset for counting.
+        let pair = if edge.source_id <= edge.target_id {
+            (edge.source_id.clone(), edge.target_id.clone())
+        } else {
+            (edge.target_id.clone(), edge.source_id.clone())
+        };
+        unique_edges.insert(pair);
     }
     if !matched {
         return Err(RagasError::Parse {
@@ -6240,10 +6240,21 @@ Astronomers use telescopes to observe distant galaxies and measure their redshif
         let graph = edge_graph("rel", &[("a", "b"), ("b", "c"), ("b", "d")]);
         let clusters = find_n_indirect_clusters(&graph, 10, 3, false, |e| e.relationship == "rel")
             .expect("clusters");
+        // Exactly the two full paths — no leftover subset/sibling clusters.
+        assert_eq!(clusters.len(), 2);
         // {a,b,c} and {a,b,d} are both full paths; neither is a subset of the other.
         assert!(clusters.contains(&cluster(&["a", "b", "c"])));
         assert!(clusters.contains(&cluster(&["a", "b", "d"])));
         // The {a,b} prefix is a subset of both, so it must not appear on its own.
         assert!(!clusters.contains(&cluster(&["a", "b"])));
+    }
+
+    #[test]
+    fn find_n_indirect_clusters_self_loop_is_harmless() {
+        // A self-loop (a -> a) is cycle-blocked and yields no cluster; the real edge a -> b does.
+        let graph = edge_graph("rel", &[("a", "a"), ("a", "b")]);
+        let clusters = find_n_indirect_clusters(&graph, 5, 3, false, |e| e.relationship == "rel")
+            .expect("clusters");
+        assert_eq!(clusters, vec![cluster(&["a", "b"])]);
     }
 }
