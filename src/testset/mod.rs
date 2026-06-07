@@ -2686,6 +2686,44 @@ fn multi_hop_contexts(graph: &KnowledgeGraph, scenario: &MultiHopScenario) -> Ve
         .collect()
 }
 
+/// Turn prepared multi-hop scenarios into grounded samples — shared by the specific and abstract
+/// synthesizers (their only difference is scenario preparation and the recorded `synthesis_type`).
+/// For each scenario it builds the hop-tagged contexts and asks the LLM for a `(query, answer)`
+/// pair; scenarios with no contexts are skipped. The answer/contexts are mirrored into
+/// `response`/`retrieved_contexts` (this crate's [`EvaluationDataset`] requires them non-empty)
+/// while the faithful `reference`/`reference_contexts` are also set.
+async fn multi_hop_samples(
+    llm: &Arc<dyn LlmProvider>,
+    graph: &KnowledgeGraph,
+    scenarios: &[MultiHopScenario],
+    llm_context: Option<&str>,
+    synthesis_type: &str,
+) -> Result<Vec<SingleTurnSample>, RagasError> {
+    let mut samples = Vec::new();
+    for scenario in scenarios {
+        // Hop-tagged contexts (one per cluster node). Empty only if a scenario somehow has no
+        // nodes, which scenario prep prevents; guarded defensively so it can't poison the dataset.
+        let contexts = multi_hop_contexts(graph, scenario);
+        if contexts.is_empty() {
+            continue;
+        }
+        let (query, answer) =
+            generate_multi_hop_query_answer(llm, scenario, &contexts, llm_context).await?;
+        samples.push(
+            SingleTurnSample::new(query, answer.clone(), contexts.clone())
+                .with_reference(answer)
+                .with_reference_contexts(contexts)
+                .with_metadata("synthesis_type", synthesis_type.to_string())
+                .with_metadata("source_node_ids", scenario.node_ids.join(","))
+                .with_metadata("themes", scenario.combination.join(", "))
+                .with_metadata("persona_name", scenario.persona.name.clone())
+                .with_metadata("query_style", scenario.style.name())
+                .with_metadata("query_length", scenario.length.name()),
+        );
+    }
+    Ok(samples)
+}
+
 /// Entity-overlap multi-hop test-set synthesizer — the runnable analog of Python ragas's
 /// `MultiHopSpecificQuerySynthesizer`. It prepares scenarios with
 /// [`prepare_multi_hop_specific_scenarios`] (entity-overlap clusters → theme/persona matching →
@@ -2733,33 +2771,250 @@ impl MultiHopSpecificSynthesizer {
         n: usize,
     ) -> Result<EvaluationDataset, RagasError> {
         let scenarios = prepare_multi_hop_specific_scenarios(&self.llm, graph, personas, n).await?;
-        let mut samples = Vec::new();
-        for scenario in &scenarios {
-            // Hop-tagged contexts (one per cluster node). Empty only if a scenario somehow has no
-            // nodes, which scenario prep prevents; guarded defensively so it can't poison the dataset.
-            let contexts = multi_hop_contexts(graph, scenario);
-            if contexts.is_empty() {
+        let samples = multi_hop_samples(
+            &self.llm,
+            graph,
+            &scenarios,
+            self.llm_context.as_deref(),
+            "multi-hop",
+        )
+        .await?;
+        EvaluationDataset::new(samples)
+    }
+}
+
+/// Generate concept combinations across a cluster's nodes — a faithful port of Python ragas's
+/// `ConceptCombinationPrompt`. Given each node's list of concepts (themes), the model forms up to
+/// `max_combinations` combinations, each pairing concepts from two or more different nodes. Returns
+/// the list of combinations (each a list of concept strings); errors if the model omits the array.
+async fn generate_concept_combinations(
+    llm: &Arc<dyn LlmProvider>,
+    node_concepts: &[Vec<String>],
+    max_combinations: usize,
+) -> Result<Vec<Vec<String>>, RagasError> {
+    let lists = node_concepts
+        .iter()
+        .enumerate()
+        .map(|(i, concepts)| format!("Node {}: {}", i + 1, concepts.join(", ")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let prompt = format!(
+        "Form combinations by pairing concepts from at least two different nodes.\n\
+### Instructions:\n\
+- Review the concepts from each node below.\n\
+- Identify concepts that can logically be connected or contrasted.\n\
+- Each combination must include at least one concept from two or more different nodes.\n\
+- Produce at most {max_combinations} combination(s); do not repeat a combination.\n\n\
+NODE CONCEPTS:\n{lists}\n\n\
+Return ONLY JSON of the form {{\"combinations\": [[\"<concept>\", \"<concept>\"], ...]}}."
+    );
+    let response = llm
+        .generate(LlmRequest {
+            messages: vec![ChatMessage::user(prompt)],
+            temperature: Some(0.0),
+        })
+        .await?;
+    let value = parse_json_block(&response.content, "concept combination")?;
+    let combinations = value
+        .get("combinations")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| RagasError::Parse {
+            message: "concept combination: missing 'combinations' array".to_string(),
+        })?
+        .iter()
+        .filter_map(|combo| {
+            combo.as_array().map(|items| {
+                items
+                    .iter()
+                    .filter_map(|c| c.as_str().map(str::to_string))
+                    .collect::<Vec<String>>()
+            })
+        })
+        .filter(|combo: &Vec<String>| !combo.is_empty())
+        .collect();
+    Ok(combinations)
+}
+
+/// Expand a cluster into the nodes used for context: each cluster node's `child` nodes (Python's
+/// HeadlineSplitter doc→chunk edges) if any, else the cluster node itself — a faithful port of the
+/// node-gathering step in Python's `MultiHopAbstractQuerySynthesizer._generate_scenarios`. This
+/// crate has no headline splitter yet, so in practice every cluster node falls to the else branch.
+/// Duplicates are dropped (preserving first-seen order) so a shared child can't double a hop.
+fn expand_cluster_nodes(graph: &KnowledgeGraph, cluster: &BTreeSet<String>) -> Vec<String> {
+    let mut nodes = Vec::new();
+    let mut seen = BTreeSet::new();
+    for node_id in cluster {
+        let children: Vec<String> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.relationship == "child" && &edge.source_id == node_id)
+            .map(|edge| edge.target_id.clone())
+            .collect();
+        let expanded = if children.is_empty() {
+            vec![node_id.clone()]
+        } else {
+            children
+        };
+        for id in expanded {
+            if seen.insert(id.clone()) {
+                nodes.push(id);
+            }
+        }
+    }
+    nodes
+}
+
+/// A node's `themes` [`GraphProperty::TextList`] (the abstract synthesizer's concept source), or empty.
+fn node_themes(graph: &KnowledgeGraph, node_id: &str) -> Vec<String> {
+    match graph
+        .node(node_id)
+        .and_then(|node| node.properties.get("themes"))
+    {
+        Some(GraphProperty::TextList(items)) => items.clone(),
+        _ => Vec::new(),
+    }
+}
+
+/// Prepare up to `n` abstract multi-hop scenarios — the deterministic analog of Python ragas's
+/// `MultiHopAbstractQuerySynthesizer._generate_scenarios`.
+///
+/// Clusters are found with [`find_n_indirect_clusters`] over similarity edges (depth 3,
+/// bidirectional). Each cluster's nodes (expanded via `child` edges, else the node itself) provide
+/// `themes` lists; [`generate_concept_combinations`] pairs concepts across nodes; the flattened
+/// concepts are matched to personas via [`match_themes_to_personas`]; and each combination that some
+/// persona cares about yields one scenario over the cluster nodes whose `themes` carry a combination
+/// concept, with deterministic style/length rotation. `ceil(n / clusters)` per cluster, capped at `n`.
+///
+/// **Documented divergences:** Python keys cluster-finding off a `summary_similarity` *edge
+/// property*; this crate's [`build_cosine_relationships`] emits `cosine_similarity` *edges*, so we
+/// match either (an edge typed `cosine_similarity` or carrying a `summary_similarity` property). RNG
+/// (`random.shuffle` + the diversity sampler) is dropped for deterministic style/length rotation, as
+/// in the other synthesizers. Errors if no similarity edge exists.
+pub async fn prepare_multi_hop_abstract_scenarios(
+    llm: &Arc<dyn LlmProvider>,
+    graph: &KnowledgeGraph,
+    personas: &[Persona],
+    n: usize,
+) -> Result<Vec<MultiHopScenario>, RagasError> {
+    let clusters = find_n_indirect_clusters(graph, n, 3, true, |edge| {
+        edge.relationship == "cosine_similarity"
+            || edge.properties.contains_key("summary_similarity")
+    })?;
+    if clusters.is_empty() {
+        return Ok(Vec::new());
+    }
+    let samples_per_cluster = n.div_ceil(clusters.len());
+
+    let mut scenarios = Vec::new();
+    for cluster in &clusters {
+        if scenarios.len() >= n {
+            break;
+        }
+        let nodes = expand_cluster_nodes(graph, cluster);
+        let node_concepts: Vec<Vec<String>> =
+            nodes.iter().map(|id| node_themes(graph, id)).collect();
+        if node_concepts.iter().all(Vec::is_empty) {
+            continue; // No themes on any cluster node — nothing to combine.
+        }
+        let combinations =
+            generate_concept_combinations(llm, &node_concepts, samples_per_cluster).await?;
+        let flattened: Vec<String> = combinations.iter().flatten().cloned().collect();
+        if flattened.is_empty() {
+            continue;
+        }
+        let mapping = match_themes_to_personas(llm, &flattened, personas).await?;
+
+        let mut per_cluster = 0;
+        for combination in &combinations {
+            if scenarios.len() >= n || per_cluster >= samples_per_cluster {
+                break;
+            }
+            // First persona caring about ANY concept in the combination (case-insensitive).
+            let persona = personas.iter().find(|persona| {
+                mapping.get(&persona.name).is_some_and(|themes| {
+                    combination
+                        .iter()
+                        .any(|concept| themes.iter().any(|t| t.eq_ignore_ascii_case(concept)))
+                })
+            });
+            let Some(persona) = persona else { continue };
+            // Cluster nodes whose `themes` carry any combination concept (Python's `valid_nodes`).
+            let node_ids: Vec<String> = nodes
+                .iter()
+                .filter(|id| {
+                    let themes = node_themes(graph, id);
+                    combination
+                        .iter()
+                        .any(|concept| themes.iter().any(|t| t.eq_ignore_ascii_case(concept)))
+                })
+                .cloned()
+                .collect();
+            if node_ids.is_empty() {
                 continue;
             }
-            let (query, answer) = generate_multi_hop_query_answer(
-                &self.llm,
-                scenario,
-                &contexts,
-                self.llm_context.as_deref(),
-            )
-            .await?;
-            samples.push(
-                SingleTurnSample::new(query, answer.clone(), contexts.clone())
-                    .with_reference(answer)
-                    .with_reference_contexts(contexts)
-                    .with_metadata("synthesis_type", "multi-hop")
-                    .with_metadata("source_node_ids", scenario.node_ids.join(","))
-                    .with_metadata("themes", scenario.combination.join(", "))
-                    .with_metadata("persona_name", scenario.persona.name.clone())
-                    .with_metadata("query_style", scenario.style.name())
-                    .with_metadata("query_length", scenario.length.name()),
-            );
+            let index = scenarios.len();
+            scenarios.push(MultiHopScenario {
+                node_ids,
+                combination: combination.clone(),
+                persona: persona.clone(),
+                style: QueryStyle::ALL[index % QueryStyle::ALL.len()],
+                length: QueryLength::ALL[index % QueryLength::ALL.len()],
+            });
+            per_cluster += 1;
         }
+    }
+    Ok(scenarios)
+}
+
+/// Abstract multi-hop test-set synthesizer — the runnable analog of Python ragas's
+/// `MultiHopAbstractQuerySynthesizer`. It prepares scenarios with
+/// [`prepare_multi_hop_abstract_scenarios`] (similarity clusters → LLM concept-combination →
+/// theme/persona matching → deterministic style/length rotation) and turns each into a grounded
+/// [`SingleTurnSample`] whose query connects the cluster's hop-tagged contexts, producing an
+/// [`EvaluationDataset`]. Same `response`/`reference` mirroring as [`MultiHopSpecificSynthesizer`].
+pub struct MultiHopAbstractSynthesizer {
+    llm: Arc<dyn LlmProvider>,
+    llm_context: Option<String>,
+}
+
+impl MultiHopAbstractSynthesizer {
+    /// Create a synthesizer over the given LLM provider.
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self {
+            llm,
+            llm_context: None,
+        }
+    }
+
+    /// Optional guidance string passed to every query/answer generation (Python's `llm_context`),
+    /// e.g. "ask comparison questions". Defaults to none.
+    pub fn with_llm_context(mut self, llm_context: impl Into<String>) -> Self {
+        self.llm_context = Some(llm_context.into());
+        self
+    }
+
+    /// Generate up to `n` grounded abstract multi-hop samples from the knowledge graph and personas.
+    ///
+    /// Prepares scenarios with [`prepare_multi_hop_abstract_scenarios`], then generates a grounded
+    /// `(query, answer)` per scenario (recording `synthesis_type=multi-hop-abstract` plus
+    /// `source_node_ids`/`themes`/`persona_name`/`query_style`/`query_length`). Returns
+    /// `RagasError::EmptyDataset` when no usable sample is produced; propagates `Err` from prep or
+    /// generation. Errors if the graph has no similarity edge.
+    pub async fn generate(
+        &self,
+        graph: &KnowledgeGraph,
+        personas: &[Persona],
+        n: usize,
+    ) -> Result<EvaluationDataset, RagasError> {
+        let scenarios = prepare_multi_hop_abstract_scenarios(&self.llm, graph, personas, n).await?;
+        let samples = multi_hop_samples(
+            &self.llm,
+            graph,
+            &scenarios,
+            self.llm_context.as_deref(),
+            "multi-hop-abstract",
+        )
+        .await?;
         EvaluationDataset::new(samples)
     }
 }
@@ -6256,5 +6511,263 @@ Astronomers use telescopes to observe distant galaxies and measure their redshif
         let clusters = find_n_indirect_clusters(&graph, 5, 3, false, |e| e.relationship == "rel")
             .expect("clusters");
         assert_eq!(clusters, vec![cluster(&["a", "b"])]);
+    }
+
+    /// A document node with `themes` + `text`, joined to others by `cosine_similarity` edges.
+    fn themed_text_node(id: &str, themes: &[&str], text: &str) -> GraphNode {
+        GraphNode::new(id, "document")
+            .with_property(
+                "themes",
+                GraphProperty::TextList(themes.iter().map(|t| t.to_string()).collect()),
+            )
+            .with_property("text", GraphProperty::Text(text.to_string()))
+    }
+
+    fn cosine_edge(a: &str, b: &str) -> GraphEdge {
+        GraphEdge::new(a, b, "cosine_similarity")
+            .with_property("cosine_similarity", GraphProperty::Number(0.9))
+    }
+
+    #[tokio::test]
+    async fn multi_hop_abstract_synthesizer_builds_grounded_dataset() {
+        // Two similarity-linked docs with distinct themes -> the LLM pairs a concept from each,
+        // both nodes carry the pair, so the scenario spans both hops.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"combinations": [["AI", "healthcare"]]}"#,
+            r#"{"mapping": {"Researcher": ["AI", "healthcare"]}}"#,
+            r#"{"query": "How does AI relate to healthcare?", "answer": "AI automates tasks; healthcare applies it to patient care."}"#,
+        ]));
+        let llm_dyn: Arc<dyn LlmProvider> = llm.clone();
+        let graph = KnowledgeGraph::new()
+            .add_node(themed_text_node(
+                "d1",
+                &["AI"],
+                "AI automates complex tasks.",
+            ))
+            .add_node(themed_text_node(
+                "d2",
+                &["healthcare"],
+                "Healthcare delivers patient care.",
+            ))
+            .add_edge(cosine_edge("d1", "d2"));
+
+        let dataset = MultiHopAbstractSynthesizer::new(llm_dyn)
+            .generate(
+                &graph,
+                &[persona("Researcher", "studies AI in medicine")],
+                5,
+            )
+            .await
+            .expect("dataset");
+
+        assert_eq!(dataset.len(), 1);
+        // One concept-combination call + one theme-persona call + one query/answer call.
+        assert_eq!(llm.prompts().len(), 3);
+        let sample = &dataset.samples()[0];
+        assert_eq!(sample.user_input, "How does AI relate to healthcare?");
+        assert_eq!(sample.reference_contexts.len(), 2);
+        assert!(sample.reference_contexts[0].starts_with("<1-hop>"));
+        assert!(sample.reference_contexts[1].starts_with("<2-hop>"));
+        assert!(sample.reference_contexts[0].contains("AI automates complex tasks"));
+        assert_eq!(sample.retrieved_contexts, sample.reference_contexts);
+        assert_eq!(
+            sample.metadata.get("synthesis_type").map(String::as_str),
+            Some("multi-hop-abstract")
+        );
+        assert_eq!(
+            sample.metadata.get("source_node_ids").map(String::as_str),
+            Some("d1,d2")
+        );
+        assert_eq!(
+            sample.metadata.get("themes").map(String::as_str),
+            Some("AI, healthcare")
+        );
+        assert_eq!(
+            sample.metadata.get("persona_name").map(String::as_str),
+            Some("Researcher")
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_multi_hop_abstract_scenarios_matches_concept_to_persona() {
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"combinations": [["AI", "healthcare"]]}"#,
+            r#"{"mapping": {"Researcher": ["AI", "healthcare"]}}"#,
+        ]));
+        let llm_dyn: Arc<dyn LlmProvider> = llm.clone();
+        let graph = KnowledgeGraph::new()
+            .add_node(themed_text_node("d1", &["AI"], "AI text."))
+            .add_node(themed_text_node("d2", &["healthcare"], "Healthcare text."))
+            .add_edge(cosine_edge("d1", "d2"));
+
+        let scenarios = prepare_multi_hop_abstract_scenarios(
+            &llm_dyn,
+            &graph,
+            &[persona("Researcher", "r")],
+            5,
+        )
+        .await
+        .expect("scenarios");
+        assert_eq!(scenarios.len(), 1);
+        assert_eq!(
+            scenarios[0].combination,
+            vec!["AI".to_string(), "healthcare".to_string()]
+        );
+        assert_eq!(
+            scenarios[0].node_ids,
+            vec!["d1".to_string(), "d2".to_string()]
+        );
+        assert_eq!(scenarios[0].persona.name, "Researcher");
+        // One concept-combination call + one theme-persona call (no generation in prep).
+        assert_eq!(llm.prompts().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn prepare_multi_hop_abstract_scenarios_errors_without_similarity_edge() {
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![]));
+        let graph = KnowledgeGraph::new()
+            .add_node(themed_text_node("d1", &["AI"], "AI text."))
+            .add_node(themed_text_node("d2", &["healthcare"], "Healthcare text."));
+        let result =
+            prepare_multi_hop_abstract_scenarios(&llm, &graph, &[persona("R", "r")], 5).await;
+        assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    #[tokio::test]
+    async fn prepare_multi_hop_abstract_scenarios_skips_cluster_without_themes() {
+        // Cluster nodes carry no themes -> nothing to combine -> empty, and NO LLM call is made.
+        let llm = Arc::new(ScriptedLlm::new(vec![]));
+        let llm_dyn: Arc<dyn LlmProvider> = llm.clone();
+        let graph = KnowledgeGraph::new()
+            .add_node(GraphNode::new("d1", "document"))
+            .add_node(GraphNode::new("d2", "document"))
+            .add_edge(cosine_edge("d1", "d2"));
+        let scenarios =
+            prepare_multi_hop_abstract_scenarios(&llm_dyn, &graph, &[persona("R", "r")], 5)
+                .await
+                .expect("scenarios");
+        assert!(scenarios.is_empty());
+        assert_eq!(llm.prompts().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn multi_hop_abstract_synthesizer_errors_on_missing_concept_array() {
+        let llm: Arc<dyn LlmProvider> =
+            Arc::new(ScriptedLlm::new(vec![r#"{"no_combinations": 1}"#]));
+        let graph = KnowledgeGraph::new()
+            .add_node(themed_text_node("d1", &["AI"], "AI text."))
+            .add_node(themed_text_node("d2", &["healthcare"], "Healthcare text."))
+            .add_edge(cosine_edge("d1", "d2"));
+        let result = MultiHopAbstractSynthesizer::new(llm)
+            .generate(&graph, &[persona("R", "r")], 5)
+            .await;
+        assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    #[tokio::test]
+    async fn multi_hop_abstract_concept_prompt_lists_node_themes() {
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"combinations": [["AI", "healthcare"]]}"#,
+            r#"{"mapping": {"Researcher": ["AI"]}}"#,
+            r#"{"query": "q", "answer": "a"}"#,
+        ]));
+        let llm_dyn: Arc<dyn LlmProvider> = llm.clone();
+        let graph = KnowledgeGraph::new()
+            .add_node(themed_text_node("d1", &["AI"], "AI text."))
+            .add_node(themed_text_node("d2", &["healthcare"], "Healthcare text."))
+            .add_edge(cosine_edge("d1", "d2"));
+
+        MultiHopAbstractSynthesizer::new(llm_dyn)
+            .generate(&graph, &[persona("Researcher", "studies AI")], 1)
+            .await
+            .expect("dataset");
+
+        // prompts[0] is the concept-combination prompt; it lists each node's themes.
+        let concept_prompt = &llm.prompts()[0];
+        assert!(concept_prompt.contains("AI"), "missing node 1 theme");
+        assert!(
+            concept_prompt.contains("healthcare"),
+            "missing node 2 theme"
+        );
+    }
+
+    /// Live gate (env-gated): the real model turns a similarity cluster (two themed docs joined by a
+    /// `cosine_similarity` edge) + an analyst/chef persona pair into a grounded abstract multi-hop
+    /// testset — a grounded answer over hop-tagged contexts, anchored on the analyst.
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; run with --ignored"]
+    async fn live_multi_hop_abstract_synthesizer_generates_grounded_testset() {
+        let Some(client) = crate::ProviderConfig::from_env().chat_client() else {
+            eprintln!("skipping live multi-hop-abstract synthesizer: OPENAI_API_KEY not set");
+            return;
+        };
+        let llm: Arc<dyn LlmProvider> = Arc::new(client);
+        let graph = KnowledgeGraph::new()
+            .add_node(themed_text_node(
+                "d1",
+                &["carbon emissions", "climate change"],
+                "Rising carbon emissions from fossil fuels are the primary driver of climate change.",
+            ))
+            .add_node(themed_text_node(
+                "d2",
+                &["renewable energy", "solar power"],
+                "Renewable energy sources such as solar power generate electricity without carbon emissions.",
+            ))
+            .add_edge(cosine_edge("d1", "d2"));
+        let personas = [
+            persona(
+                "Environmental Analyst",
+                "Studies climate, emissions, and clean-energy transitions.",
+            ),
+            persona("Chef", "Cooks food and develops recipes."),
+        ];
+
+        let dataset = MultiHopAbstractSynthesizer::new(llm)
+            .generate(&graph, &personas, 2)
+            .await
+            .expect("live dataset");
+
+        assert!(!dataset.is_empty());
+        for sample in dataset.iter() {
+            assert!(!sample.user_input.trim().is_empty(), "empty query");
+            assert!(
+                sample
+                    .reference
+                    .as_deref()
+                    .is_some_and(|r| !r.trim().is_empty()),
+                "empty grounded answer"
+            );
+            assert!(!sample.reference_contexts.is_empty(), "no hop contexts");
+            assert!(sample.reference_contexts[0].starts_with("<1-hop>"));
+            // Grounded in the source material (a no-op generator would not reproduce these facts).
+            let answer = sample
+                .reference
+                .as_deref()
+                .unwrap_or_default()
+                .to_lowercase();
+            assert!(
+                [
+                    "carbon",
+                    "emission",
+                    "climate",
+                    "renewable",
+                    "solar",
+                    "energy"
+                ]
+                .iter()
+                .any(|kw| answer.contains(kw)),
+                "answer should be grounded in the contexts: {:?}",
+                sample.reference
+            );
+            assert_eq!(
+                sample.metadata.get("persona_name").map(String::as_str),
+                Some("Environmental Analyst"),
+                "themes should anchor on the analyst, not the chef"
+            );
+            assert_eq!(
+                sample.metadata.get("synthesis_type").map(String::as_str),
+                Some("multi-hop-abstract")
+            );
+        }
     }
 }

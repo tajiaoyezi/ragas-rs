@@ -106,6 +106,17 @@ adversarial one. Until such a run exists, the honest status of an LLM metric is
   grounded multi-hop test set end-to-end — every sample spans both hop-tagged contexts
   (`<1-hop>`/`<2-hop>`), carries a grounded answer, and is anchored on the historian (not the chef).
 
+### Follow-up run — multi-hop abstract synthesizer (Phase 6)
+
+- **Date:** 2026-06-07
+- **Provider:** DeepSeek (chat), same configuration.
+- **Command:** `cargo test --lib live_multi_hop_abstract_synthesizer_generates_grounded_testset -- --ignored`
+- **Result:** **1 passed, 0 failed** (~28s) — the `MultiHopAbstractSynthesizer::generate` gate
+  marked **(MHA)** below: the real model turns a similarity cluster (two themed docs joined by a
+  `cosine_similarity` edge) + an analyst/chef persona pair into a grounded abstract multi-hop test
+  set end-to-end — the LLM forms a cross-document concept combination, and every sample carries a
+  grounded answer over hop-tagged contexts anchored on the analyst (not the chef).
+
 ## Gates (all PASS)
 
 LLM metric discrimination gates (20):
@@ -137,7 +148,7 @@ LLM metric discrimination gates (20):
 `*` also exercises the embedding endpoint. **(P4)** = Phase-4 agentic metrics, run in the
 follow-up above.
 
-End-to-end / testset gates (11):
+End-to-end / testset gates (12):
 
 - CLI `evaluate` with a live provider — `live_evaluate_command_runs_llm_metrics`
 - LLM test-set synthesizer, single-hop — `test_31_2_7_live_synthesizer_generates_from_real_model`
@@ -150,6 +161,7 @@ End-to-end / testset gates (11):
 - Single-hop scenario prep **(SH)** — `live_prepare_single_hop_scenarios_matches_relevant_persona`
 - Single-hop specific synthesizer **(SHS)** — `live_single_hop_specific_synthesizer_generates_grounded_testset`
 - Multi-hop specific synthesizer **(MHS)** — `live_multi_hop_specific_synthesizer_generates_grounded_testset`
+- Multi-hop abstract synthesizer **(MHA)** — `live_multi_hop_abstract_synthesizer_generates_grounded_testset`
 
 ## What this proves — and what it does NOT
 
