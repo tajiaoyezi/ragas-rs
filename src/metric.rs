@@ -163,15 +163,15 @@ Return only JSON of the form {{\"statements\": [\"...\"]}}.\n\n\
 QUESTION: {}\nANSWER: {}",
             sample.user_input, sample.response,
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let parsed: StatementGenerationOutput = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let parsed: StatementGenerationOutput =
-            parse_json(&response.content, "faithfulness statement generation")?;
+            },
+            "faithfulness statement generation",
+        )
+        .await?;
         Ok(parsed
             .statements
             .into_iter()
@@ -201,15 +201,15 @@ with exactly one entry per statement, in the same order.\n\n\
 CONTEXT:\n{}\n\nSTATEMENTS:\n{numbered}",
             sample.retrieved_contexts.join("\n"),
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let parsed: NliOutput = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let parsed: NliOutput =
-            parse_json(&response.content, "faithfulness statement verification")?;
+            },
+            "faithfulness statement verification",
+        )
+        .await?;
         Ok(parsed.verdicts)
     }
 }
@@ -248,6 +248,84 @@ fn extract_json_block(content: &str) -> &str {
         (Some(start), Some(end)) if end >= start => &content[start..=end],
         _ => content.trim(),
     }
+}
+
+/// The `{ "text": ... }` wrapper returned by the [`fix_output_format`] repair prompt — the
+/// faithful analog of Python ragas's `StringIO` output model used by `FixOutputFormat`. `text`
+/// is required (no `serde(default)`) so the wrapper is distinguishable from a model that returned
+/// the corrected output *directly* — see the fallback in [`fix_output_format`].
+#[derive(Debug, Deserialize)]
+struct FixedOutput {
+    text: String,
+}
+
+/// Generate an LLM completion and parse it as `T`, with a `FixOutputFormat`-style repair pass
+/// when the first parse fails.
+///
+/// This is the faithful analog of Python ragas's `RagasOutputParser.parse_output_string`: the
+/// model's response is parsed via [`parse_json`] (which already tolerates markdown fences and
+/// surrounding prose). If that fails, the malformed output and the original prompt are fed back
+/// to the model through a dedicated repair prompt asking it to return a corrected version
+/// ([`fix_output_format`]), which is then re-parsed. A successful first parse makes no extra call.
+///
+/// **Documented divergence:** Python recurses up to `retries_left` (default 3), fixing the
+/// fixer's own output if *that* is malformed; we bound this to a single repair attempt (repair
+/// depth, like NumPy RNG, is a non-goal). If the repaired output still fails to parse, that
+/// (context-tagged) parse error is surfaced — matching Python, which raises the repaired-parse
+/// error rather than the original.
+pub(crate) async fn generate_and_parse<T: serde::de::DeserializeOwned>(
+    llm: &dyn LlmProvider,
+    request: LlmRequest,
+    context: &str,
+) -> Result<T, RagasError> {
+    let original_prompt = render_prompt_text(&request.messages);
+    let response = llm.generate(request).await?;
+    match parse_json::<T>(&response.content, context) {
+        Ok(value) => Ok(value),
+        Err(_) => {
+            let repaired = fix_output_format(llm, &response.content, &original_prompt).await?;
+            parse_json::<T>(&repaired, context)
+        }
+    }
+}
+
+/// The second-stage LLM JSON-repair call (Python ragas's `FixOutputFormat` prompt): feed the
+/// malformed `bad_output` and the `original_prompt` back to the model and ask it to return the
+/// corrected output, carried in a `{ "text": ... }` wrapper ([`FixedOutput`] / Python `StringIO`).
+async fn fix_output_format(
+    llm: &dyn LlmProvider,
+    bad_output: &str,
+    original_prompt: &str,
+) -> Result<String, RagasError> {
+    let prompt = format!(
+        "The output string did not satisfy the constraints given in the prompt. Fix the output \
+string and return it. Return only JSON of the form {{\"text\": \"...\"}} where the value is the \
+corrected output as a string.\n\nPROMPT:\n{original_prompt}\n\nOUTPUT STRING:\n{bad_output}"
+    );
+    let response = llm
+        .generate(LlmRequest {
+            messages: vec![ChatMessage::user(prompt)],
+            temperature: Some(0.0),
+        })
+        .await?;
+    // Prefer the `{text: ...}` wrapper (Python `FixOutputFormat` → `StringIO`). **Robustness
+    // divergence:** some models ignore the wrapper and return the corrected output directly, so
+    // fall back to the raw response in that case; the caller re-parses it as the target type either way.
+    match parse_json::<FixedOutput>(&response.content, "fix output format") {
+        Ok(fixed) => Ok(fixed.text),
+        Err(_) => Ok(response.content),
+    }
+}
+
+/// Join an LLM request's message contents into the prompt text handed to the repair prompt
+/// (Python passes `prompt_value.to_string()`). The metrics use a single user message, so a
+/// newline join reproduces the original prompt.
+fn render_prompt_text(messages: &[ChatMessage]) -> String {
+    messages
+        .iter()
+        .map(|message| message.content.clone())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub struct ResponseRelevancyMetric {
@@ -358,15 +436,15 @@ with exactly {n} entries.\n\nRESPONSE: {response}{context_block}",
             n = self.strictness,
             response = sample.response,
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let parsed: QuestionGenerationOutput = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let parsed: QuestionGenerationOutput =
-            parse_json(&response.content, "response relevancy question generation")?;
+            },
+            "response relevancy question generation",
+        )
+        .await?;
         Ok(parsed
             .questions
             .into_iter()
@@ -587,15 +665,15 @@ Return only JSON of the form {{\"verdict\": 0, \"reason\": \"...\"}}.\n\n\
 QUESTION: {}\nANSWER: {reference}\nCONTEXT: {context}",
                 sample.user_input,
             );
-            let response = self
-                .llm
-                .generate(LlmRequest {
+            let parsed: ContextPrecisionVerdict = generate_and_parse(
+                self.llm.as_ref(),
+                LlmRequest {
                     messages: vec![ChatMessage::user(prompt)],
                     temperature: Some(0.0),
-                })
-                .await?;
-            let parsed: ContextPrecisionVerdict =
-                parse_json(&response.content, "context precision verdict")?;
+                },
+                "context precision verdict",
+            )
+            .await?;
             verdicts.push(parsed.verdict);
         }
         Ok(verdicts)
@@ -702,15 +780,15 @@ QUESTION: {}\n\nCONTEXT:\n{}\n\nANSWER SENTENCES:\n{numbered}",
             sample.user_input,
             sample.retrieved_contexts.join("\n"),
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let parsed: ContextRecallOutput = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let parsed: ContextRecallOutput =
-            parse_json(&response.content, "context recall classification")?;
+            },
+            "context recall classification",
+        )
+        .await?;
         Ok(parsed.classifications)
     }
 }
@@ -823,15 +901,15 @@ Return only JSON of the form {{\"verdict\": 0, \"reason\": \"...\"}}.\n\n\
 QUESTION: {}\nANSWER: {}\nCONTEXT: {context}",
                 sample.user_input, sample.response,
             );
-            let response = self
-                .llm
-                .generate(LlmRequest {
+            let parsed: BinaryVerdict = generate_and_parse(
+                self.llm.as_ref(),
+                LlmRequest {
                     messages: vec![ChatMessage::user(prompt)],
                     temperature: Some(0.0),
-                })
-                .await?;
-            let parsed: BinaryVerdict =
-                parse_json(&response.content, "context utilization verdict")?;
+                },
+                "context utilization verdict",
+            )
+            .await?;
             verdicts.push(parsed.verdict);
         }
         Ok(verdicts)
@@ -915,14 +993,15 @@ CRITERION: {}\n\nQUESTION: {}\nSUBMISSION: {}{}",
             sample.response,
             optional_fields_block(sample),
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let parsed: BinaryVerdict = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let parsed: BinaryVerdict = parse_json(&response.content, "aspect critic verdict")?;
+            },
+            "aspect critic verdict",
+        )
+        .await?;
         Ok(parsed.verdict)
     }
 }
@@ -1015,14 +1094,15 @@ CRITERION: {}\n\nQUESTION: {}\nSUBMISSION: {}{}",
             sample.response,
             optional_fields_block(sample),
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let parsed: SimpleCriteriaOutput = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let parsed: SimpleCriteriaOutput = parse_json(&response.content, "simple criteria score")?;
+            },
+            "simple criteria score",
+        )
+        .await?;
         Ok(
             MetricResult::success(self.name(), MetricValue::numeric(parsed.score))
                 .with_reason(format!("criterion '{}' scored {}", self.name, parsed.score)),
@@ -1096,14 +1176,15 @@ Return only JSON of the form {{\"verdict\": 0, \"reason\": \"...\"}}.\n\n\
 DATABASE SCHEMA:\n{schema}\n\nEXPECTED SQL: {reference}\nACTUAL SQL: {}",
             sample.response,
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let parsed: BinaryVerdict = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let parsed: BinaryVerdict = parse_json(&response.content, "sql equivalence verdict")?;
+            },
+            "sql equivalence verdict",
+        )
+        .await?;
         let score = if parsed.verdict == 1 { 1.0 } else { 0.0 };
         Ok(
             MetricResult::success(self.name(), MetricValue::numeric(score))
@@ -1151,14 +1232,15 @@ ground truth), \"FP\" (present in the answer but not supported by the ground tru
 QUESTION: {}\nANSWER: {}\nGROUND TRUTH: {reference}",
             sample.user_input, sample.response,
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        parse_json(&response.content, "answer correctness classification")
+            },
+            "answer correctness classification",
+        )
+        .await
     }
 }
 
@@ -1256,14 +1338,15 @@ Use 4 = fully correct/equivalent, 2 = partially correct, 0 = incorrect. \
 Return only JSON of the form {{\"rating\": 0, \"reason\": \"...\"}}.\n\n\
 QUESTION: {question}\nREFERENCE: {reference}\nANSWER: {answer}",
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let parsed: AnswerAccuracyRating = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let parsed: AnswerAccuracyRating = parse_json(&response.content, "answer accuracy rating")?;
+            },
+            "answer accuracy rating",
+        )
+        .await?;
         Ok(parsed.rating.clamp(0, 4) as f64 / 4.0)
     }
 }
@@ -1332,13 +1415,15 @@ not supported by the ground truth), or \"FN\" (in the ground truth but missing f
 Return only JSON of the form {{\"TP\": [\"...\"], \"FP\": [\"...\"], \"FN\": [\"...\"]}}.\n\n\
 QUESTION: {user_input}\nANSWER: {response}\nGROUND TRUTH: {reference}",
     );
-    let response_msg = llm
-        .generate(LlmRequest {
+    generate_and_parse(
+        llm.as_ref(),
+        LlmRequest {
             messages: vec![ChatMessage::user(prompt)],
             temperature: Some(0.0),
-        })
-        .await?;
-    parse_json(&response_msg.content, "factual correctness classification")
+        },
+        "factual correctness classification",
+    )
+    .await
 }
 
 /// FactualCorrectness — claim-level F1 of the response against the reference. One LLM call
@@ -1418,14 +1503,15 @@ impl ContextEntityRecallMetric {
 numbers) mentioned in the TEXT. Return only JSON of the form {{\"entities\": [\"...\"]}}.\n\n\
 TEXT: {text}",
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let parsed: EntityExtractionOutput = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let parsed: EntityExtractionOutput = parse_json(&response.content, context_label)?;
+            },
+            context_label,
+        )
+        .await?;
         Ok(parsed
             .entities
             .into_iter()
@@ -1487,13 +1573,15 @@ async fn dual_rating(
 ) -> Result<f64, RagasError> {
     let mut total = 0.0f64;
     for _ in 0..2 {
-        let response = llm
-            .generate(LlmRequest {
+        let parsed: AnswerAccuracyRating = generate_and_parse(
+            llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt.to_string())],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let parsed: AnswerAccuracyRating = parse_json(&response.content, label)?;
+            },
+            label,
+        )
+        .await?;
         total += parsed.rating.clamp(0, 4) as f64 / 4.0;
     }
     Ok(total / 2.0)
@@ -1645,14 +1733,15 @@ RUBRIC:\n{rubric_text}\n\nQUESTION: {}\nSUBMISSION: {}{}",
             sample.response,
             optional_fields_block(sample),
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let parsed: SimpleCriteriaOutput = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let parsed: SimpleCriteriaOutput = parse_json(&response.content, "rubrics score")?;
+            },
+            "rubrics score",
+        )
+        .await?;
         Ok(
             MetricResult::success(self.name(), MetricValue::numeric(parsed.score))
                 .with_reason(format!("rubric '{}' scored {}", self.name, parsed.score)),
@@ -1717,15 +1806,15 @@ RUBRIC:\n{rubric_text}\n\nQUESTION: {}\nSUBMISSION: {}{}",
             sample.response,
             optional_fields_block(sample),
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let parsed: InstanceRubricOutput = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let parsed: InstanceRubricOutput =
-            parse_json(&response.content, "instance specific rubrics")?;
+            },
+            "instance specific rubrics",
+        )
+        .await?;
         Ok(
             MetricResult::success(self.name(), MetricValue::numeric(parsed.score))
                 .with_reason(parsed.feedback),
@@ -1796,17 +1885,15 @@ impl Metric for SummarizationScoreMetric {
 the SOURCE. Return only JSON of the form {{\"questions\": [\"...\"]}}.\n\nSOURCE:\n{source}",
             n = self.question_count,
         );
-        let question_response = self
-            .llm
-            .generate(LlmRequest {
+        let questions: SummarizationQuestions = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(question_prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let questions: SummarizationQuestions = parse_json(
-            &question_response.content,
+            },
             "summarization question generation",
-        )?;
+        )
+        .await?;
         let questions: Vec<String> = questions
             .questions
             .into_iter()
@@ -1833,15 +1920,15 @@ supports a 'yes' and 0 otherwise. Return only JSON of the form \
 SUMMARY: {}\n\nQUESTIONS:\n{numbered}",
             sample.response,
         );
-        let answer_response = self
-            .llm
-            .generate(LlmRequest {
+        let answers: SummarizationAnswers = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(answer_prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let answers: SummarizationAnswers =
-            parse_json(&answer_response.content, "summarization answering")?;
+            },
+            "summarization answering",
+        )
+        .await?;
         let covered = answers
             .answers
             .iter()
@@ -1871,13 +1958,15 @@ Each statement must be fully self-contained, resolving any pronouns using the QU
 Return only JSON of the form {{\"statements\": [\"...\"]}}.\n\n\
 QUESTION: {question}\nANSWER: {answer}",
     );
-    let response = llm
-        .generate(LlmRequest {
+    let parsed: StatementGenerationOutput = generate_and_parse(
+        llm.as_ref(),
+        LlmRequest {
             messages: vec![ChatMessage::user(prompt)],
             temperature: Some(0.0),
-        })
-        .await?;
-    let parsed: StatementGenerationOutput = parse_json(&response.content, label)?;
+        },
+        label,
+    )
+    .await?;
     Ok(parsed
         .statements
         .into_iter()
@@ -1905,13 +1994,15 @@ Use verdict 1 when the statement is supported by the context, 0 otherwise. \
 Return only JSON of the form {{\"verdicts\": [{{\"verdict\": 0}}]}} with exactly one entry per \
 statement, in order.\n\nCONTEXT:\n{context}\n\nSTATEMENTS:\n{numbered}",
     );
-    let response = llm
-        .generate(LlmRequest {
+    let parsed: NliOutput = generate_and_parse(
+        llm.as_ref(),
+        LlmRequest {
             messages: vec![ChatMessage::user(prompt)],
             temperature: Some(0.0),
-        })
-        .await?;
-    let parsed: NliOutput = parse_json(&response.content, label)?;
+        },
+        label,
+    )
+    .await?;
     Ok(parsed
         .verdicts
         .iter()
@@ -1968,15 +2059,15 @@ impl NoiseSensitivityMetric {
 otherwise. Return only JSON of the form {{\"verdicts\": [{{\"verdict\": 0}}]}} with exactly one \
 entry per context, in order.\n\nGROUND TRUTH: {reference}\n\nCONTEXTS:\n{numbered}",
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let parsed: NliOutput = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let parsed: NliOutput =
-            parse_json(&response.content, "noise sensitivity context relevance")?;
+            },
+            "noise sensitivity context relevance",
+        )
+        .await?;
         Ok(parsed
             .verdicts
             .iter()
@@ -3199,10 +3290,111 @@ mod tests {
         assert_eq!(numeric(&result), 1.0);
     }
 
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct Probe {
+        value: i64,
+    }
+
+    #[tokio::test]
+    async fn generate_and_parse_makes_no_repair_call_on_valid_output() {
+        // A first response that parses needs no second (repair) LLM call.
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"value": 5}"#]));
+        let parsed: Probe = generate_and_parse(
+            llm.as_ref(),
+            LlmRequest {
+                messages: vec![ChatMessage::user("give me a value".to_string())],
+                temperature: Some(0.0),
+            },
+            "probe",
+        )
+        .await
+        .expect("valid first output");
+
+        assert_eq!(parsed, Probe { value: 5 });
+        assert_eq!(llm.prompts().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn generate_and_parse_repairs_via_second_llm_call() {
+        // First output is unparseable; the FixOutputFormat repair call returns a `{text: ...}`
+        // wrapper carrying the corrected JSON, which then parses (Python `RagasOutputParser`).
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            "Sorry, I can't do JSON but the value is 7.",
+            r#"{"text":"{\"value\": 7}"}"#,
+        ]));
+        let parsed: Probe = generate_and_parse(
+            llm.as_ref(),
+            LlmRequest {
+                messages: vec![ChatMessage::user("give me a value".to_string())],
+                temperature: Some(0.0),
+            },
+            "probe",
+        )
+        .await
+        .expect("repaired via second call");
+
+        assert_eq!(parsed, Probe { value: 7 });
+
+        // Exactly two calls; the repair prompt feeds back the bad output AND the original prompt.
+        let prompts = llm.prompts();
+        assert_eq!(prompts.len(), 2);
+        assert!(prompts[1].contains("Sorry, I can't do JSON"));
+        assert!(prompts[1].contains("give me a value"));
+    }
+
+    #[tokio::test]
+    async fn generate_and_parse_repair_accepts_direct_corrected_json() {
+        // Robustness divergence: a model that returns the corrected JSON *directly* (without the
+        // `{text: ...}` wrapper) is still accepted — the raw repair response is re-parsed as `T`.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            "the value is 9, but I forgot the json",
+            r#"{"value": 9}"#,
+        ]));
+        let parsed: Probe = generate_and_parse(
+            llm.as_ref(),
+            LlmRequest {
+                messages: vec![ChatMessage::user("give me a value".to_string())],
+                temperature: Some(0.0),
+            },
+            "probe",
+        )
+        .await
+        .expect("repaired from direct json");
+
+        assert_eq!(parsed, Probe { value: 9 });
+        assert_eq!(llm.prompts().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn generate_and_parse_surfaces_context_error_when_repair_also_fails() {
+        // The repair call returns valid `{text: ...}` but its payload still isn't the target type,
+        // so the final parse fails and the original (context-tagged) error is surfaced.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            "no json here",
+            r#"{"text":"still not valid json"}"#,
+        ]));
+        let result: Result<Probe, _> = generate_and_parse(
+            llm.as_ref(),
+            LlmRequest {
+                messages: vec![ChatMessage::user("x".to_string())],
+                temperature: Some(0.0),
+            },
+            "probe value",
+        )
+        .await;
+
+        let error = result.expect_err("repair produced a non-target payload");
+        assert!(error.to_string().contains("probe value"));
+        assert_eq!(llm.prompts().len(), 2);
+    }
+
     #[tokio::test]
     async fn faithfulness_surfaces_unparseable_model_output_as_error() {
+        // First output is unparseable; the repair call also fails to produce valid JSON, so the
+        // typed (context-tagged) parse error is surfaced.
         let metric = FaithfulnessMetric::new(Arc::new(ScriptedLlm::new(vec![
             "I cannot break this into statements.",
+            r#"{"text":"still not valid json"}"#,
         ])));
 
         let error = metric
@@ -3326,7 +3518,10 @@ mod tests {
     #[tokio::test]
     async fn response_relevancy_surfaces_unparseable_model_output_as_error() {
         let metric = ResponseRelevancyMetric::new(
-            Arc::new(ScriptedLlm::new(vec!["I cannot turn this into questions."])),
+            Arc::new(ScriptedLlm::new(vec![
+                "I cannot turn this into questions.",
+                r#"{"text":"still not valid json"}"#,
+            ])),
             Arc::new(PanicEmbeddingProvider),
         );
 
@@ -3437,6 +3632,7 @@ mod tests {
     async fn context_precision_surfaces_unparseable_model_output_as_error() {
         let metric = ContextPrecisionMetric::new(Arc::new(ScriptedLlm::new(vec![
             "This context is somewhat related I think.",
+            r#"{"text":"still not valid json"}"#,
         ])));
         let sample = context_precision_sample(vec!["ctx-a"]);
 
@@ -3539,6 +3735,7 @@ mod tests {
     async fn context_recall_surfaces_unparseable_model_output_as_error() {
         let metric = LlmContextRecallMetric::new(Arc::new(ScriptedLlm::new(vec![
             "I think both sentences are kind of supported.",
+            r#"{"text":"still not valid json"}"#,
         ])));
 
         let error = metric
@@ -3716,6 +3913,64 @@ mod tests {
         crate::ProviderConfig::from_env()
             .embedding_client()
             .map(Arc::new)
+    }
+
+    /// Live-gate wrapper: returns a deliberately malformed first response, then delegates every
+    /// later call to the real provider — exercises the [`generate_and_parse`] repair path end-to-end
+    /// against a real model (the repair call is the one that reaches the live LLM).
+    struct FirstMalformedThenReal {
+        inner: Arc<dyn LlmProvider>,
+        calls: Mutex<usize>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for FirstMalformedThenReal {
+        async fn generate(&self, request: LlmRequest) -> Result<LlmResponse, RagasError> {
+            let n = {
+                let mut calls = self.calls.lock().expect("calls");
+                let n = *calls;
+                *calls += 1;
+                n
+            };
+            if n == 0 {
+                return Ok(LlmResponse {
+                    content: "I think the value is 42, but here is no valid JSON.".to_string(),
+                    usage: None,
+                });
+            }
+            self.inner.generate(request).await
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_fix_output_format_repairs_malformed_output() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        let provider = Arc::new(FirstMalformedThenReal {
+            inner: client,
+            calls: Mutex::new(0),
+        });
+
+        // The original prompt states both the target shape AND the answer (42); the first response
+        // is malformed prose, so the REAL model must repair it into valid {"value": N} JSON and
+        // recover the correct value — proving the repair did real semantic work, not just any-parse.
+        let parsed: Probe = generate_and_parse(
+            provider.as_ref(),
+            LlmRequest {
+                messages: vec![ChatMessage::user(
+                    "Return ONLY JSON of the form {\"value\": <integer>}. The integer is 42."
+                        .to_string(),
+                )],
+                temperature: Some(0.0),
+            },
+            "live probe",
+        )
+        .await
+        .expect("real model repaired the malformed output");
+
+        assert_eq!(parsed, Probe { value: 42 });
     }
 
     #[tokio::test]

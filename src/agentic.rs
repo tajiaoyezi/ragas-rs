@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::metric::parse_json;
+use crate::metric::generate_and_parse;
 use crate::{
     ChatMessage, LlmProvider, LlmRequest, Message, MessageRole, MetricMetadata,
     MetricProviderRequirement, MetricResult, MetricSampleKind, MetricValue, MultiTurnMetric,
@@ -205,13 +205,15 @@ task or objective the user wants to achieve) and the end_state (the final outcom
 the workflow). Return only JSON of the form {{\"user_goal\": \"...\", \"end_state\": \"...\"}}.\n\n\
 WORKFLOW:\n{transcript}"
     );
-    let response = llm
-        .generate(LlmRequest {
+    generate_and_parse(
+        llm.as_ref(),
+        LlmRequest {
             messages: vec![ChatMessage::user(prompt)],
             temperature: Some(0.0),
-        })
-        .await?;
-    parse_json(&response.content, "agent goal/end-state inference")
+        },
+        "agent goal/end-state inference",
+    )
+    .await
 }
 
 /// Compare a desired outcome against the achieved outcome and emit a binary verdict (call 2).
@@ -225,13 +227,15 @@ async fn compare_outcome(
 the same (1) or different (0). Return only JSON of the form {{\"reason\": \"...\", \"verdict\": \
 \"0\"}}.\n\nDESIRED OUTCOME: {desired_outcome}\nACHIEVED OUTCOME: {arrived_outcome}"
     );
-    let response = llm
-        .generate(LlmRequest {
+    generate_and_parse(
+        llm.as_ref(),
+        LlmRequest {
             messages: vec![ChatMessage::user(prompt)],
             temperature: Some(0.0),
-        })
-        .await?;
-    parse_json(&response.content, "agent goal outcome comparison")
+        },
+        "agent goal outcome comparison",
+    )
+    .await
 }
 
 /// AgentGoalAccuracy (with reference) — infer the workflow's `end_state`, then compare it against
@@ -376,14 +380,15 @@ impl TopicAdherenceMetric {
 in the Human's inputs. Return only JSON of the form {{\"topics\": [\"...\"]}}.\n\n\
 CONVERSATION:\n{transcript}"
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let parsed: TopicExtractionOutput = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let parsed: TopicExtractionOutput = parse_json(&response.content, "topic extraction")?;
+            },
+            "topic extraction",
+        )
+        .await?;
         Ok(parsed.topics)
     }
 
@@ -393,14 +398,15 @@ CONVERSATION:\n{transcript}"
 topic. Return only JSON of the form {{\"refused_to_answer\": false}}.\n\n\
 CONVERSATION:\n{transcript}\n\nTOPIC: {topic}"
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let parsed: TopicRefusedOutput = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let parsed: TopicRefusedOutput = parse_json(&response.content, "topic refusal detection")?;
+            },
+            "topic refusal detection",
+        )
+        .await?;
         Ok(coerce_bool(&parsed.refused_to_answer))
     }
 
@@ -422,15 +428,15 @@ any of the reference topics. Return only JSON of the form {{\"classifications\":
 with exactly one boolean per topic, in the same order.\n\n\
 REFERENCE TOPICS:\n{reference_block}\n\nTOPICS:\n{topics_block}"
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let parsed: TopicClassificationOutput = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let parsed: TopicClassificationOutput =
-            parse_json(&response.content, "topic in-scope classification")?;
+            },
+            "topic in-scope classification",
+        )
+        .await?;
         let mut classified: Vec<bool> = parsed.classifications.iter().map(coerce_bool).collect();
         // Force length to match the topic count: pad with `false`, or truncate the overflow.
         classified.resize(topics.len(), false);

@@ -12,7 +12,7 @@ A prioritized plan to maximize **functional replication** of the Python
 `ragas evaluate` CLI default. Phase 4 ✅ (7/7) — DataCompy + deterministic tool-call metrics plus the
 LLM agentic metrics (`AgentGoalAccuracy` with/without reference, `TopicAdherence`,
 `InstanceSpecificRubrics`), all live-verified vs DeepSeek (2026-06-06). Phase 5 🔶 (retry/timeout +
-caching decorators; 2 of 3 critical bugs fixed; plus `evaluate()` options — `column_map`,
+caching decorators; all 3 critical bugs fixed — incl. the FixOutputFormat repair half (PR #20); plus `evaluate()` options — `column_map`,
 `raise_exceptions`, `usage_summary` on `EvaluationReport`, per-token cost API, optional tiktoken
 token counts; `LLMDidNotFinish` truncation detection; lifecycle callbacks). Added
 `SemanticSimilarityMetric` (ragas `answer_similarity` — embedding cosine of response vs reference,
@@ -265,16 +265,29 @@ latent bugs** — high value because they affect every metric.*
 > `CallbackManager` / `RuntimeEvent` infra into the eval path; an empty manager (the default, incl.
 > the CLI) is a no-op, so behavior is unchanged when unused.
 
+> ✅ **FixOutputFormat repair shipped 2026-06-07 (PR #20)** — the second (repair) half of
+> FixOutputFormat, completing the item whose truncation-detection half landed in PR #3. New
+> `generate_and_parse(llm, request, context)` helper (faithful analog of Python ragas's
+> `RagasOutputParser.parse_output_string`): generate → [`parse_json`]; on parse failure, feed the
+> malformed output **and** the original prompt back to the model through a `FixOutputFormat`-style
+> repair prompt (`fix_output_format`, returning Python's `StringIO {text}` wrapper), then re-parse.
+> All **~26 `generate`+`parse_json` call sites** in `src/metric.rs` (21) and `src/agentic.rs` (5)
+> now route through it, so every LLM metric self-heals malformed-but-complete output. **Documented
+> divergences:** repair is bounded to a single attempt (Python's nested `retries_left` recursion is
+> a non-goal, like RNG); and the repair also accepts a model that returns the corrected JSON
+> *directly* (no `{text}` wrapper) — a robustness superset of Python. Offline tests (no-repair,
+> repair-via-wrapper, direct-json fallback, repair-still-fails → context error) + a live gate
+> (**FX**: a real model repairs a malformed `{"value": 42}` output). The testset synthesizers'
+> `parse_json_block` (Value) path is a separate, optional follow-up (not in the "~24").
+
 > **Still TODO (Phase 5):** `token_usage_parser`/`metric.init` hooks, per-provider usage parsers,
-> caching-into-eval, the **FixOutputFormat repair** half (second-stage LLM JSON-repair call on
-> malformed-but-complete output — invasive: a `generate-and-parse` helper across ~24 call sites),
-> PydanticPrompt renderer + Loss.
+> caching-into-eval, PydanticPrompt renderer + Loss.
 
 | Item | Effort | Value | Approach |
 |---|---|---|---|
 | **RunConfig retry/backoff + per-op timeout** | M | high | **CRITICAL:** retry & timeout are currently *dead config* (only concurrency is consumed). Add exponential-backoff wrapper + `tokio::time::timeout` per job. |
 | **Provider response caching** | M | medium | Cache key + store exist but **nothing wraps** `generate`/`embed`. Add a `Cache` trait + caching provider decorator keyed on `generate_runtime_cache_key`. |
-| **FixOutputFormat repair + `LLMDidNotFinishException`** | M | high | 🔶 `LLMDidNotFinishException` ✅ (PR #3 — truncation detected in `parse_chat_response`). Remaining: the second-stage LLM repair on parse failure (invasive — ~24 `generate`+`parse_json` call sites). |
+| **FixOutputFormat repair + `LLMDidNotFinishException`** ✅ | M | high | ✅ DONE — `LLMDidNotFinishException` (PR #3, truncation in `parse_chat_response`) **and** the second-stage LLM repair (PR #20): `generate_and_parse` + `fix_output_format` route all ~26 metric/agentic `generate`+`parse_json` sites through a `FixOutputFormat`-style repair-on-parse-failure pass. Live-verified (FX). |
 | **`evaluate()` options: column_map, raise_exceptions, token_usage_parser, metric.init** | M | high | Core `evaluate()` lacks column remapping, raise-vs-swallow toggle, per-provider token parsers, and an init lifecycle hook. |
 | **Per-provider TokenUsageParser + cost on report** | M | medium | Only OpenAI's response shape is parsed; add a trait + per-provider impls, attach total_tokens/cost to `EvaluationReport`. |
 | **`num_tokens_from_string` via tiktoken-rs + real Tokenizer trait** | M | low | `LazyTokenizer` is a whitespace stub; real BPE counts feed cost + testset bins. (HF-vocab path is model-dependent — mark it.) |
