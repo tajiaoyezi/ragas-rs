@@ -1116,9 +1116,6 @@ struct SynthesizedQa {
     answer: String,
 }
 
-/// Deserialize a `{"question": "...", "answer": "..."}` object from an LLM response,
-/// tolerating markdown fences or surrounding prose by extracting the outermost `{ .. }`
-/// block (the JSON-repair path, mirroring `metric::parse_json`/`extract_json_block`).
 /// Reject a parsed Q/A pair with an empty question or answer. This is a **semantic** check, not a
 /// parse failure, so it deliberately runs *after* [`generate_and_parse`] (it does not — and should
 /// not — trigger the `FixOutputFormat` repair, which only re-tries malformed JSON).
@@ -1403,8 +1400,8 @@ entities. Ensure the number of entities does not exceed {max_num}."
 /// This is the runnable analog of Python `ragas`'s `LLMBasedExtractor` family: it reads the
 /// node's `text` property, splits it into chunks (a char-based substitute for ragas's tiktoken
 /// `split_text_by_token_limit` — token parity is an explicit non-goal), prompts a real
-/// [`LlmProvider`] for the requested property as JSON, and parses the response with the same
-/// outermost-`{ .. }` JSON-repair path used by the synthesizer.
+/// [`LlmProvider`] for the requested property as JSON, and parses the response through the shared
+/// [`generate_and_parse`] path (faithful bracket-matching extraction + `FixOutputFormat` self-heal).
 ///
 /// Single-value kinds (Summary/Title/TopicDescription) use only the first chunk (matching
 /// Python's `chunks[0]`); list kinds (Keyphrases/Headlines/NER/Themes) call the model per chunk
@@ -4454,7 +4451,7 @@ mod tests {
             "this is not json at all",
             r#"{"text":"still not valid json"}"#,
         ]));
-        let error = generate_testset(llm, "doc-1", "Ragas evaluates retrieval.")
+        let error = generate_testset(llm.clone(), "doc-1", "Ragas evaluates retrieval.")
             .await
             .expect_err("malformed JSON should error");
         match error {
@@ -4463,12 +4460,14 @@ mod tests {
             }
             other => panic!("expected parse error, got {other:?}"),
         }
+        // The repair path actually ran (synthesis call + one repair call), not provider exhaustion.
+        assert_eq!(llm.prompts().len(), 2);
     }
 
     #[tokio::test]
     async fn test_31_2_5_json_repair_path_recovers_fenced_output() {
-        // The repair path extracts the outermost { .. } block from prose/markdown fences,
-        // mirroring metric::extract_json_block.
+        // The valid fenced JSON parses on the first try (no repair call): the initial parse and
+        // the repair both extract the first balanced { .. } block via metric::extract_json_block.
         let llm = Arc::new(ScriptedLlm::new(vec![
             "Sure! Here is the data:\n```json\n{\"question\": \"What is RAG?\", \"answer\": \"Retrieval augmented generation.\"}\n```\nHope that helps.",
         ]));
@@ -4481,6 +4480,25 @@ mod tests {
             dataset.iter().next().unwrap().response,
             "Retrieval augmented generation."
         );
+    }
+
+    #[tokio::test]
+    async fn synthesizer_repairs_malformed_qa_via_second_call() {
+        // The first synthesis reply is unparseable; the FixOutputFormat repair recovers a valid
+        // Q/A pair (carried in the {text: ...} wrapper), so the dataset is still produced — the
+        // synthesizer path (generate_and_parse::<SynthesizedQa>) self-heals end-to-end.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            "Sorry, no JSON. Q: what is Ragas? A: an eval framework.",
+            r#"{"text":"{\"question\": \"What is Ragas?\", \"answer\": \"An evaluation framework.\"}"}"#,
+        ]));
+        let dataset = generate_testset(llm.clone(), "doc-1", "Ragas evaluates retrieval.")
+            .await
+            .expect("repaired synthesis");
+
+        assert_eq!(dataset.len(), 1);
+        assert_eq!(dataset.iter().next().unwrap().user_input, "What is Ragas?");
+        // First (malformed) synthesis call + one repair call.
+        assert_eq!(llm.prompts().len(), 2);
     }
 
     #[tokio::test]
@@ -4609,7 +4627,8 @@ binaries that run without a Python runtime.";
 
     #[tokio::test]
     async fn llm_extractor_recovers_fenced_json() {
-        // The repair path extracts the outermost { .. } block from prose/markdown fences.
+        // The valid fenced JSON parses on the first try (no repair call): extract_json_block
+        // takes the first balanced { .. } block from the markdown fence.
         let llm = Arc::new(ScriptedLlm::new(vec![
             "Sure!\n```json\n{\"output\": [\"AI\", \"Automation\"]}\n```\n",
         ]));
