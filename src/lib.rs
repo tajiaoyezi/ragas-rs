@@ -138,11 +138,12 @@ pub use testset::{
     SynthesizerStrategy, TestsetGenerator, TextChunk, apply_transforms, attach_extractions,
     build_chunk_relationships, build_cosine_relationships, build_overlap_relationships,
     cluster_graph_by_property, compare_synthesized_sample_fixture, default_query_distribution,
-    extract_bundle, filter_graph_by_property, find_n_indirect_clusters, generate_personas_from_kg,
-    generate_testset, match_themes_to_personas, normalize_extraction_properties,
-    parse_graph_parity_fixture, parse_llm_extractor_output, prepare_multi_hop_abstract_scenarios,
-    prepare_multi_hop_specific_scenarios, prepare_single_hop_scenarios, query_graph_advanced,
-    render_synthesizer_prompt_snapshot, serialize_graph_parity_fixture, split_text_into_chunks,
+    extract_bundle, extract_markdown_headings, filter_graph_by_property, find_n_indirect_clusters,
+    generate_personas_from_kg, generate_testset, match_themes_to_personas,
+    normalize_extraction_properties, parse_graph_parity_fixture, parse_llm_extractor_output,
+    prepare_multi_hop_abstract_scenarios, prepare_multi_hop_specific_scenarios,
+    prepare_single_hop_scenarios, query_graph_advanced, render_synthesizer_prompt_snapshot,
+    serialize_graph_parity_fixture, split_by_headlines, split_text_into_chunks,
     synthesize_multi_hop_sample, synthesize_pre_chunked_samples, synthesize_single_hop_sample,
 };
 pub use validation::{

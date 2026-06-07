@@ -778,6 +778,184 @@ pub fn build_chunk_relationships(
     graph
 }
 
+/// Extract Markdown headings (`# ` … `###### `) from text, in document order — the deterministic
+/// analog of Python ragas's `markdown_headings_extractor` (a `RegexBasedExtractor`). Implemented
+/// without a regex engine to keep the `regex` crate off the default build (a deliberate dependency
+/// choice; see `Cargo.toml`). Returns each heading's TEXT (after the `#`s and the whitespace),
+/// matching Python's `^(#{1,6})\s+(.*)` with `re.MULTILINE`: the `#`s must start at column 0 and be
+/// followed by whitespace. Empty headings are skipped (they would be useless as split anchors).
+///
+/// **Documented divergences from `RegexBasedExtractor`:** Python's `re.findall` on the grouped
+/// pattern returns `(hashes, text)` tuples; we return just the heading text (the useful part, what
+/// [`split_by_headlines`] consumes). The general arbitrary-pattern / links / emails regex extractors
+/// are intentionally not ported — they require a regex engine the default build excludes, and they
+/// are unused by the test-set generation pipeline.
+pub fn extract_markdown_headings(text: &str) -> Vec<String> {
+    let mut headings = Vec::new();
+    for line in text.lines() {
+        let hashes = line.bytes().take_while(|&byte| byte == b'#').count();
+        if !(1..=6).contains(&hashes) {
+            continue;
+        }
+        let rest = &line[hashes..];
+        // Python's `\s+` requires at least one whitespace char after the `#`s.
+        if !rest.starts_with(char::is_whitespace) {
+            continue;
+        }
+        let heading = rest.trim_start();
+        if !heading.is_empty() {
+            headings.push(heading.to_string());
+        }
+    }
+    headings
+}
+
+/// Split a knowledge graph's document nodes into headline-delimited chunk nodes — a faithful port of
+/// Python ragas's `HeadlineSplitter`. For each `document` node carrying both `text` and a `headlines`
+/// [`GraphProperty::TextList`], the text is cut at each headline occurrence, over-long pieces are
+/// split on word boundaries and under-long pieces merged (see [`adjust_headline_chunks`]), and the
+/// resulting pieces become `chunk` nodes linked by `child` edges (document → chunk) and `next` edges
+/// (chunk → chunk, in order). The original document node is kept. Documents shorter than `min_chars`,
+/// or that yield a single piece, are left unsplit.
+///
+/// **Documented divergences:** Python measures length in tiktoken tokens; we use characters (the
+/// tiktoken bins are an explicit non-goal). Python assigns each chunk a random UUID id; we use the
+/// deterministic `"{doc_id}::h{i}"` (RNG is a non-goal). Headline offsets are sorted/deduped so
+/// out-of-order or repeated headlines can't produce negative-length slices.
+pub fn split_by_headlines(
+    graph: KnowledgeGraph,
+    min_chars: usize,
+    max_chars: usize,
+) -> KnowledgeGraph {
+    let mut new_nodes = Vec::new();
+    let mut new_edges = Vec::new();
+    for node in &graph.nodes {
+        if node.node_type != "document" {
+            continue;
+        }
+        let (Some(text), Some(GraphProperty::TextList(headlines))) = (
+            text_property(node, "text"),
+            node.properties.get("headlines"),
+        ) else {
+            continue;
+        };
+        let (nodes, edges) =
+            split_document_by_headlines(&node.id, text, headlines, min_chars, max_chars);
+        new_nodes.extend(nodes);
+        new_edges.extend(edges);
+    }
+    let mut graph = graph;
+    for node in new_nodes {
+        graph = graph.add_node(node);
+    }
+    for edge in new_edges {
+        graph = graph.add_edge(edge);
+    }
+    graph
+}
+
+/// Split one document's text at its headlines into chunk nodes + `child`/`next` edges. Returns empty
+/// vectors when the document is shorter than `min_chars` or collapses to a single piece (unsplit).
+fn split_document_by_headlines(
+    doc_id: &str,
+    text: &str,
+    headlines: &[String],
+    min_chars: usize,
+    max_chars: usize,
+) -> (Vec<GraphNode>, Vec<GraphEdge>) {
+    if text.chars().count() < min_chars {
+        return (Vec::new(), Vec::new());
+    }
+    // Byte offsets of each headline occurrence, plus the text bounds; sorted + deduped so the slices
+    // are always non-negative even if `headlines` is out of order or repeated.
+    let mut indices = vec![0usize];
+    for headline in headlines {
+        if let Some(index) = text.find(headline.as_str()) {
+            indices.push(index);
+        }
+    }
+    indices.push(text.len());
+    indices.sort_unstable();
+    indices.dedup();
+    let pieces: Vec<String> = indices
+        .windows(2)
+        .map(|window| text[window[0]..window[1]].to_string())
+        .collect();
+    let pieces = adjust_headline_chunks(pieces, min_chars, max_chars);
+    if pieces.len() <= 1 {
+        return (Vec::new(), Vec::new());
+    }
+
+    let nodes: Vec<GraphNode> = pieces
+        .into_iter()
+        .enumerate()
+        .map(|(i, piece)| {
+            GraphNode::new(format!("{doc_id}::h{i}"), "chunk")
+                .with_property("text", GraphProperty::Text(piece))
+                .with_property("source_id", GraphProperty::Text(doc_id.to_string()))
+                .with_property("chunk_index", GraphProperty::Number(i as f64))
+        })
+        .collect();
+
+    let mut edges = Vec::new();
+    for (i, node) in nodes.iter().enumerate() {
+        edges.push(
+            GraphEdge::new(doc_id.to_string(), node.id.clone(), "child")
+                .with_property("order", GraphProperty::Number(i as f64)),
+        );
+    }
+    for window in nodes.windows(2) {
+        edges.push(GraphEdge::new(
+            window[0].id.clone(),
+            window[1].id.clone(),
+            "next",
+        ));
+    }
+    (nodes, edges)
+}
+
+/// Merge under-`min_chars` pieces into their neighbour and split over-`max_chars` pieces on word
+/// boundaries — the character-budget analog of Python `HeadlineSplitter.adjust_chunks`.
+fn adjust_headline_chunks(pieces: Vec<String>, min_chars: usize, max_chars: usize) -> Vec<String> {
+    let len = |s: &str| s.chars().count();
+    let mut adjusted = Vec::new();
+    let mut current = String::new();
+    for piece in pieces {
+        let mut piece = piece;
+        // Split pieces over max_chars by words (estimate the split point by the char ratio).
+        while len(&piece) > max_chars {
+            let words: Vec<&str> = piece.split_whitespace().collect();
+            if words.is_empty() {
+                break;
+            }
+            let ratio = max_chars as f64 / len(&piece) as f64;
+            let split_point = ((words.len() as f64 * ratio) as usize).max(1);
+            adjusted.push(words[..split_point.min(words.len())].join(" "));
+            piece = words[split_point.min(words.len())..].join(" ");
+        }
+        if len(&piece) < min_chars {
+            if current.is_empty() {
+                current = piece;
+            } else {
+                current.push(' ');
+                current.push_str(&piece);
+                if len(&current) >= min_chars {
+                    adjusted.push(std::mem::take(&mut current));
+                }
+            }
+        } else {
+            if !current.is_empty() {
+                adjusted.push(std::mem::take(&mut current));
+            }
+            adjusted.push(piece);
+        }
+    }
+    if !current.is_empty() {
+        adjusted.push(current);
+    }
+    adjusted
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Persona {
     pub name: String,
@@ -7323,5 +7501,110 @@ Astronomers use telescopes to observe distant galaxies and measure their redshif
                 "unexpected synthesizer tag: {name}"
             );
         }
+    }
+
+    #[test]
+    fn extract_markdown_headings_matches_column_zero_hashes() {
+        let text = "# Title\nsome text\n## Section A\nmore\n### Sub\n#### deep\nnot # heading\n###### six\n####### seven\n##nospace\n  ## indented\n## ";
+        assert_eq!(
+            extract_markdown_headings(text),
+            vec![
+                "Title".to_string(),
+                "Section A".to_string(),
+                "Sub".to_string(),
+                "deep".to_string(),
+                "six".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn split_by_headlines_creates_child_and_next_chunks() {
+        let graph = KnowledgeGraph::new().add_node(
+            GraphNode::new("doc-1", "document")
+                .with_property(
+                    "text",
+                    GraphProperty::Text(
+                        "Intro AAAA BBBB. Body CCCC DDDD. End EEEE FFFF.".to_string(),
+                    ),
+                )
+                .with_property(
+                    "headlines",
+                    GraphProperty::TextList(vec!["Body".to_string(), "End".to_string()]),
+                ),
+        );
+        let split = split_by_headlines(graph, 1, 1000);
+
+        let chunks = split.nodes_by_type("chunk");
+        assert_eq!(chunks.len(), 3);
+        assert!(chunks[0].id.starts_with("doc-1::h"));
+        // child edges: document -> each chunk; next edges: chunk -> chunk in order.
+        assert_eq!(split.edges_by_relationship("child").len(), 3);
+        assert_eq!(split.edges_by_relationship("next").len(), 2);
+        let texts: Vec<String> = chunks
+            .iter()
+            .filter_map(|c| text_property(c, "text").map(str::to_string))
+            .collect();
+        assert!(texts.iter().any(|t| t.contains("Intro")));
+        assert!(texts.iter().any(|t| t.starts_with("Body")));
+        assert!(texts.iter().any(|t| t.starts_with("End")));
+        // The original document node is retained.
+        assert_eq!(split.nodes_by_type("document").len(), 1);
+    }
+
+    #[test]
+    fn split_by_headlines_leaves_short_or_unsplittable_docs_alone() {
+        // Shorter than min_chars -> no split.
+        let short = KnowledgeGraph::new().add_node(
+            GraphNode::new("d", "document")
+                .with_property("text", GraphProperty::Text("tiny".to_string()))
+                .with_property("headlines", GraphProperty::TextList(vec!["x".to_string()])),
+        );
+        assert!(
+            split_by_headlines(short, 1000, 2000)
+                .nodes_by_type("chunk")
+                .is_empty()
+        );
+
+        // No headline matches -> a single piece -> no split.
+        let one_piece = KnowledgeGraph::new().add_node(
+            GraphNode::new("d", "document")
+                .with_property(
+                    "text",
+                    GraphProperty::Text("a fairly long body with no matching headings".to_string()),
+                )
+                .with_property(
+                    "headlines",
+                    GraphProperty::TextList(vec!["zzz-not-present".to_string()]),
+                ),
+        );
+        assert!(
+            split_by_headlines(one_piece, 1, 1000)
+                .nodes_by_type("chunk")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn adjust_headline_chunks_merges_small_and_splits_large() {
+        // Under-min pieces merge with their neighbour until they reach min_chars.
+        assert_eq!(
+            adjust_headline_chunks(
+                vec!["ab".to_string(), "cd".to_string(), "ef".to_string()],
+                4,
+                100,
+            ),
+            vec!["ab cd".to_string(), "ef".to_string()]
+        );
+        // An over-max piece is split on word boundaries by the char ratio.
+        assert_eq!(
+            adjust_headline_chunks(vec!["a b c d e f g h".to_string()], 1, 5),
+            vec![
+                "a b".to_string(),
+                "c d".to_string(),
+                "e f".to_string(),
+                "g h".to_string(),
+            ]
+        );
     }
 }
