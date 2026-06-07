@@ -1634,6 +1634,167 @@ fn remove_nodes(graph: KnowledgeGraph, remove: &BTreeSet<String>) -> KnowledgeGr
     }
 }
 
+/// One step of a testset-transform pipeline — the runnable analog of Python ragas's
+/// `BaseGraphTransformation` subclasses, plus `Parallel`. Build with the constructors
+/// ([`GraphTransform::extract`], [`GraphTransform::cosine`], …) and run a list with
+/// [`apply_transforms`].
+///
+/// `Extract`/`Embed` can be restricted to a node type via [`GraphTransform::for_node_type`]
+/// (mirroring Python's `filter_nodes`); the others apply to the whole graph.
+pub enum GraphTransform {
+    /// Run an [`LlmExtractor`] over the selected nodes, writing each result as a node property.
+    Extract {
+        extractor: LlmExtractor,
+        node_type: Option<String>,
+    },
+    /// Run an [`EmbeddingExtractor`] over the selected nodes.
+    Embed {
+        extractor: EmbeddingExtractor,
+        node_type: Option<String>,
+    },
+    /// Build cosine-similarity relationships ([`build_cosine_relationships`]).
+    Cosine { threshold: f64 },
+    /// Build entity-overlap relationships ([`build_overlap_relationships`]).
+    Overlap {
+        distance_threshold: f64,
+        threshold: f64,
+    },
+    /// Drop low-quality chunks ([`CustomNodeFilter`]).
+    Filter(CustomNodeFilter),
+    /// A group applied as a unit. Mirroring Python's `apply_transforms`, the children run
+    /// **sequentially** (Python's `Parallel` only interleaves per-node coroutines elsewhere;
+    /// `apply_transforms` itself recurses into the children as a sequence). The result graph is
+    /// identical to concurrent execution because grouped transforms are independent.
+    Parallel(Vec<GraphTransform>),
+}
+
+impl GraphTransform {
+    /// An LLM property extractor over all nodes (restrict with [`Self::for_node_type`]).
+    pub fn extract(extractor: LlmExtractor) -> Self {
+        Self::Extract {
+            extractor,
+            node_type: None,
+        }
+    }
+
+    /// An embedding extractor over all nodes (restrict with [`Self::for_node_type`]).
+    pub fn embed(extractor: EmbeddingExtractor) -> Self {
+        Self::Embed {
+            extractor,
+            node_type: None,
+        }
+    }
+
+    /// A cosine-similarity relationship builder.
+    pub fn cosine(threshold: f64) -> Self {
+        Self::Cosine { threshold }
+    }
+
+    /// An entity-overlap relationship builder.
+    pub fn overlap(distance_threshold: f64, threshold: f64) -> Self {
+        Self::Overlap {
+            distance_threshold,
+            threshold,
+        }
+    }
+
+    /// A chunk-quality filter step.
+    pub fn filter(filter: CustomNodeFilter) -> Self {
+        Self::Filter(filter)
+    }
+
+    /// A group of transforms applied as a unit (see [`Self::Parallel`]).
+    pub fn parallel(children: Vec<GraphTransform>) -> Self {
+        Self::Parallel(children)
+    }
+
+    /// Restrict an `Extract`/`Embed` step to nodes of the given type (no-op for others).
+    pub fn for_node_type(mut self, node_type: impl Into<String>) -> Self {
+        match &mut self {
+            Self::Extract { node_type: nt, .. } | Self::Embed { node_type: nt, .. } => {
+                *nt = Some(node_type.into());
+            }
+            _ => {}
+        }
+        self
+    }
+}
+
+/// Apply a pipeline of [`GraphTransform`]s to a knowledge graph in order, threading the graph
+/// through each step — the runnable analog of Python ragas's `apply_transforms`.
+pub async fn apply_transforms(
+    mut graph: KnowledgeGraph,
+    transforms: Vec<GraphTransform>,
+) -> Result<KnowledgeGraph, RagasError> {
+    for transform in transforms {
+        graph = apply_transform(transform, graph).await?;
+    }
+    Ok(graph)
+}
+
+async fn apply_transform(
+    transform: GraphTransform,
+    mut graph: KnowledgeGraph,
+) -> Result<KnowledgeGraph, RagasError> {
+    match transform {
+        GraphTransform::Parallel(children) => Box::pin(apply_transforms(graph, children)).await,
+        GraphTransform::Cosine { threshold } => build_cosine_relationships(graph, threshold),
+        GraphTransform::Overlap {
+            distance_threshold,
+            threshold,
+        } => Ok(build_overlap_relationships(
+            graph,
+            distance_threshold,
+            threshold,
+        )),
+        GraphTransform::Filter(filter) => filter.filter(graph).await,
+        GraphTransform::Extract {
+            extractor,
+            node_type,
+        } => {
+            let mut updates = Vec::new();
+            for node in &graph.nodes {
+                if node_type
+                    .as_ref()
+                    .is_none_or(|wanted| &node.node_type == wanted)
+                {
+                    updates.push((node.id.clone(), extractor.extract(node).await?));
+                }
+            }
+            apply_property_updates(&mut graph, updates);
+            Ok(graph)
+        }
+        GraphTransform::Embed {
+            extractor,
+            node_type,
+        } => {
+            let mut updates = Vec::new();
+            for node in &graph.nodes {
+                if node_type
+                    .as_ref()
+                    .is_none_or(|wanted| &node.node_type == wanted)
+                {
+                    updates.push((node.id.clone(), extractor.extract(node).await?));
+                }
+            }
+            apply_property_updates(&mut graph, updates);
+            Ok(graph)
+        }
+    }
+}
+
+/// Write extracted `(node_id, (property_name, value))` results back onto their nodes.
+fn apply_property_updates(
+    graph: &mut KnowledgeGraph,
+    updates: Vec<(String, (String, GraphProperty))>,
+) {
+    for (id, (name, value)) in updates {
+        if let Some(node) = graph.nodes.iter_mut().find(|node| node.id == id) {
+            node.properties.insert(name, value);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3510,5 +3671,169 @@ free vacation!!!",
             filtered.node("junk").is_none(),
             "the irrelevant chunk should be scored low and removed"
         );
+    }
+
+    #[tokio::test]
+    async fn apply_transforms_threads_extract_then_build() {
+        // [Extract(NER on chunks) -> Overlap]: the engine writes entity properties, then the
+        // builder uses them. "zzz" is the noisy item, so the shared "Tesla" drives an edge.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"entities": ["zzz", "Tesla", "Foo"]}"#,
+            r#"{"entities": ["zzz", "Tesla", "Bar"]}"#,
+        ]));
+        let graph = KnowledgeGraph::new()
+            .add_node(GraphNode::new("doc", "document"))
+            .add_node(text_node("c1", "about Tesla"))
+            .add_node(text_node("c2", "also Tesla"))
+            .add_edge(GraphEdge::new("doc", "c1", "contains"))
+            .add_edge(GraphEdge::new("doc", "c2", "contains"));
+
+        let out = apply_transforms(
+            graph,
+            vec![
+                GraphTransform::extract(LlmExtractor::new(llm, LlmExtractorKind::Ner))
+                    .for_node_type("chunk"),
+                GraphTransform::overlap(0.9, 0.01),
+            ],
+        )
+        .await
+        .expect("pipeline");
+
+        // Entities were written on the chunks (not the doc), then an overlap edge was built.
+        assert!(matches!(
+            out.node("c1").unwrap().properties.get("entities"),
+            Some(GraphProperty::TextList(_))
+        ));
+        assert!(!out.node("doc").unwrap().properties.contains_key("entities"));
+        assert_eq!(out.edges_by_relationship("entities_overlap").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn apply_transforms_parallel_applies_every_child() {
+        // A Parallel group runs all its children (sequentially, same result): both NER and
+        // Themes properties end up on the chunk.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"entities": ["E1"]}"#,
+            r#"{"output": ["T1"]}"#,
+        ]));
+        let graph = KnowledgeGraph::new().add_node(text_node("c1", "content"));
+        let out = apply_transforms(
+            graph,
+            vec![GraphTransform::parallel(vec![
+                GraphTransform::extract(LlmExtractor::new(llm.clone(), LlmExtractorKind::Ner)),
+                GraphTransform::extract(LlmExtractor::new(llm, LlmExtractorKind::Themes)),
+            ])],
+        )
+        .await
+        .expect("pipeline");
+
+        let props = &out.node("c1").unwrap().properties;
+        assert_eq!(
+            props.get("entities"),
+            Some(&GraphProperty::TextList(vec!["E1".to_string()]))
+        );
+        assert_eq!(
+            props.get("themes"),
+            Some(&GraphProperty::TextList(vec!["T1".to_string()]))
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_transforms_runs_filter_step() {
+        // A Filter step in the pipeline drops a low-scoring chunk.
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"score": 5}"#, r#"{"score": 1}"#]));
+        let graph = doc_with_chunks("RAG eval guide.", &[("keep", "good"), ("drop", "bad")]);
+        let out = apply_transforms(
+            graph,
+            vec![GraphTransform::filter(CustomNodeFilter::new(llm))],
+        )
+        .await
+        .expect("pipeline");
+        assert!(out.node("keep").is_some());
+        assert!(out.node("drop").is_none());
+    }
+
+    #[tokio::test]
+    async fn apply_transforms_node_type_filter_restricts_scoring() {
+        // Extract restricted to chunks: the doc node (also has text) is never scored.
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"entities": ["X"]}"#]));
+        let graph = KnowledgeGraph::new()
+            .add_node(
+                text_node("doc", "doc text").with_property("extra", GraphProperty::Boolean(true)),
+            )
+            .add_node(text_node("c1", "chunk text"));
+        // Make the doc a non-chunk type.
+        let graph = KnowledgeGraph {
+            nodes: graph
+                .nodes
+                .into_iter()
+                .map(|mut node| {
+                    if node.id == "doc" {
+                        node.node_type = "document".to_string();
+                    }
+                    node
+                })
+                .collect(),
+            edges: graph.edges,
+        };
+        let out = apply_transforms(
+            graph,
+            vec![
+                GraphTransform::extract(LlmExtractor::new(llm.clone(), LlmExtractorKind::Ner))
+                    .for_node_type("chunk"),
+            ],
+        )
+        .await
+        .expect("pipeline");
+
+        assert!(out.node("c1").unwrap().properties.contains_key("entities"));
+        assert!(!out.node("doc").unwrap().properties.contains_key("entities"));
+        // Exactly one scoring call (the single chunk), proving the doc was skipped.
+        assert_eq!(llm.prompts().len(), 1);
+    }
+
+    /// Live gate (env-gated): a real pipeline `[Embed(chunks) -> Cosine]` through the engine
+    /// gives the chunks embeddings and links the two similar ones, while the embed-less doc is
+    /// skipped by the node-type filter.
+    #[tokio::test]
+    #[ignore = "requires embedding provider env; run with --ignored"]
+    async fn live_apply_transforms_embed_then_cosine_pipeline() {
+        let Some(client) = crate::ProviderConfig::from_env().embedding_client() else {
+            eprintln!("skipping live transforms engine: embedding provider not set");
+            return;
+        };
+        let embedding: Arc<dyn EmbeddingProvider> = Arc::new(client);
+        let graph = KnowledgeGraph::new()
+            .add_node(GraphNode::new("doc", "document"))
+            .add_node(text_node(
+                "c1",
+                "Cats are small domestic felines kept as pets.",
+            ))
+            .add_node(text_node("c2", "Domestic cats are popular household pets."))
+            .add_edge(GraphEdge::new("doc", "c1", "contains"))
+            .add_edge(GraphEdge::new("doc", "c2", "contains"));
+
+        let out = apply_transforms(
+            graph,
+            vec![
+                GraphTransform::embed(EmbeddingExtractor::new(embedding)).for_node_type("chunk"),
+                GraphTransform::cosine(0.5),
+            ],
+        )
+        .await
+        .expect("live pipeline");
+
+        // Chunks embedded, doc skipped by the node-type filter, similar chunks linked.
+        assert!(matches!(
+            out.node("c1").unwrap().properties.get("embedding"),
+            Some(GraphProperty::Vector(_))
+        ));
+        assert!(
+            !out.node("doc")
+                .unwrap()
+                .properties
+                .contains_key("embedding")
+        );
+        assert_eq!(out.edges_by_relationship("cosine_similarity").len(), 1);
     }
 }

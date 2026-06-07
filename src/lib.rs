@@ -129,11 +129,11 @@ pub use runtime::{num_tokens_from_string, tiktoken_encoding_for_model};
 pub use schema::{Message, MessageRole, MultiTurnSample, Rubric, ToolCall};
 pub use testset::{
     CustomNodeFilter, EmbeddingExtractor, ExtractionBundle, GraphAdvancedQuery, GraphCluster,
-    GraphEdge, GraphNode, GraphParityFixture, GraphProperty, KnowledgeGraph, LlmExtractor,
-    LlmExtractorKind, Persona, PersonaGenerator, RenderedSynthesizerPromptMessage,
+    GraphEdge, GraphNode, GraphParityFixture, GraphProperty, GraphTransform, KnowledgeGraph,
+    LlmExtractor, LlmExtractorKind, Persona, PersonaGenerator, RenderedSynthesizerPromptMessage,
     RenderedSynthesizerPromptSnapshot, SynthesizedSample, Synthesizer, SynthesizerPromptMessage,
     SynthesizerPromptSnapshot, SynthesizerSampleComparison, SynthesizerStrategy, TextChunk,
-    attach_extractions, build_chunk_relationships, build_cosine_relationships,
+    apply_transforms, attach_extractions, build_chunk_relationships, build_cosine_relationships,
     build_overlap_relationships, cluster_graph_by_property, compare_synthesized_sample_fixture,
     extract_bundle, filter_graph_by_property, generate_testset, normalize_extraction_properties,
     parse_graph_parity_fixture, parse_llm_extractor_output, query_graph_advanced,
