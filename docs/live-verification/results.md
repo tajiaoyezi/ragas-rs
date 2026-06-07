@@ -129,6 +129,18 @@ adversarial one. Until such a run exists, the honest status of an LLM metric is
   sample is tagged with its `synthesizer_name` and carries a non-empty grounded answer + reference
   contexts — the full single/multi-hop testset stack end-to-end against a real model.
 
+### Follow-up run — default transforms → testset, full pipeline (Phase 6)
+
+- **Date:** 2026-06-07
+- **Provider:** DeepSeek (chat) + SiliconFlow (embeddings), same configuration.
+- **Command:** `cargo test --lib live_default_transforms_then_testset_end_to_end -- --ignored`
+- **Result:** **1 passed, 0 failed** (~153s) — the `default_transforms` → `TestsetGenerator` gate
+  marked **(DT)** below: starting from raw document text, `default_transforms` extracts summaries,
+  themes and entities, embeds the summaries, and builds `summary_similarity` + `entities_overlap`
+  relationships; `TestsetGenerator` then derives personas from that graph and runs all three
+  synthesizers into a non-empty, `synthesizer_name`-tagged test set. This is the **entire Phase 6
+  stack — raw text → test set — end-to-end against real models.**
+
 ## Gates (all PASS)
 
 LLM metric discrimination gates (20):
@@ -160,7 +172,7 @@ LLM metric discrimination gates (20):
 `*` also exercises the embedding endpoint. **(P4)** = Phase-4 agentic metrics, run in the
 follow-up above.
 
-End-to-end / testset gates (13):
+End-to-end / testset gates (14):
 
 - CLI `evaluate` with a live provider — `live_evaluate_command_runs_llm_metrics`
 - LLM test-set synthesizer, single-hop — `test_31_2_7_live_synthesizer_generates_from_real_model`
@@ -175,6 +187,7 @@ End-to-end / testset gates (13):
 - Multi-hop specific synthesizer **(MHS)** — `live_multi_hop_specific_synthesizer_generates_grounded_testset`
 - Multi-hop abstract synthesizer **(MHA)** — `live_multi_hop_abstract_synthesizer_generates_grounded_testset`
 - TestsetGenerator orchestrator **(TG)** — `live_testset_generator_generates_mixed_testset`
+- Default transforms → testset, end-to-end **(DT)** — `live_default_transforms_then_testset_end_to_end`
 
 ## What this proves — and what it does NOT
 
