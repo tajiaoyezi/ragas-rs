@@ -1927,13 +1927,18 @@ impl CustomNodeFilter {
         Ok(remove_nodes(graph, &remove))
     }
 
-    /// The `summary` of the chunk's parent document (source of a `contains` edge into it).
-    /// Uses the first such edge, mirroring Python's `parent_nodes[0]`.
+    /// The `summary` of the chunk's parent document. Python's `get_parent_nodes` follows `"child"`
+    /// edges (what [`split_by_headlines`] emits); this also accepts this module's `"contains"`
+    /// doc→chunk edges (from [`build_chunk_relationships`]), so the filter finds the parent under
+    /// either splitting convention. Uses the first such edge, mirroring Python's `parent_nodes[0]`.
     fn parent_summary(&self, node: &GraphNode, graph: &KnowledgeGraph) -> Option<String> {
         let parent_id = graph
             .edges
             .iter()
-            .find(|edge| edge.target_id == node.id && edge.relationship == "contains")
+            .find(|edge| {
+                edge.target_id == node.id
+                    && (edge.relationship == "child" || edge.relationship == "contains")
+            })
             .map(|edge| &edge.source_id)?;
         text_property(graph.node(parent_id)?, "summary").map(str::to_string)
     }
@@ -3530,10 +3535,13 @@ async fn apply_summary_embedding(
 /// graph ready for [`TestsetGenerator`] (and persona generation).
 ///
 /// **Documented divergences:** character budgets substitute for tiktoken token bins (an explicit
-/// non-goal — so the bin thresholds are approximate); `Parallel` extractor groups run sequentially
-/// (as elsewhere in this port — the result is identical for independent steps); Python's per-node
-/// `filter_nodes` token-count predicates are approximated by node-type filtering. Errors if there
-/// are no documents or they are all too short.
+/// non-goal — so the bin thresholds are approximate); Python's independent extractor groups (its
+/// `Parallel(...)`) are run as a deterministic sequence here (the result is identical for these
+/// independent steps); Python's per-node `filter_nodes` token-count predicates are approximated by
+/// node-type filtering. The node-filter step only scores chunks (see [`CustomNodeFilter`]); Python's
+/// no-split branch would also score each document against its *own* summary, but that is nearly
+/// always kept (a document scores high against a summary derived from it), so omitting it is inert.
+/// Errors if there are no documents or they are all too short.
 pub async fn default_transforms(
     mut graph: KnowledgeGraph,
     llm: Arc<dyn LlmProvider>,
@@ -7871,8 +7879,9 @@ Astronomers use telescopes to observe distant galaxies and measure their redshif
     #[tokio::test]
     async fn default_transforms_no_split_populates_graph() {
         // Two medium documents (> SHORT_MAX_CHARS) -> no-split branch. The LLM calls happen in
-        // order: summary(d1), summary(d2), themes(d1), themes(d2), ner(d1), ner(d2) (the node
-        // filter touches only chunks, of which there are none).
+        // order: summary(d1), summary(d2), themes(d1), themes(d2), ner(d1), ner(d2). The node filter
+        // scores only chunks, of which there are none here (documented divergence: Python's no-split
+        // branch would also score each document against its own summary).
         let medium = "alpha beta gamma delta ".repeat(25); // ~575 chars
         let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
             r#"{"text": "summary of d1"}"#,
@@ -7920,6 +7929,66 @@ Astronomers use telescopes to observe distant galaxies and measure their redshif
         let cosine = out.edges_by_relationship("cosine_similarity");
         assert_eq!(cosine.len(), 1);
         assert!(cosine[0].properties.contains_key("summary_similarity"));
+        assert!(!out.edges_by_relationship("entities_overlap").is_empty());
+    }
+
+    #[tokio::test]
+    async fn default_transforms_split_populates_chunks() {
+        // One long document (two ~2.4k-char sections) -> split branch. LLM order: headlines(doc),
+        // summary(doc), filter(chunk0), filter(chunk1), themes(chunk0), themes(chunk1),
+        // ner(chunk0), ner(chunk1). The two filter `score` responses are consumed only if the node
+        // filter finds the chunks' parent via the `child` edges split_by_headlines emits -- so this
+        // test also pins the child-edge parent lookup (otherwise themes would mis-parse `score`).
+        let section_one = format!("Section One {}", "alpha ".repeat(400));
+        let section_two = format!("Section Two {}", "beta ".repeat(400));
+        let text = format!("{section_one}{section_two}");
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+            r#"{"headlines": ["Section One", "Section Two"]}"#,
+            r#"{"text": "the document summary"}"#,
+            r#"{"score": 5}"#,
+            r#"{"score": 5}"#,
+            r#"{"output": ["physics"]}"#,
+            r#"{"output": ["physics"]}"#,
+            r#"{"entities": ["S1", "S2", "A"]}"#,
+            r#"{"entities": ["S1", "S2", "B"]}"#,
+        ]));
+        let embedding: Arc<dyn EmbeddingProvider> =
+            Arc::new(crate::providers::MockEmbeddingProvider::new(vec![vec![
+                1.0, 0.0,
+            ]]));
+        let graph = KnowledgeGraph::new().add_node(
+            GraphNode::new("d1", "document").with_property("text", GraphProperty::Text(text)),
+        );
+
+        let out = default_transforms(graph, llm, embedding)
+            .await
+            .expect("transforms");
+
+        // The document was split into two chunks (both scored 5, so both kept), linked by `child`.
+        let chunks = out.nodes_by_type("chunk");
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(out.edges_by_relationship("child").len(), 2);
+        // Chunk-level extraction ran: each chunk carries themes + entities.
+        for chunk in &chunks {
+            assert!(matches!(
+                chunk.properties.get("themes"),
+                Some(GraphProperty::TextList(_))
+            ));
+            assert!(matches!(
+                chunk.properties.get("entities"),
+                Some(GraphProperty::TextList(_))
+            ));
+        }
+        // The original document carries the summary (+ its embedding).
+        let d1 = out.node("d1").expect("d1");
+        assert!(
+            matches!(d1.properties.get("summary"), Some(GraphProperty::Text(s)) if s == "the document summary")
+        );
+        assert!(matches!(
+            d1.properties.get("summary_embedding"),
+            Some(GraphProperty::Vector(_))
+        ));
+        // Entity overlap links the two chunks.
         assert!(!out.edges_by_relationship("entities_overlap").is_empty());
     }
 
