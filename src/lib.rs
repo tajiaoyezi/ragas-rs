@@ -114,7 +114,8 @@ pub use providers::{
     record_provider_usage,
 };
 pub use resilience::{
-    CachingEmbeddingProvider, CachingLlmProvider, ResilientEmbeddingProvider, ResilientLlmProvider,
+    CacheBackend, CachingEmbeddingProvider, CachingLlmProvider, DiskCacheBackend,
+    InMemoryCacheBackend, ResilientEmbeddingProvider, ResilientLlmProvider,
     UsageRecordingLlmProvider,
 };
 pub use runtime::{

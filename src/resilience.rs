@@ -19,10 +19,31 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use tokio::time::{Duration, sleep, timeout};
+
+/// Monotonic counter for unique disk-cache temp-file names (combined with the process id) so
+/// concurrent writers never share a temp path.
+static DISK_CACHE_TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// FNV-1a (64-bit) — a fully specified hash, so [`DiskCacheBackend`] filenames are stable across
+/// runs, machines, and Rust releases. (std's `DefaultHasher` algorithm is explicitly unspecified
+/// across releases and must not be relied on for persisted names.)
+fn fnv1a_hash(key: &str) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = OFFSET;
+    for byte in key.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
+}
 
 use crate::{
     EmbeddingProvider, EmbeddingRequest, EmbeddingResponse, LlmProvider, LlmRequest, LlmResponse,
@@ -226,87 +247,234 @@ impl EmbeddingProvider for ResilientEmbeddingProvider {
     }
 }
 
-/// An [`LlmProvider`] that memoizes successful responses in-memory, keyed on the request.
-/// Repeated identical requests are served from the cache without calling the inner provider.
-pub struct CachingLlmProvider {
-    inner: Arc<dyn LlmProvider>,
-    cache: Mutex<HashMap<String, LlmResponse>>,
+/// A pluggable key/value store backing the caching provider decorators. Values are opaque
+/// serialized strings (the providers serialize their own response types into them). Faithful
+/// analog of Python ragas's `cache.CacheInterface`. Implementations **must degrade gracefully** —
+/// a cache failure must never break evaluation: reads return `None` on any error, writes are
+/// best-effort.
+pub trait CacheBackend: Send + Sync {
+    /// Fetch a cached value by key, or `None` on miss / any backend error.
+    fn get(&self, key: &str) -> Option<String>;
+    /// Store a value under `key` (best-effort; errors are swallowed).
+    fn set(&self, key: &str, value: &str);
+    /// Number of entries currently held (best-effort; `0` on error).
+    fn len(&self) -> usize;
+    /// Whether the cache holds no entries.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
-impl CachingLlmProvider {
-    pub fn new(inner: Arc<dyn LlmProvider>) -> Self {
-        Self {
-            inner,
-            cache: Mutex::new(HashMap::new()),
+/// In-memory [`CacheBackend`] (a `HashMap` behind a mutex) — the default, process-local cache.
+#[derive(Default)]
+pub struct InMemoryCacheBackend {
+    store: Mutex<HashMap<String, String>>,
+}
+
+impl InMemoryCacheBackend {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InMemoryCacheBackend {
+    /// Lock the store, recovering from a poisoned mutex instead of panicking — honors the
+    /// `CacheBackend` contract that a cache failure must never break evaluation.
+    fn store(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
+        self.store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+impl CacheBackend for InMemoryCacheBackend {
+    fn get(&self, key: &str) -> Option<String> {
+        self.store().get(key).cloned()
+    }
+
+    fn set(&self, key: &str, value: &str) {
+        self.store().insert(key.to_string(), value.to_string());
+    }
+
+    fn len(&self) -> usize {
+        self.store().len()
+    }
+}
+
+/// Disk-backed [`CacheBackend`] — persists entries as JSON files under a directory so cached
+/// responses survive across process runs (faithful analog of Python ragas's `DiskCacheBackend`,
+/// without the `diskcache` dependency). Re-running an evaluation over the same inputs then serves
+/// cached responses instead of re-calling the model.
+///
+/// Each entry is one file named by an FNV-1a hash of the key (a fully specified algorithm, so
+/// filenames are identical across runs/machines/Rust releases); the full key is stored *inside*
+/// the file and verified on read, so a hash collision degrades to a cache miss rather than
+/// returning the wrong value. The cache **key** itself is the serialized request — this is
+/// provider-layer caching, so the request is the whole key (Python keys on function+args because
+/// it caches at the decorator layer). Writes are atomic (temp file + rename) so a concurrent
+/// reader never sees a torn file. All I/O is best-effort: any error is a miss (read) or a no-op
+/// (write), never a failure.
+pub struct DiskCacheBackend {
+    dir: PathBuf,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DiskCacheEntry {
+    key: String,
+    value: String,
+}
+
+impl DiskCacheBackend {
+    /// Open (creating if needed) a disk cache rooted at `dir`. A directory-creation error is
+    /// swallowed — the cache then behaves as empty/no-op rather than failing.
+    pub fn new(dir: impl Into<PathBuf>) -> Self {
+        let dir = dir.into();
+        let _ = std::fs::create_dir_all(&dir);
+        Self { dir }
+    }
+
+    fn path_for(&self, key: &str) -> PathBuf {
+        self.dir.join(format!("{:016x}.json", fnv1a_hash(key)))
+    }
+}
+
+impl CacheBackend for DiskCacheBackend {
+    fn get(&self, key: &str) -> Option<String> {
+        let raw = std::fs::read_to_string(self.path_for(key)).ok()?;
+        let entry: DiskCacheEntry = serde_json::from_str(&raw).ok()?;
+        // Verify the stored key matches: a hash collision degrades to a miss, never a wrong value.
+        (entry.key == key).then_some(entry.value)
+    }
+
+    fn set(&self, key: &str, value: &str) {
+        let entry = DiskCacheEntry {
+            key: key.to_string(),
+            value: value.to_string(),
+        };
+        let Ok(raw) = serde_json::to_string(&entry) else {
+            return;
+        };
+        // Atomic write: write to a unique temp file (process id + counter, so concurrent writers
+        // never share one) then rename onto the final path. Rename is atomic on the same
+        // filesystem, so a concurrent reader sees either the old or the new file, never a torn one;
+        // with concurrent writers of the same key the last rename wins.
+        let seq = DISK_CACHE_TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        let tmp = self.dir.join(format!(
+            "{:016x}.{}.{seq}.tmp",
+            fnv1a_hash(key),
+            std::process::id()
+        ));
+        if std::fs::write(&tmp, raw).is_ok() {
+            let _ = std::fs::rename(&tmp, self.path_for(key));
         }
     }
 
+    fn len(&self) -> usize {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return 0;
+        };
+        entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+            .count()
+    }
+}
+
+/// An [`LlmProvider`] that memoizes successful responses, keyed on the request, via a pluggable
+/// [`CacheBackend`]. Repeated identical requests are served from the cache without calling the
+/// inner provider. Defaults to an in-memory cache; pass a [`DiskCacheBackend`] via
+/// [`CachingLlmProvider::with_backend`] for cross-run persistence.
+pub struct CachingLlmProvider {
+    inner: Arc<dyn LlmProvider>,
+    cache: Arc<dyn CacheBackend>,
+}
+
+impl CachingLlmProvider {
+    /// Wrap `inner` with a process-local in-memory cache.
+    pub fn new(inner: Arc<dyn LlmProvider>) -> Self {
+        Self::with_backend(inner, Arc::new(InMemoryCacheBackend::new()))
+    }
+
+    /// Wrap `inner` with a caller-supplied cache backend (e.g. [`DiskCacheBackend`]).
+    pub fn with_backend(inner: Arc<dyn LlmProvider>, cache: Arc<dyn CacheBackend>) -> Self {
+        Self { inner, cache }
+    }
+
     pub fn len(&self) -> usize {
-        self.cache.lock().expect("cache lock").len()
+        self.cache.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.cache.is_empty()
     }
 }
 
 #[async_trait]
 impl LlmProvider for CachingLlmProvider {
     async fn generate(&self, request: LlmRequest) -> Result<LlmResponse, RagasError> {
-        let key = serde_json::to_string(&request).unwrap_or_default();
+        // An unserializable request bypasses the cache entirely rather than collapsing to an empty
+        // key (which would collide distinct requests) — correctness over a marginal cache hit.
+        let Ok(key) = serde_json::to_string(&request) else {
+            return self.inner.generate(request).await;
+        };
+        if let Some(cached) = self.cache.get(&key)
+            && let Ok(response) = serde_json::from_str::<LlmResponse>(&cached)
         {
-            let cache = self.cache.lock().expect("cache lock");
-            if let Some(hit) = cache.get(&key) {
-                return Ok(hit.clone());
-            }
+            return Ok(response);
         }
         let response = self.inner.generate(request).await?;
-        self.cache
-            .lock()
-            .expect("cache lock")
-            .insert(key, response.clone());
+        if let Ok(serialized) = serde_json::to_string(&response) {
+            self.cache.set(&key, &serialized);
+        }
         Ok(response)
     }
 }
 
-/// An [`EmbeddingProvider`] that memoizes successful responses in-memory, keyed on the request.
+/// An [`EmbeddingProvider`] that memoizes successful responses, keyed on the request, via a
+/// pluggable [`CacheBackend`]. Defaults to an in-memory cache; pass a [`DiskCacheBackend`] via
+/// [`CachingEmbeddingProvider::with_backend`] for cross-run persistence.
 pub struct CachingEmbeddingProvider {
     inner: Arc<dyn EmbeddingProvider>,
-    cache: Mutex<HashMap<String, EmbeddingResponse>>,
+    cache: Arc<dyn CacheBackend>,
 }
 
 impl CachingEmbeddingProvider {
+    /// Wrap `inner` with a process-local in-memory cache.
     pub fn new(inner: Arc<dyn EmbeddingProvider>) -> Self {
-        Self {
-            inner,
-            cache: Mutex::new(HashMap::new()),
-        }
+        Self::with_backend(inner, Arc::new(InMemoryCacheBackend::new()))
+    }
+
+    /// Wrap `inner` with a caller-supplied cache backend (e.g. [`DiskCacheBackend`]).
+    pub fn with_backend(inner: Arc<dyn EmbeddingProvider>, cache: Arc<dyn CacheBackend>) -> Self {
+        Self { inner, cache }
     }
 
     pub fn len(&self) -> usize {
-        self.cache.lock().expect("cache lock").len()
+        self.cache.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.cache.is_empty()
     }
 }
 
 #[async_trait]
 impl EmbeddingProvider for CachingEmbeddingProvider {
     async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, RagasError> {
-        let key = serde_json::to_string(&request).unwrap_or_default();
+        // An unserializable request bypasses the cache entirely rather than collapsing to an empty
+        // key (which would collide distinct requests) — correctness over a marginal cache hit.
+        let Ok(key) = serde_json::to_string(&request) else {
+            return self.inner.embed(request).await;
+        };
+        if let Some(cached) = self.cache.get(&key)
+            && let Ok(response) = serde_json::from_str::<EmbeddingResponse>(&cached)
         {
-            let cache = self.cache.lock().expect("cache lock");
-            if let Some(hit) = cache.get(&key) {
-                return Ok(hit.clone());
-            }
+            return Ok(response);
         }
         let response = self.inner.embed(request).await?;
-        self.cache
-            .lock()
-            .expect("cache lock")
-            .insert(key, response.clone());
+        if let Ok(serialized) = serde_json::to_string(&response) {
+            self.cache.set(&key, &serialized);
+        }
         Ok(response)
     }
 }
@@ -511,6 +679,171 @@ mod tests {
         provider.generate(other).await.expect("other");
         assert_eq!(counting.calls(), 2);
         assert_eq!(provider.len(), 2);
+    }
+
+    /// A per-process-unique temp cache dir (so parallel tests / re-runs never collide), cleaned first.
+    fn temp_cache_dir(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("ragas_cache_test_{}_{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn disk_cache_backend_round_trips_and_isolates_keys() {
+        let dir = temp_cache_dir("roundtrip");
+
+        let cache = DiskCacheBackend::new(&dir);
+        assert!(cache.is_empty());
+        cache.set("k1", "v1");
+        cache.set("k2", "v2");
+
+        assert_eq!(cache.get("k1").as_deref(), Some("v1"));
+        assert_eq!(cache.get("k2").as_deref(), Some("v2"));
+        // A missing key reads as a graceful miss (the file does not exist).
+        assert_eq!(cache.get("missing"), None);
+        assert_eq!(cache.len(), 2);
+
+        // Overwriting an existing key updates the value without growing the entry count.
+        cache.set("k1", "v1b");
+        assert_eq!(cache.get("k1").as_deref(), Some("v1b"));
+        assert_eq!(cache.len(), 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn disk_cache_backend_corrupt_or_mismatched_file_is_a_graceful_miss() {
+        let dir = temp_cache_dir("corrupt");
+        let cache = DiskCacheBackend::new(&dir);
+
+        // A file whose stored key does not match the requested key (a hash collision) -> miss,
+        // never a wrong value.
+        std::fs::write(cache.path_for("wanted"), r#"{"key":"OTHER","value":"v"}"#).expect("write");
+        assert_eq!(cache.get("wanted"), None);
+
+        // A corrupt (non-JSON) file -> miss, no panic.
+        std::fs::write(cache.path_for("broken"), "{ this is not json").expect("write");
+        assert_eq!(cache.get("broken"), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn caching_provider_falls_through_when_cached_value_is_undeserializable() {
+        // A cached entry that no longer deserializes to the response type (corruption / schema
+        // change) must fall through to a fresh inner call rather than erroring.
+        let counting = Arc::new(CountingLlm::new());
+        let backend = Arc::new(InMemoryCacheBackend::new());
+        // Pre-seed the exact key the provider will compute, with a value that is valid JSON but not
+        // an `LlmResponse`.
+        let key = serde_json::to_string(&request()).expect("serialize");
+        backend.set(&key, r#"{"unexpected":"shape"}"#);
+
+        let provider = CachingLlmProvider::with_backend(counting.clone(), backend);
+        let response = provider.generate(request()).await.expect("fresh");
+        assert_eq!(response.content, "response");
+        assert_eq!(
+            counting.calls(),
+            1,
+            "undeserializable hit must reach the inner provider"
+        );
+    }
+
+    #[tokio::test]
+    async fn disk_cache_backend_persists_across_provider_instances() {
+        // The whole point of the disk backend: a cached response survives a fresh provider AND a
+        // fresh backend over the same directory, so the inner model is not called again. Because
+        // the filename hash (FNV-1a) is a fully specified algorithm, this also holds across
+        // separate process runs — a fresh backend recomputes the same path with no shared state.
+        let dir = temp_cache_dir("persists_llm");
+
+        let counting = Arc::new(CountingLlm::new());
+
+        let first_content = {
+            let provider = CachingLlmProvider::with_backend(
+                counting.clone(),
+                Arc::new(DiskCacheBackend::new(&dir)),
+            );
+            let first = provider.generate(request()).await.expect("first");
+            assert_eq!(counting.calls(), 1);
+            first.content
+        };
+
+        // A brand-new provider + brand-new backend over the SAME dir serves from disk.
+        let provider = CachingLlmProvider::with_backend(
+            counting.clone(),
+            Arc::new(DiskCacheBackend::new(&dir)),
+        );
+        let cached = provider.generate(request()).await.expect("cached");
+        assert_eq!(cached.content, first_content);
+        assert_eq!(
+            counting.calls(),
+            1,
+            "a fresh provider over the persisted dir must hit the disk cache, not the model"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Records how many times it is called; always succeeds with the same embedding.
+    struct CountingEmbedding {
+        calls: Mutex<u32>,
+    }
+
+    impl CountingEmbedding {
+        fn new() -> Self {
+            Self {
+                calls: Mutex::new(0),
+            }
+        }
+
+        fn calls(&self) -> u32 {
+            *self.calls.lock().expect("calls")
+        }
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for CountingEmbedding {
+        async fn embed(&self, _request: EmbeddingRequest) -> Result<EmbeddingResponse, RagasError> {
+            *self.calls.lock().expect("calls") += 1;
+            Ok(EmbeddingResponse {
+                embeddings: vec![vec![0.1, 0.2, 0.3]],
+                usage: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn disk_cache_embedding_provider_persists_across_instances() {
+        // Same cross-instance persistence guarantee for the embedding cache path.
+        let dir = temp_cache_dir("persists_embed");
+        let counting = Arc::new(CountingEmbedding::new());
+        let req = EmbeddingRequest {
+            input: vec!["hello".to_string()],
+        };
+
+        {
+            let provider = CachingEmbeddingProvider::with_backend(
+                counting.clone(),
+                Arc::new(DiskCacheBackend::new(&dir)),
+            );
+            provider.embed(req.clone()).await.expect("first");
+            assert_eq!(counting.calls(), 1);
+        }
+
+        let provider = CachingEmbeddingProvider::with_backend(
+            counting.clone(),
+            Arc::new(DiskCacheBackend::new(&dir)),
+        );
+        provider.embed(req).await.expect("cached");
+        assert_eq!(
+            counting.calls(),
+            1,
+            "a fresh embedding provider over the persisted dir must hit the disk cache"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
