@@ -57,6 +57,15 @@ adversarial one. Until such a run exists, the honest status of an LLM metric is
   real model scores an on-topic chunk high (kept) and an irrelevant advertisement chunk low
   (removed) against the document summary.
 
+### Follow-up run — transforms engine (Phase 6)
+
+- **Date:** 2026-06-07
+- **Provider:** SiliconFlow (embeddings), same configuration.
+- **Command:** `cargo test --lib live_apply_transforms_embed_then_cosine_pipeline -- --ignored`
+- **Result:** **1 passed, 0 failed** (~1s) — the `apply_transforms` gate marked **(TE)** below: a
+  real `[Embed(chunks) -> Cosine]` pipeline through the engine embeds the chunks (node-type filter
+  skips the doc) and links the two similar chunks with a cosine edge, end-to-end.
+
 ## Gates (all PASS)
 
 LLM metric discrimination gates (20):
@@ -88,7 +97,7 @@ LLM metric discrimination gates (20):
 `*` also exercises the embedding endpoint. **(P4)** = Phase-4 agentic metrics, run in the
 follow-up above.
 
-End-to-end / testset gates (6):
+End-to-end / testset gates (7):
 
 - CLI `evaluate` with a live provider — `live_evaluate_command_runs_llm_metrics`
 - LLM test-set synthesizer, single-hop — `test_31_2_7_live_synthesizer_generates_from_real_model`
@@ -96,6 +105,7 @@ End-to-end / testset gates (6):
 - LLM testset extractor **(EX)** — `live_llm_extractor_pulls_named_entities_and_summary`
 - Embedding cosine relationship builder **(CB)** — `live_cosine_relationships_link_semantically_similar_nodes`
 - CustomNodeFilter **(NF)** — `live_custom_node_filter_drops_irrelevant_chunk`
+- Transforms engine **(TE)** — `live_apply_transforms_embed_then_cosine_pipeline`
 
 ## What this proves — and what it does NOT
 
