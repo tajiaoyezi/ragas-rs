@@ -1676,14 +1676,28 @@ impl EmbeddingExtractor {
 /// `_validate_embedding_shapes`); a mismatch is an error. One directed edge is added per
 /// `i < j` pair (the relationship is undirected — treat source/target symmetrically).
 pub fn build_cosine_relationships(
+    graph: KnowledgeGraph,
+    threshold: f64,
+) -> Result<KnowledgeGraph, RagasError> {
+    build_cosine_relationships_with(graph, "embedding", "cosine_similarity", threshold)
+}
+
+/// Like [`build_cosine_relationships`] but with a configurable input embedding property and score
+/// property name — the analog of Python `CosineSimilarityBuilder`'s `property_name` /
+/// `new_property_name`. The edge relationship type is always `"cosine_similarity"`; only the input
+/// vector property (`property_name`) and the score property carried on the edge (`score_property`)
+/// vary. The default-pipeline summary clustering uses `("summary_embedding", "summary_similarity")`.
+pub fn build_cosine_relationships_with(
     mut graph: KnowledgeGraph,
+    property_name: &str,
+    score_property: &str,
     threshold: f64,
 ) -> Result<KnowledgeGraph, RagasError> {
     let embedded: Vec<(usize, Vec<f32>)> = graph
         .nodes
         .iter()
         .enumerate()
-        .filter_map(|(idx, node)| match node.properties.get("embedding") {
+        .filter_map(|(idx, node)| match node.properties.get(property_name) {
             Some(GraphProperty::Vector(vector)) => Some((idx, vector.clone())),
             _ => None,
         })
@@ -1715,7 +1729,7 @@ pub fn build_cosine_relationships(
                         graph.nodes[j].id.clone(),
                         "cosine_similarity",
                     )
-                    .with_property("cosine_similarity", GraphProperty::Number(score)),
+                    .with_property(score_property, GraphProperty::Number(score)),
                 );
             }
         }
@@ -3410,6 +3424,199 @@ impl TestsetGenerator {
             }
         }
     }
+}
+
+/// Which default-transforms pipeline a document set selects (Python's doc-length bin branching).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefaultTransformBranch {
+    /// Long documents: extract headlines, split into chunks, then extract + relate at chunk level.
+    Split,
+    /// Medium documents: no splitting; extract + relate at document level.
+    NoSplit,
+}
+
+/// Character thresholds substituting for Python's tiktoken token bins (token parity is a non-goal):
+/// `~100 tokens` and `~500 tokens` at a rough 4 chars/token. Documents are binned short / medium /
+/// long by these; the branch follows Python's `default_transforms` (long ≥ 25% → split path,
+/// else medium ≥ 25% → no-split path, else "too short").
+const SHORT_MAX_CHARS: usize = 400;
+const MEDIUM_MAX_CHARS: usize = 2000;
+
+/// Pick the default-transforms branch from the documents' character lengths — the deterministic,
+/// char-budget analog of the token-bin branching in Python ragas's `default_transforms`. Errors if
+/// there are no documents or they are all too short (Python's `ValueError`).
+pub fn select_default_transform_branch(
+    doc_char_lengths: &[usize],
+) -> Result<DefaultTransformBranch, RagasError> {
+    if doc_char_lengths.is_empty() {
+        return Err(RagasError::Parse {
+            message: "default transforms: no document nodes to process".to_string(),
+        });
+    }
+    let total = doc_char_lengths.len() as f64;
+    let long = doc_char_lengths
+        .iter()
+        .filter(|&&l| l > MEDIUM_MAX_CHARS)
+        .count() as f64
+        / total;
+    let medium = doc_char_lengths
+        .iter()
+        .filter(|&&l| l > SHORT_MAX_CHARS && l <= MEDIUM_MAX_CHARS)
+        .count() as f64
+        / total;
+    if long >= 0.25 {
+        Ok(DefaultTransformBranch::Split)
+    } else if medium >= 0.25 {
+        Ok(DefaultTransformBranch::NoSplit)
+    } else {
+        Err(RagasError::Parse {
+            message: "default transforms: documents appear too short (≈100 chars or less); \
+provide longer documents"
+                .to_string(),
+        })
+    }
+}
+
+/// Run an [`LlmExtractor`] over every node of `node_type`, writing the extracted property back onto
+/// each node (collect-then-write, like the transforms engine's extract adapter).
+async fn apply_extractor_to_type(
+    mut graph: KnowledgeGraph,
+    extractor: &LlmExtractor,
+    node_type: &str,
+) -> Result<KnowledgeGraph, RagasError> {
+    let mut updates = Vec::new();
+    for node in &graph.nodes {
+        if node.node_type == node_type {
+            updates.push((node.id.clone(), extractor.extract(node).await?));
+        }
+    }
+    for (id, (name, value)) in updates {
+        if let Some(node) = graph.nodes.iter_mut().find(|node| node.id == id) {
+            node.properties.insert(name, value);
+        }
+    }
+    Ok(graph)
+}
+
+/// Embed the `summary` of every node that has one into a `summary_embedding` [`GraphProperty::Vector`]
+/// (the default pipeline's summary-embedding step), skipping nodes without a summary.
+async fn apply_summary_embedding(
+    mut graph: KnowledgeGraph,
+    embedding: &Arc<dyn EmbeddingProvider>,
+) -> Result<KnowledgeGraph, RagasError> {
+    let extractor = EmbeddingExtractor::new(embedding.clone())
+        .with_property_name("summary_embedding")
+        .with_embed_property_name("summary");
+    let mut updates = Vec::new();
+    for node in &graph.nodes {
+        if matches!(node.properties.get("summary"), Some(GraphProperty::Text(text)) if !text.trim().is_empty())
+        {
+            updates.push((node.id.clone(), extractor.extract(node).await?));
+        }
+    }
+    for (id, (name, value)) in updates {
+        if let Some(node) = graph.nodes.iter_mut().find(|node| node.id == id) {
+            node.properties.insert(name, value);
+        }
+    }
+    Ok(graph)
+}
+
+/// Apply the default test-set transform pipeline to a knowledge graph of `document` nodes — a
+/// faithful port of Python ragas's `default_transforms`. It bins the documents by length
+/// ([`select_default_transform_branch`]) and either splits long docs into chunks first or works at
+/// the document level, then extracts summaries / themes / entities, embeds summaries, filters weak
+/// chunks, and builds `summary_similarity` (cosine) and `entities_overlap` relationships — leaving a
+/// graph ready for [`TestsetGenerator`] (and persona generation).
+///
+/// **Documented divergences:** character budgets substitute for tiktoken token bins (an explicit
+/// non-goal — so the bin thresholds are approximate); `Parallel` extractor groups run sequentially
+/// (as elsewhere in this port — the result is identical for independent steps); Python's per-node
+/// `filter_nodes` token-count predicates are approximated by node-type filtering. Errors if there
+/// are no documents or they are all too short.
+pub async fn default_transforms(
+    mut graph: KnowledgeGraph,
+    llm: Arc<dyn LlmProvider>,
+    embedding: Arc<dyn EmbeddingProvider>,
+) -> Result<KnowledgeGraph, RagasError> {
+    let doc_lengths: Vec<usize> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.node_type == "document")
+        .map(|node| text_property(node, "text").unwrap_or("").chars().count())
+        .collect();
+    let branch = select_default_transform_branch(&doc_lengths)?;
+
+    match branch {
+        DefaultTransformBranch::Split => {
+            // Long docs: headline-extract → split into chunks → extract/relate at chunk level.
+            graph = apply_extractor_to_type(
+                graph,
+                &LlmExtractor::new(llm.clone(), LlmExtractorKind::Headlines),
+                "document",
+            )
+            .await?;
+            graph = split_by_headlines(graph, MEDIUM_MAX_CHARS, MEDIUM_MAX_CHARS * 2);
+            graph = apply_extractor_to_type(
+                graph,
+                &LlmExtractor::new(llm.clone(), LlmExtractorKind::Summary),
+                "document",
+            )
+            .await?;
+            graph = CustomNodeFilter::new(llm.clone()).filter(graph).await?;
+            graph = apply_summary_embedding(graph, &embedding).await?;
+            graph = apply_extractor_to_type(
+                graph,
+                &LlmExtractor::new(llm.clone(), LlmExtractorKind::Themes),
+                "chunk",
+            )
+            .await?;
+            graph = apply_extractor_to_type(
+                graph,
+                &LlmExtractor::new(llm.clone(), LlmExtractorKind::Ner),
+                "chunk",
+            )
+            .await?;
+            graph = build_cosine_relationships_with(
+                graph,
+                "summary_embedding",
+                "summary_similarity",
+                0.7,
+            )?;
+            graph = build_overlap_relationships(graph, 0.9, 0.01);
+        }
+        DefaultTransformBranch::NoSplit => {
+            // Medium docs: no split; extract/relate at the document level.
+            graph = apply_extractor_to_type(
+                graph,
+                &LlmExtractor::new(llm.clone(), LlmExtractorKind::Summary),
+                "document",
+            )
+            .await?;
+            graph = CustomNodeFilter::new(llm.clone()).filter(graph).await?;
+            graph = apply_summary_embedding(graph, &embedding).await?;
+            graph = apply_extractor_to_type(
+                graph,
+                &LlmExtractor::new(llm.clone(), LlmExtractorKind::Themes),
+                "document",
+            )
+            .await?;
+            graph = apply_extractor_to_type(
+                graph,
+                &LlmExtractor::new(llm.clone(), LlmExtractorKind::Ner),
+                "document",
+            )
+            .await?;
+            graph = build_cosine_relationships_with(
+                graph,
+                "summary_embedding",
+                "summary_similarity",
+                0.5,
+            )?;
+            graph = build_overlap_relationships(graph, 0.9, 0.01);
+        }
+    }
+    Ok(graph)
 }
 
 #[cfg(test)]
@@ -7614,5 +7821,192 @@ Astronomers use telescopes to observe distant galaxies and measure their redshif
                 "g h".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn build_cosine_relationships_with_uses_custom_properties() {
+        // Two nodes sharing a `summary_embedding` -> a "cosine_similarity" edge carrying the score
+        // under the custom "summary_similarity" property (not the default "cosine_similarity").
+        let graph = KnowledgeGraph::new()
+            .add_node(
+                GraphNode::new("a", "document")
+                    .with_property("summary_embedding", GraphProperty::Vector(vec![1.0, 0.0])),
+            )
+            .add_node(
+                GraphNode::new("b", "document")
+                    .with_property("summary_embedding", GraphProperty::Vector(vec![1.0, 0.0])),
+            );
+        let built =
+            build_cosine_relationships_with(graph, "summary_embedding", "summary_similarity", 0.5)
+                .expect("cosine");
+        let edges = built.edges_by_relationship("cosine_similarity");
+        assert_eq!(edges.len(), 1);
+        assert!(edges[0].properties.contains_key("summary_similarity"));
+        assert!(!edges[0].properties.contains_key("cosine_similarity"));
+    }
+
+    #[test]
+    fn select_default_transform_branch_picks_by_length() {
+        // A long doc (> MEDIUM_MAX_CHARS) -> split path.
+        assert_eq!(
+            select_default_transform_branch(&[MEDIUM_MAX_CHARS + 1]),
+            Ok(DefaultTransformBranch::Split)
+        );
+        // A medium doc -> no-split path.
+        assert_eq!(
+            select_default_transform_branch(&[SHORT_MAX_CHARS + 1]),
+            Ok(DefaultTransformBranch::NoSplit)
+        );
+        // All-short -> error; empty -> error.
+        assert!(matches!(
+            select_default_transform_branch(&[SHORT_MAX_CHARS]),
+            Err(RagasError::Parse { .. })
+        ));
+        assert!(matches!(
+            select_default_transform_branch(&[]),
+            Err(RagasError::Parse { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn default_transforms_no_split_populates_graph() {
+        // Two medium documents (> SHORT_MAX_CHARS) -> no-split branch. The LLM calls happen in
+        // order: summary(d1), summary(d2), themes(d1), themes(d2), ner(d1), ner(d2) (the node
+        // filter touches only chunks, of which there are none).
+        let medium = "alpha beta gamma delta ".repeat(25); // ~575 chars
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+            r#"{"text": "summary of d1"}"#,
+            r#"{"text": "summary of d2"}"#,
+            r#"{"output": ["alpha"]}"#,
+            r#"{"output": ["alpha"]}"#,
+            // Two shared entities (S1, S2) + a unique each: after the overlap builder excludes the
+            // single most-common "noisy" entity, a shared one still survives to form an edge.
+            r#"{"entities": ["S1", "S2", "U1"]}"#,
+            r#"{"entities": ["S1", "S2", "U2"]}"#,
+        ]));
+        let embedding: Arc<dyn EmbeddingProvider> =
+            Arc::new(crate::providers::MockEmbeddingProvider::new(vec![vec![
+                1.0, 0.0,
+            ]]));
+        let graph = KnowledgeGraph::new()
+            .add_node(
+                GraphNode::new("d1", "document")
+                    .with_property("text", GraphProperty::Text(medium.clone())),
+            )
+            .add_node(
+                GraphNode::new("d2", "document").with_property("text", GraphProperty::Text(medium)),
+            );
+
+        let out = default_transforms(graph, llm, embedding)
+            .await
+            .expect("transforms");
+
+        let d1 = out.node("d1").expect("d1");
+        assert!(
+            matches!(d1.properties.get("summary"), Some(GraphProperty::Text(s)) if s == "summary of d1")
+        );
+        assert!(matches!(
+            d1.properties.get("summary_embedding"),
+            Some(GraphProperty::Vector(_))
+        ));
+        assert!(
+            matches!(d1.properties.get("themes"), Some(GraphProperty::TextList(t)) if t == &["alpha".to_string()])
+        );
+        assert!(matches!(
+            d1.properties.get("entities"),
+            Some(GraphProperty::TextList(_))
+        ));
+        // Summary-similarity (cosine) edge + entity-overlap edge both link the two docs.
+        let cosine = out.edges_by_relationship("cosine_similarity");
+        assert_eq!(cosine.len(), 1);
+        assert!(cosine[0].properties.contains_key("summary_similarity"));
+        assert!(!out.edges_by_relationship("entities_overlap").is_empty());
+    }
+
+    #[tokio::test]
+    async fn default_transforms_errors_on_short_documents() {
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![]));
+        let embedding: Arc<dyn EmbeddingProvider> =
+            Arc::new(crate::providers::MockEmbeddingProvider::new(vec![vec![
+                1.0,
+            ]]));
+        let graph = KnowledgeGraph::new().add_node(
+            GraphNode::new("d", "document")
+                .with_property("text", GraphProperty::Text("tiny".to_string())),
+        );
+        assert!(matches!(
+            default_transforms(graph, llm, embedding).await,
+            Err(RagasError::Parse { .. })
+        ));
+    }
+
+    /// Live gate (env-gated): the full default pipeline turns raw documents into a populated
+    /// knowledge graph (summaries, summary embeddings, themes, entities, similarity + overlap edges)
+    /// which [`TestsetGenerator`] then turns into a non-empty, synthesizer-tagged test set — the
+    /// entire Phase 6 stack, raw text → test set, end-to-end against a real model.
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; run with --ignored"]
+    async fn live_default_transforms_then_testset_end_to_end() {
+        let config = crate::ProviderConfig::from_env();
+        let (Some(chat), Some(embed)) = (config.chat_client(), config.embedding_client()) else {
+            eprintln!("skipping live default transforms: provider env not set");
+            return;
+        };
+        let llm: Arc<dyn LlmProvider> = Arc::new(chat);
+        let embedding: Arc<dyn EmbeddingProvider> = Arc::new(embed);
+        let graph = KnowledgeGraph::new()
+            .add_node(
+                GraphNode::new("doc-relativity", "document").with_property(
+                    "text",
+                    GraphProperty::Text(
+                        "Albert Einstein developed the theory of relativity, which introduced the \
+concept of spacetime and reshaped modern physics. The special theory of relativity unified space \
+and time and established the constancy of the speed of light for all observers. The general theory \
+of relativity then described gravity not as a force but as the curvature of spacetime caused by \
+mass and energy. A striking prediction of the theory was that gravity bends the path of light, a \
+claim that distinguished it sharply from Newtonian mechanics and invited careful experimental tests \
+by astronomers and physicists around the world."
+                            .to_string(),
+                    ),
+                ),
+            )
+            .add_node(
+                GraphNode::new("doc-eclipse", "document").with_property(
+                    "text",
+                    GraphProperty::Text(
+                        "During the total solar eclipse of 1919, astronomers led by Arthur Eddington \
+observed starlight bending as it passed close to the Sun, confirming a key prediction of Einstein's \
+theory of relativity. By photographing stars near the eclipsed Sun and comparing their apparent \
+positions to their normal positions, the expedition measured the deflection of light by gravity. \
+The result matched Einstein's prediction rather than Newton's, and the measurement of gravitational \
+light bending became one of the most famous experimental validations in the history of science, \
+making Einstein internationally renowned."
+                            .to_string(),
+                    ),
+                ),
+            );
+
+        let transformed = default_transforms(graph, llm.clone(), embedding)
+            .await
+            .expect("default transforms");
+        // The pipeline populated document-level summaries + entities.
+        let doc = transformed.node("doc-relativity").expect("doc");
+        assert!(
+            matches!(doc.properties.get("summary"), Some(GraphProperty::Text(s)) if !s.trim().is_empty())
+        );
+        assert!(matches!(
+            doc.properties.get("summary_embedding"),
+            Some(GraphProperty::Vector(_))
+        ));
+
+        let dataset = TestsetGenerator::new(llm, transformed)
+            .generate(3, 2)
+            .await
+            .expect("testset");
+        assert!(!dataset.is_empty());
+        for sample in dataset.iter() {
+            assert!(!sample.user_input.trim().is_empty());
+            assert!(sample.metadata.contains_key("synthesizer_name"));
+        }
     }
 }
