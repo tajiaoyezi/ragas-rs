@@ -1640,7 +1640,8 @@ fn remove_nodes(graph: KnowledgeGraph, remove: &BTreeSet<String>) -> KnowledgeGr
 /// [`apply_transforms`].
 ///
 /// `Extract`/`Embed` can be restricted to a node type via [`GraphTransform::for_node_type`]
-/// (mirroring Python's `filter_nodes`); the others apply to the whole graph.
+/// — this selects which nodes receive the extraction (the node-level aspect of Python's
+/// `filter_nodes`); all edges are preserved. The other steps apply to the whole graph.
 pub enum GraphTransform {
     /// Run an [`LlmExtractor`] over the selected nodes, writing each result as a node property.
     Extract {
@@ -1664,7 +1665,8 @@ pub enum GraphTransform {
     /// A group applied as a unit. Mirroring Python's `apply_transforms`, the children run
     /// **sequentially** (Python's `Parallel` only interleaves per-node coroutines elsewhere;
     /// `apply_transforms` itself recurses into the children as a sequence). The result graph is
-    /// identical to concurrent execution because grouped transforms are independent.
+    /// identical to concurrent execution because grouped transforms are independent. Nesting is
+    /// supported (handled by recursion) but expected to be shallow, as in the default pipeline.
     Parallel(Vec<GraphTransform>),
 }
 
@@ -1677,7 +1679,9 @@ impl GraphTransform {
         }
     }
 
-    /// An embedding extractor over all nodes (restrict with [`Self::for_node_type`]).
+    /// An embedding extractor over all nodes. Restrict with [`Self::for_node_type`] to nodes
+    /// that carry text — [`EmbeddingExtractor`] errors on a text-less node (unlike the lenient
+    /// [`LlmExtractor`]).
     pub fn embed(extractor: EmbeddingExtractor) -> Self {
         Self::Embed {
             extractor,
@@ -1752,6 +1756,10 @@ async fn apply_transform(
             extractor,
             node_type,
         } => {
+            // Collect-then-write within one step: every selected node is extracted against the
+            // step's input graph, then results are written back. Between steps the updated graph
+            // is threaded onward, so a later step sees an earlier step's writes. (`node_type` is
+            // None = all nodes; Some = only that type, mirroring Python's `filter_nodes`.)
             let mut updates = Vec::new();
             for node in &graph.nodes {
                 if node_type
@@ -1783,7 +1791,9 @@ async fn apply_transform(
     }
 }
 
-/// Write extracted `(node_id, (property_name, value))` results back onto their nodes.
+/// Write extracted `(node_id, (property_name, value))` results back onto their nodes. Each id was
+/// collected from this same graph in the same step (nothing removes nodes in between), so the
+/// `find` always matches; the guard is purely defensive.
 fn apply_property_updates(
     graph: &mut KnowledgeGraph,
     updates: Vec<(String, (String, GraphProperty))>,
@@ -3790,6 +3800,166 @@ free vacation!!!",
         assert!(!out.node("doc").unwrap().properties.contains_key("entities"));
         // Exactly one scoring call (the single chunk), proving the doc was skipped.
         assert_eq!(llm.prompts().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn apply_transforms_empty_pipeline_is_identity() {
+        let graph = doc_with_chunks("S", &[("c1", "a"), ("c2", "b")]);
+        let out = apply_transforms(graph.clone(), vec![])
+            .await
+            .expect("identity");
+        assert_eq!(out, graph, "an empty pipeline returns the graph unchanged");
+    }
+
+    #[tokio::test]
+    async fn apply_transforms_three_stage_extract_extract_then_build() {
+        // [Extract(NER) -> Extract(Themes) -> Overlap]: both property steps run before the
+        // builder, and the builder consumes the entities the first step wrote.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"entities": ["zzz", "Tesla", "Foo"]}"#, // c1 NER
+            r#"{"entities": ["zzz", "Tesla", "Bar"]}"#, // c2 NER
+            r#"{"output": ["theme-a"]}"#,               // c1 Themes
+            r#"{"output": ["theme-b"]}"#,               // c2 Themes
+        ]));
+        let graph = KnowledgeGraph::new()
+            .add_node(text_node("c1", "x"))
+            .add_node(text_node("c2", "y"));
+        let out = apply_transforms(
+            graph,
+            vec![
+                GraphTransform::extract(LlmExtractor::new(llm.clone(), LlmExtractorKind::Ner)),
+                GraphTransform::extract(LlmExtractor::new(llm, LlmExtractorKind::Themes)),
+                GraphTransform::overlap(0.9, 0.01),
+            ],
+        )
+        .await
+        .expect("pipeline");
+
+        // Both extracted properties are present, and the overlap edge used the entities.
+        assert!(out.node("c1").unwrap().properties.contains_key("entities"));
+        assert!(out.node("c1").unwrap().properties.contains_key("themes"));
+        assert_eq!(out.edges_by_relationship("entities_overlap").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn apply_transforms_nested_parallel_runs_every_leaf() {
+        // Parallel(Parallel(NER, Themes), Title) -> all three properties land (exercises the
+        // recursive Parallel handling).
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"entities": ["E"]}"#,
+            r#"{"output": ["T"]}"#,
+            r#"{"text": "A Title"}"#,
+        ]));
+        let graph = KnowledgeGraph::new().add_node(text_node("c1", "content"));
+        let out = apply_transforms(
+            graph,
+            vec![GraphTransform::parallel(vec![
+                GraphTransform::parallel(vec![
+                    GraphTransform::extract(LlmExtractor::new(llm.clone(), LlmExtractorKind::Ner)),
+                    GraphTransform::extract(LlmExtractor::new(
+                        llm.clone(),
+                        LlmExtractorKind::Themes,
+                    )),
+                ]),
+                GraphTransform::extract(LlmExtractor::new(llm, LlmExtractorKind::Title)),
+            ])],
+        )
+        .await
+        .expect("pipeline");
+
+        let props = &out.node("c1").unwrap().properties;
+        assert!(props.contains_key("entities"));
+        assert!(props.contains_key("themes"));
+        assert_eq!(
+            props.get("title"),
+            Some(&GraphProperty::Text("A Title".to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_transforms_extract_without_node_type_touches_all_nodes() {
+        // No node-type filter -> every node (doc included) is extracted.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"entities": ["A"]}"#,
+            r#"{"entities": ["B"]}"#,
+        ]));
+        let graph = KnowledgeGraph::new()
+            .add_node(text_node("doc", "doc text"))
+            .add_node(text_node("c1", "chunk text"));
+        let out = apply_transforms(
+            graph,
+            vec![GraphTransform::extract(LlmExtractor::new(
+                llm.clone(),
+                LlmExtractorKind::Ner,
+            ))],
+        )
+        .await
+        .expect("pipeline");
+        assert!(out.node("doc").unwrap().properties.contains_key("entities"));
+        assert!(out.node("c1").unwrap().properties.contains_key("entities"));
+        assert_eq!(llm.prompts().len(), 2, "both nodes were extracted");
+    }
+
+    #[tokio::test]
+    async fn apply_transforms_filter_then_builder_sees_filtered_graph() {
+        // [Filter -> Overlap]: the filter drops a chunk, so the later builder only sees the
+        // survivors and never builds an edge to the removed node. Three chunks are scored in
+        // node order (drop, keep, other): drop=1 removed, keep=5 and other=5 kept.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"score": 1}"#,
+            r#"{"score": 5}"#,
+            r#"{"score": 5}"#,
+        ]));
+        let graph = doc_with_chunks("RAG eval.", &[("drop", "bad"), ("keep", "good")])
+            .add_node(text_node("other", "good too").with_property(
+                "entities",
+                GraphProperty::TextList(vec!["zzz".to_string(), "Shared".to_string()]),
+            ))
+            .add_edge(GraphEdge::new("doc", "other", "contains"));
+        // Give the two surviving chunks an overlapping entity so Overlap *could* link them.
+        let graph = KnowledgeGraph {
+            nodes: graph
+                .nodes
+                .into_iter()
+                .map(|mut node| {
+                    if node.id == "keep" {
+                        node.properties.insert(
+                            "entities".to_string(),
+                            GraphProperty::TextList(vec!["zzz".to_string(), "Shared".to_string()]),
+                        );
+                    }
+                    node
+                })
+                .collect(),
+            edges: graph.edges,
+        };
+
+        let out = apply_transforms(
+            graph,
+            vec![
+                GraphTransform::filter(CustomNodeFilter::new(llm)),
+                GraphTransform::overlap(0.9, 0.01),
+            ],
+        )
+        .await
+        .expect("pipeline");
+
+        assert!(
+            out.node("drop").is_none(),
+            "the low-scoring chunk was filtered out"
+        );
+        // No overlap edge references the removed node; the surviving pair (keep, other) links.
+        let overlaps = out.edges_by_relationship("entities_overlap");
+        assert!(
+            overlaps
+                .iter()
+                .all(|edge| edge.source_id != "drop" && edge.target_id != "drop")
+        );
+        assert_eq!(
+            overlaps.len(),
+            1,
+            "only the two survivors sharing 'Shared' link"
+        );
     }
 
     /// Live gate (env-gated): a real pipeline `[Embed(chunks) -> Cosine]` through the engine
