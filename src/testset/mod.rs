@@ -1501,6 +1501,139 @@ fn noisy_entities(entitied: &[(usize, Vec<String>)]) -> BTreeSet<String> {
         .collect()
 }
 
+/// The five default scoring rubric descriptions (score 1 → 5), mirroring Python ragas's
+/// `DEFAULT_RUBRICS` in `transforms/filters.py`.
+const DEFAULT_NODE_FILTER_RUBRICS: [&str; 5] = [
+    "The page content is irrelevant or does not align with the main themes or topics of the document summary.",
+    "The page content partially aligns with the document summary, but it includes unrelated details or lacks critical information related to the document's main themes.",
+    "The page content generally reflects the document summary but may miss key details or lack depth in addressing the main themes.",
+    "The page content aligns well with the document summary, covering the main themes and topics with minor gaps or minimal unrelated information.",
+    "The page content is highly relevant, accurate, and directly reflects the main themes of the document summary, covering all important details and adding depth to the understanding of the document's topics.",
+];
+
+/// LLM-based node filter that drops low-quality chunk nodes, a faithful port of Python ragas's
+/// `CustomNodeFilter` (the `node_filter` step in the default testset pipeline).
+///
+/// Each chunk node is scored 1–5 by the LLM against its **parent document's** `summary` and a
+/// rubric (the parent is the source of a `contains` edge into the chunk — this module's
+/// doc→chunk relationship; Python uses `child`). Chunks scoring `<= min_score` (default 2) are
+/// removed along with their incident edges. A chunk whose parent has no (or empty) `summary` is
+/// kept and never scored, matching Python's "no summary → don't filter".
+///
+/// Faithful to the chunk branch of Python's `custom_filter`; the non-chunk branch (score a node
+/// against its *own* summary) is intentionally omitted — the default pipeline only ever filters
+/// chunks (`filter_nodes=filter_chunks`), and scoring a document against its own summary would
+/// destructively remove it. Nodes are scored sequentially (deterministic for a mock provider);
+/// removal mirrors the engine's `generate_execution_plan` path (remove **every** flagged node),
+/// not the unused, remove-first-only `transform` fallback.
+pub struct CustomNodeFilter {
+    llm: Arc<dyn LlmProvider>,
+    min_score: i64,
+    rubrics: Vec<String>,
+}
+
+impl CustomNodeFilter {
+    /// Create a filter over `llm` with the Python defaults (`min_score = 2`, default rubrics).
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self {
+            llm,
+            min_score: 2,
+            rubrics: DEFAULT_NODE_FILTER_RUBRICS
+                .iter()
+                .map(|line| line.to_string())
+                .collect(),
+        }
+    }
+
+    /// Override the cutoff: chunks scoring `<= min_score` are removed.
+    pub fn with_min_score(mut self, min_score: i64) -> Self {
+        self.min_score = min_score;
+        self
+    }
+
+    /// Score every chunk node and return the graph with low-scoring chunks (and their incident
+    /// edges) removed.
+    pub async fn filter(&self, graph: KnowledgeGraph) -> Result<KnowledgeGraph, RagasError> {
+        let mut remove = BTreeSet::new();
+        for node in &graph.nodes {
+            if node.node_type != "chunk" {
+                continue;
+            }
+            let summary = match self.parent_summary(node, &graph) {
+                Some(summary) if !summary.trim().is_empty() => summary,
+                _ => continue, // no parent summary -> keep, don't score (Python returns False)
+            };
+            let content = text_property(node, "text").unwrap_or("");
+            if self.score_node(&summary, content).await? <= self.min_score {
+                remove.insert(node.id.clone());
+            }
+        }
+        Ok(remove_nodes(graph, &remove))
+    }
+
+    /// The `summary` of the chunk's parent document (source of a `contains` edge into it).
+    /// Uses the first such edge, mirroring Python's `parent_nodes[0]`.
+    fn parent_summary(&self, node: &GraphNode, graph: &KnowledgeGraph) -> Option<String> {
+        let parent_id = graph
+            .edges
+            .iter()
+            .find(|edge| edge.target_id == node.id && edge.relationship == "contains")
+            .map(|edge| &edge.source_id)?;
+        text_property(graph.node(parent_id)?, "summary").map(str::to_string)
+    }
+
+    async fn score_node(&self, summary: &str, content: &str) -> Result<i64, RagasError> {
+        let rubric = self
+            .rubrics
+            .iter()
+            .enumerate()
+            .map(|(index, line)| format!("Score {}: {line}", index + 1))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let prompt = format!(
+            "Given a document summary and node content, score the content of the node in the 1 to \
+5 range using the rubric. Return ONLY JSON of the form {{\"score\": N}} where N is an integer \
+1-5.\n\nRUBRIC:\n{rubric}\n\nDOCUMENT SUMMARY:\n{summary}\n\nNODE CONTENT:\n{content}"
+        );
+        let response = self
+            .llm
+            .generate(LlmRequest {
+                messages: vec![ChatMessage::user(prompt)],
+                temperature: Some(0.0),
+            })
+            .await?;
+        let value = parse_json_block(&response.content, "custom node filter")?;
+        value
+            .get("score")
+            // Lenient: accept an integer, or a float (e.g. 3.0) rounded to the nearest integer.
+            .and_then(|score| {
+                score
+                    .as_i64()
+                    .or_else(|| score.as_f64().map(|value| value.round() as i64))
+            })
+            .ok_or_else(|| RagasError::Parse {
+                message: "custom node filter: missing integer 'score'".to_string(),
+            })
+    }
+}
+
+/// Remove the given node ids and every edge incident to them (the analog of Python's
+/// `KnowledgeGraph.remove_node`).
+fn remove_nodes(graph: KnowledgeGraph, remove: &BTreeSet<String>) -> KnowledgeGraph {
+    KnowledgeGraph {
+        nodes: graph
+            .nodes
+            .into_iter()
+            .filter(|node| !remove.contains(&node.id))
+            .collect(),
+        edges: graph
+            .edges
+            .into_iter()
+            .filter(|edge| !remove.contains(&edge.source_id) && !remove.contains(&edge.target_id))
+            .collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3142,6 +3275,240 @@ like Berlin and Shanghai.";
         assert_eq!(
             (edges[0].source_id.as_str(), edges[0].target_id.as_str()),
             ("n1", "n2")
+        );
+    }
+
+    /// A doc node (with a `summary`) and two chunks linked by `contains`, the layout
+    /// `CustomNodeFilter` scores against.
+    fn doc_with_chunks(summary: &str, chunks: &[(&str, &str)]) -> KnowledgeGraph {
+        let mut graph = KnowledgeGraph::new().add_node(
+            GraphNode::new("doc", "document")
+                .with_property("summary", GraphProperty::Text(summary.to_string())),
+        );
+        for (id, text) in chunks {
+            graph = graph
+                .add_node(text_node(id, text))
+                .add_edge(GraphEdge::new("doc", *id, "contains"));
+        }
+        graph
+    }
+
+    #[tokio::test]
+    async fn custom_node_filter_removes_low_scoring_chunks() {
+        // Scored in node order: keep-chunk (5) kept, drop-chunk (1 <= min_score 2) removed.
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"score": 5}"#, r#"{"score": 1}"#]));
+        let graph = doc_with_chunks(
+            "A guide to RAG evaluation.",
+            &[
+                ("keep", "RAG evaluation metrics."),
+                ("drop", "unrelated noise"),
+            ],
+        );
+        let filtered = CustomNodeFilter::new(llm)
+            .filter(graph)
+            .await
+            .expect("filter");
+
+        let ids: Vec<&str> = filtered.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains(&"doc") && ids.contains(&"keep"));
+        assert!(
+            !ids.contains(&"drop"),
+            "the low-scoring chunk should be removed"
+        );
+        // The removed chunk's incident `contains` edge is gone too.
+        assert!(
+            !filtered
+                .edges
+                .iter()
+                .any(|edge| edge.source_id == "drop" || edge.target_id == "drop")
+        );
+        assert_eq!(filtered.edges_by_relationship("contains").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn custom_node_filter_keeps_unscoreable_chunks_without_calling_model() {
+        // Three chunks that must be KEPT and never scored: parent with no summary, parent with
+        // an empty summary, and an orphaned chunk with no `contains` edge at all.
+        let llm = Arc::new(ScriptedLlm::new(vec![]));
+        let graph = KnowledgeGraph::new()
+            .add_node(GraphNode::new("doc_none", "document"))
+            .add_node(
+                GraphNode::new("doc_empty", "document")
+                    .with_property("summary", GraphProperty::Text(String::new())),
+            )
+            .add_node(text_node("no_summary", "text a"))
+            .add_node(text_node("empty_summary", "text b"))
+            .add_node(text_node("orphan", "text c"))
+            .add_edge(GraphEdge::new("doc_none", "no_summary", "contains"))
+            .add_edge(GraphEdge::new("doc_empty", "empty_summary", "contains"));
+
+        let filtered = CustomNodeFilter::new(llm.clone())
+            .filter(graph)
+            .await
+            .expect("filter");
+
+        for id in ["no_summary", "empty_summary", "orphan"] {
+            assert!(filtered.node(id).is_some(), "{id} should be kept");
+        }
+        assert!(
+            llm.prompts().is_empty(),
+            "unscoreable chunks must not trigger a scoring call"
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_node_filter_removes_multiple_and_keeps_above_default_boundary() {
+        // Four chunks scored 1,2,3,5 at the default min_score (2): 1 and 2 removed, 3 and 5
+        // kept (3 > 2 exercises the > path at the real default). Verifies multi-removal and
+        // that every removed chunk's incident edges are cleaned up in one pass.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"score": 1}"#,
+            r#"{"score": 2}"#,
+            r#"{"score": 3}"#,
+            r#"{"score": 5}"#,
+        ]));
+        let graph = doc_with_chunks("S", &[("c1", "a"), ("c2", "b"), ("c3", "c"), ("c4", "d")]);
+        let filtered = CustomNodeFilter::new(llm)
+            .filter(graph)
+            .await
+            .expect("filter");
+
+        assert!(filtered.node("c1").is_none() && filtered.node("c2").is_none());
+        assert!(filtered.node("c3").is_some() && filtered.node("c4").is_some());
+        // Only the two kept chunks' `contains` edges survive; none reference a removed chunk.
+        assert_eq!(filtered.edges_by_relationship("contains").len(), 2);
+        assert!(filtered.edges.iter().all(|edge| {
+            !["c1", "c2"].contains(&edge.source_id.as_str())
+                && !["c1", "c2"].contains(&edge.target_id.as_str())
+        }));
+    }
+
+    #[tokio::test]
+    async fn custom_node_filter_never_scores_non_chunk_nodes() {
+        // A non-"chunk" node carrying its own summary+text is never scored or removed — the
+        // filter is scoped to chunks only.
+        let llm = Arc::new(ScriptedLlm::new(vec![]));
+        let graph = KnowledgeGraph::new().add_node(
+            GraphNode::new("section", "section")
+                .with_property("summary", GraphProperty::Text("a summary".to_string()))
+                .with_property("text", GraphProperty::Text("some content".to_string())),
+        );
+        let filtered = CustomNodeFilter::new(llm.clone())
+            .filter(graph)
+            .await
+            .expect("filter");
+        assert!(
+            filtered.node("section").is_some(),
+            "non-chunk node must be kept"
+        );
+        assert!(
+            llm.prompts().is_empty(),
+            "non-chunk node must not be scored"
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_node_filter_prompt_includes_summary_content_and_rubric() {
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"score": 5}"#]));
+        let graph = doc_with_chunks(
+            "DOC_SUMMARY_MARKER about RAG.",
+            &[("c1", "CHUNK_CONTENT_MARKER text")],
+        );
+        CustomNodeFilter::new(llm.clone())
+            .filter(graph)
+            .await
+            .expect("filter");
+        let prompt = &llm.prompts()[0];
+        assert!(
+            prompt.contains("DOC_SUMMARY_MARKER"),
+            "prompt must carry the parent summary"
+        );
+        assert!(
+            prompt.contains("CHUNK_CONTENT_MARKER"),
+            "prompt must carry the chunk content"
+        );
+        // The rubric is present verbatim (first + last of the five default descriptions).
+        assert!(prompt.contains(DEFAULT_NODE_FILTER_RUBRICS[0]));
+        assert!(prompt.contains(DEFAULT_NODE_FILTER_RUBRICS[4]));
+    }
+
+    #[tokio::test]
+    async fn custom_node_filter_parses_float_score() {
+        // A float score (e.g. 2.0) is rounded to an int; 2 <= min_score 2 -> removed.
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"score": 2.0}"#]));
+        let graph = doc_with_chunks("S", &[("c1", "text")]);
+        let filtered = CustomNodeFilter::new(llm)
+            .filter(graph)
+            .await
+            .expect("filter");
+        assert!(
+            filtered.node("c1").is_none(),
+            "score 2.0 -> 2 <= 2 -> removed"
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_node_filter_respects_min_score_boundary() {
+        // With min_score 3: a chunk scored exactly 3 is removed (<=), a 4 is kept.
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"score": 3}"#, r#"{"score": 4}"#]));
+        let graph = doc_with_chunks("S", &[("at", "a"), ("above", "b")]);
+        let filtered = CustomNodeFilter::new(llm)
+            .with_min_score(3)
+            .filter(graph)
+            .await
+            .expect("filter");
+        assert!(
+            filtered.node("at").is_none(),
+            "score 3 <= min_score 3 -> removed"
+        );
+        assert!(filtered.node("above").is_some(), "score 4 > 3 -> kept");
+    }
+
+    #[tokio::test]
+    async fn custom_node_filter_malformed_score_errors() {
+        let llm = Arc::new(ScriptedLlm::new(vec!["not json"]));
+        let graph = doc_with_chunks("S", &[("c1", "text")]);
+        let result = CustomNodeFilter::new(llm).filter(graph).await;
+        assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    /// Live gate (env-gated): the real model scores an on-topic chunk high (kept) and an
+    /// irrelevant chunk low (removed) against the document summary.
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; run with --ignored"]
+    async fn live_custom_node_filter_drops_irrelevant_chunk() {
+        let Some(client) = crate::ProviderConfig::from_env().chat_client() else {
+            eprintln!("skipping live node filter: OPENAI_API_KEY not set");
+            return;
+        };
+        let llm: Arc<dyn LlmProvider> = Arc::new(client);
+        let graph = doc_with_chunks(
+            "A technical guide to evaluating retrieval-augmented generation (RAG) systems with \
+metrics such as faithfulness, context precision, and answer relevancy.",
+            &[
+                (
+                    "relevant",
+                    "Faithfulness measures whether the generated answer is grounded in the \
+retrieved context, penalizing unsupported claims.",
+                ),
+                (
+                    "junk",
+                    "Buy cheap discount sunglasses now! Limited time offer, click here to win a \
+free vacation!!!",
+                ),
+            ],
+        );
+        let filtered = CustomNodeFilter::new(llm)
+            .filter(graph)
+            .await
+            .expect("live filter");
+        assert!(
+            filtered.node("relevant").is_some(),
+            "the on-topic chunk should be kept"
+        );
+        assert!(
+            filtered.node("junk").is_none(),
+            "the irrelevant chunk should be scored low and removed"
         );
     }
 }

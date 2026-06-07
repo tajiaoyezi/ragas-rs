@@ -48,6 +48,15 @@ adversarial one. Until such a run exists, the honest status of an LLM metric is
   cats) score strictly higher than an unrelated sentence (stock market), so the cosine edge is
   ordered correctly.
 
+### Follow-up run — CustomNodeFilter (Phase 6)
+
+- **Date:** 2026-06-07
+- **Provider:** DeepSeek (chat), same configuration.
+- **Command:** `cargo test --lib live_custom_node_filter_drops_irrelevant_chunk -- --ignored`
+- **Result:** **1 passed, 0 failed** (~5s) — the `CustomNodeFilter` gate marked **(NF)** below: the
+  real model scores an on-topic chunk high (kept) and an irrelevant advertisement chunk low
+  (removed) against the document summary.
+
 ## Gates (all PASS)
 
 LLM metric discrimination gates (20):
@@ -79,13 +88,14 @@ LLM metric discrimination gates (20):
 `*` also exercises the embedding endpoint. **(P4)** = Phase-4 agentic metrics, run in the
 follow-up above.
 
-End-to-end / testset gates (5):
+End-to-end / testset gates (6):
 
 - CLI `evaluate` with a live provider — `live_evaluate_command_runs_llm_metrics`
 - LLM test-set synthesizer, single-hop — `test_31_2_7_live_synthesizer_generates_from_real_model`
 - LLM test-set synthesizer, multi-hop — `test_31_2_8_live_multi_hop_synthesizer_generates_two_context_sample`
 - LLM testset extractor **(EX)** — `live_llm_extractor_pulls_named_entities_and_summary`
 - Embedding cosine relationship builder **(CB)** — `live_cosine_relationships_link_semantically_similar_nodes`
+- CustomNodeFilter **(NF)** — `live_custom_node_filter_drops_irrelevant_chunk`
 
 ## What this proves — and what it does NOT
 
