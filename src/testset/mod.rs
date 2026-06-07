@@ -1572,6 +1572,7 @@ impl CustomNodeFilter {
     }
 
     /// The `summary` of the chunk's parent document (source of a `contains` edge into it).
+    /// Uses the first such edge, mirroring Python's `parent_nodes[0]`.
     fn parent_summary(&self, node: &GraphNode, graph: &KnowledgeGraph) -> Option<String> {
         let parent_id = graph
             .edges
@@ -3325,19 +3326,110 @@ like Berlin and Shanghai.";
     }
 
     #[tokio::test]
-    async fn custom_node_filter_keeps_chunks_without_parent_summary() {
-        // Parent doc has no `summary` -> chunk is never scored (no LLM call) and is kept.
+    async fn custom_node_filter_keeps_unscoreable_chunks_without_calling_model() {
+        // Three chunks that must be KEPT and never scored: parent with no summary, parent with
+        // an empty summary, and an orphaned chunk with no `contains` edge at all.
         let llm = Arc::new(ScriptedLlm::new(vec![]));
         let graph = KnowledgeGraph::new()
-            .add_node(GraphNode::new("doc", "document"))
-            .add_node(text_node("c1", "some chunk text"))
-            .add_edge(GraphEdge::new("doc", "c1", "contains"));
+            .add_node(GraphNode::new("doc_none", "document"))
+            .add_node(
+                GraphNode::new("doc_empty", "document")
+                    .with_property("summary", GraphProperty::Text(String::new())),
+            )
+            .add_node(text_node("no_summary", "text a"))
+            .add_node(text_node("empty_summary", "text b"))
+            .add_node(text_node("orphan", "text c"))
+            .add_edge(GraphEdge::new("doc_none", "no_summary", "contains"))
+            .add_edge(GraphEdge::new("doc_empty", "empty_summary", "contains"));
+
         let filtered = CustomNodeFilter::new(llm.clone())
             .filter(graph)
             .await
             .expect("filter");
-        assert_eq!(filtered.nodes.len(), 2);
-        assert!(llm.prompts().is_empty(), "no summary -> no scoring call");
+
+        for id in ["no_summary", "empty_summary", "orphan"] {
+            assert!(filtered.node(id).is_some(), "{id} should be kept");
+        }
+        assert!(
+            llm.prompts().is_empty(),
+            "unscoreable chunks must not trigger a scoring call"
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_node_filter_removes_multiple_and_keeps_above_default_boundary() {
+        // Four chunks scored 1,2,3,5 at the default min_score (2): 1 and 2 removed, 3 and 5
+        // kept (3 > 2 exercises the > path at the real default). Verifies multi-removal and
+        // that every removed chunk's incident edges are cleaned up in one pass.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"score": 1}"#,
+            r#"{"score": 2}"#,
+            r#"{"score": 3}"#,
+            r#"{"score": 5}"#,
+        ]));
+        let graph = doc_with_chunks("S", &[("c1", "a"), ("c2", "b"), ("c3", "c"), ("c4", "d")]);
+        let filtered = CustomNodeFilter::new(llm)
+            .filter(graph)
+            .await
+            .expect("filter");
+
+        assert!(filtered.node("c1").is_none() && filtered.node("c2").is_none());
+        assert!(filtered.node("c3").is_some() && filtered.node("c4").is_some());
+        // Only the two kept chunks' `contains` edges survive; none reference a removed chunk.
+        assert_eq!(filtered.edges_by_relationship("contains").len(), 2);
+        assert!(filtered.edges.iter().all(|edge| {
+            !["c1", "c2"].contains(&edge.source_id.as_str())
+                && !["c1", "c2"].contains(&edge.target_id.as_str())
+        }));
+    }
+
+    #[tokio::test]
+    async fn custom_node_filter_never_scores_non_chunk_nodes() {
+        // A non-"chunk" node carrying its own summary+text is never scored or removed — the
+        // filter is scoped to chunks only.
+        let llm = Arc::new(ScriptedLlm::new(vec![]));
+        let graph = KnowledgeGraph::new().add_node(
+            GraphNode::new("section", "section")
+                .with_property("summary", GraphProperty::Text("a summary".to_string()))
+                .with_property("text", GraphProperty::Text("some content".to_string())),
+        );
+        let filtered = CustomNodeFilter::new(llm.clone())
+            .filter(graph)
+            .await
+            .expect("filter");
+        assert!(
+            filtered.node("section").is_some(),
+            "non-chunk node must be kept"
+        );
+        assert!(
+            llm.prompts().is_empty(),
+            "non-chunk node must not be scored"
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_node_filter_prompt_includes_summary_content_and_rubric() {
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"score": 5}"#]));
+        let graph = doc_with_chunks(
+            "DOC_SUMMARY_MARKER about RAG.",
+            &[("c1", "CHUNK_CONTENT_MARKER text")],
+        );
+        CustomNodeFilter::new(llm.clone())
+            .filter(graph)
+            .await
+            .expect("filter");
+        let prompt = &llm.prompts()[0];
+        assert!(
+            prompt.contains("DOC_SUMMARY_MARKER"),
+            "prompt must carry the parent summary"
+        );
+        assert!(
+            prompt.contains("CHUNK_CONTENT_MARKER"),
+            "prompt must carry the chunk content"
+        );
+        // The rubric is present verbatim (first + last of the five default descriptions).
+        assert!(prompt.contains(DEFAULT_NODE_FILTER_RUBRICS[0]));
+        assert!(prompt.contains(DEFAULT_NODE_FILTER_RUBRICS[4]));
     }
 
     #[tokio::test]
