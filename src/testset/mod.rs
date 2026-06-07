@@ -7152,6 +7152,96 @@ Astronomers use telescopes to observe distant galaxies and measure their redshif
         );
     }
 
+    #[tokio::test]
+    async fn testset_generator_caps_total_at_testset_size() {
+        // Weights whose ceil-splits sum to more than testset_size: [0.6, 0.6] over size 2 ->
+        // splits [2, 2]. The first synthesizer fills all 2 slots, so the second is skipped entirely
+        // (no LLM call for it) and the total is exactly testset_size, not the sum of splits.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"P": ["alpha", "beta"]}}"#,
+            r#"{"query": "Q1?", "answer": "A1."}"#,
+            r#"{"query": "Q2?", "answer": "A2."}"#,
+        ]));
+        let llm_dyn: Arc<dyn LlmProvider> = llm.clone();
+        let graph = KnowledgeGraph::new().add_node(entitied_text_chunk(
+            "c1",
+            &["alpha", "beta"],
+            "alpha and beta content",
+        ));
+
+        let dataset = TestsetGenerator::new(llm_dyn, graph)
+            .with_personas(vec![persona("P", "r")])
+            .with_query_distribution(vec![
+                (SynthesizerKind::SingleHopSpecific, 0.6),
+                (SynthesizerKind::MultiHopSpecific, 0.6),
+            ])
+            .generate(2, 3)
+            .await
+            .expect("dataset");
+
+        // Exactly testset_size samples, all from the first synthesizer; the second never ran (only
+        // the 3 single-hop responses were consumed — a 4th call would have errored the mock).
+        assert_eq!(dataset.len(), 2);
+        assert_eq!(llm.prompts().len(), 3);
+        assert!(
+            dataset
+                .iter()
+                .all(|s| s.metadata.get("synthesizer_name").map(String::as_str)
+                    == Some("single_hop_specific_query_synthesizer"))
+        );
+    }
+
+    #[tokio::test]
+    async fn testset_generator_continues_after_one_synthesizer_yields_nothing() {
+        // Single-hop matches no persona -> EmptyDataset; generation must continue and still produce
+        // the multi-hop-specific sample (the EmptyDataset is non-fatal).
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+            // Single-hop: two document nodes, each mapping matches nothing -> zero scenarios.
+            r#"{"mapping": {"P": []}}"#,
+            r#"{"mapping": {"P": []}}"#,
+            // Multi-hop-specific: the overlap cluster matches -> one sample.
+            r#"{"mapping": {"P": ["alpha"]}}"#,
+            r#"{"query": "MH?", "answer": "MH answer."}"#,
+        ]));
+        let doc = |id: &str| {
+            GraphNode::new(id, "document")
+                .with_property(
+                    "entities",
+                    GraphProperty::TextList(vec!["alpha".to_string()]),
+                )
+                .with_property("text", GraphProperty::Text(format!("{id} text")))
+        };
+        let graph = KnowledgeGraph::new()
+            .add_node(doc("d1"))
+            .add_node(doc("d2"))
+            .add_edge(
+                GraphEdge::new("d1", "d2", "entities_overlap").with_property(
+                    "overlapped_items",
+                    GraphProperty::TextList(vec!["alpha => alpha".to_string()]),
+                ),
+            );
+
+        let dataset = TestsetGenerator::new(llm, graph)
+            .with_personas(vec![persona("P", "r")])
+            .with_query_distribution(vec![
+                (SynthesizerKind::SingleHopSpecific, 0.5),
+                (SynthesizerKind::MultiHopSpecific, 0.5),
+            ])
+            .generate(2, 3)
+            .await
+            .expect("dataset");
+
+        // Single-hop contributed nothing; the multi-hop-specific sample survives.
+        assert_eq!(dataset.len(), 1);
+        assert_eq!(
+            dataset.samples()[0]
+                .metadata
+                .get("synthesizer_name")
+                .map(String::as_str),
+            Some("multi_hop_specific_query_synthesizer")
+        );
+    }
+
     /// Live gate (env-gated): the end-to-end generator runs the default distribution (all three
     /// synthesizers, since the graph has entity nodes + an overlap edge + a similarity edge) over a
     /// two-chunk graph and merges a non-empty, synthesizer-tagged, grounded test set.
