@@ -206,6 +206,170 @@ pub fn cluster_graph_by_property(graph: &KnowledgeGraph, property_key: &str) -> 
         .collect()
 }
 
+/// Find up to `n` indirect node clusters — a deterministic port of Python ragas's
+/// `KnowledgeGraph.find_n_indirect_clusters`. A cluster is the set of nodes on a path through the
+/// graph following edges that satisfy `relationship_filter`: if `A -> B -> C` exists, `{A, B, C}` is
+/// a cluster. Paths run from a start node to a leaf or up to `depth_limit` nodes long; clusters are
+/// deduped, and a superset cluster evicts any of its subsets (Python's diversity rule).
+///
+/// `bidirectional` controls whether a matched edge is traversable in both directions. Python keys
+/// this off each edge's `bidirectional` flag, which this crate's [`GraphEdge`] doesn't carry — so
+/// the caller decides; symmetric-similarity clusters (the multi-hop-abstract use case) pass `true`.
+///
+/// **Documented divergence:** Python seeds a `random.shuffle` of the start nodes (Mersenne Twister)
+/// for sampling diversity on huge graphs; RNG parity is a non-goal, so we walk start nodes in sorted
+/// id order, deterministically. The set of path clusters is otherwise the same. Returns clusters as
+/// node-id sets. Errors (mirroring Python's `ValueError`) if `depth_limit < 2`, `n < 1`, or no edge
+/// matches the condition.
+pub fn find_n_indirect_clusters(
+    graph: &KnowledgeGraph,
+    n: usize,
+    depth_limit: usize,
+    bidirectional: bool,
+    relationship_filter: impl Fn(&GraphEdge) -> bool,
+) -> Result<Vec<BTreeSet<String>>, RagasError> {
+    if depth_limit < 2 {
+        return Err(RagasError::Parse {
+            message: "find_n_indirect_clusters: depth_limit must be at least 2".to_string(),
+        });
+    }
+    if n < 1 {
+        return Err(RagasError::Parse {
+            message: "find_n_indirect_clusters: n must be at least 1".to_string(),
+        });
+    }
+
+    // Adjacency over matched edges (plus the reverse direction when `bidirectional`).
+    let mut adjacency: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut connected: BTreeSet<String> = BTreeSet::new();
+    let mut unique_edges: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut matched = false;
+    for edge in &graph.edges {
+        if !relationship_filter(edge) {
+            continue;
+        }
+        matched = true;
+        adjacency
+            .entry(edge.source_id.clone())
+            .or_default()
+            .insert(edge.target_id.clone());
+        connected.insert(edge.source_id.clone());
+        connected.insert(edge.target_id.clone());
+        if bidirectional {
+            adjacency
+                .entry(edge.target_id.clone())
+                .or_default()
+                .insert(edge.source_id.clone());
+        }
+        if edge.source_id != edge.target_id {
+            let pair = if edge.source_id <= edge.target_id {
+                (edge.source_id.clone(), edge.target_id.clone())
+            } else {
+                (edge.target_id.clone(), edge.source_id.clone())
+            };
+            unique_edges.insert(pair);
+        }
+    }
+    if !matched {
+        return Err(RagasError::Parse {
+            message: "find_n_indirect_clusters: no relationship matched the condition".to_string(),
+        });
+    }
+
+    // Mirror Python's two-branch sample-size cap (bounds work on large graphs). With the RNG shuffle
+    // dropped, we simply take the first `sample_size` start nodes in sorted id order.
+    let sample_size = if unique_edges.len() < connected.len() {
+        (n - 1) * depth_limit + 1
+    } else {
+        n.max(depth_limit).max(10)
+    };
+
+    let mut start_node_clusters: BTreeMap<String, BTreeSet<BTreeSet<String>>> = BTreeMap::new();
+    let start_nodes: Vec<String> = adjacency.keys().take(sample_size).cloned().collect();
+    for start in &start_nodes {
+        let mut path = BTreeSet::new();
+        dfs_indirect_clusters(
+            &adjacency,
+            start,
+            start,
+            &mut path,
+            depth_limit,
+            sample_size,
+            &mut start_node_clusters,
+        );
+    }
+
+    // Round-robin pop from each start node's clusters, deduping with superset-favoring: skip a new
+    // cluster that is a subset of an existing one, and evict existing clusters it is a superset of.
+    let mut buckets: Vec<BTreeSet<BTreeSet<String>>> = start_nodes
+        .iter()
+        .filter_map(|start| start_node_clusters.remove(start))
+        .filter(|bucket| !bucket.is_empty())
+        .collect();
+    let mut unique: Vec<BTreeSet<String>> = Vec::new();
+    let mut i = 0;
+    while unique.len() < n && !buckets.is_empty() {
+        let index = i % buckets.len();
+        let cluster = buckets[index].pop_first().expect("bucket is non-empty");
+        let is_subset = unique.iter().any(|existing| cluster.is_subset(existing));
+        if !is_subset {
+            unique.retain(|existing| !existing.is_subset(&cluster));
+            unique.push(cluster);
+        }
+        if buckets[index].is_empty() {
+            buckets.remove(index);
+            // Don't advance `i`: removing this bucket already shifts the round-robin index.
+        } else {
+            i += 1;
+        }
+    }
+    Ok(unique)
+}
+
+/// Depth-first path walk for [`find_n_indirect_clusters`]: records the current path as a cluster when
+/// it reaches `depth_limit`, a leaf, or a node all of whose neighbors are already on the path.
+#[allow(clippy::too_many_arguments)]
+fn dfs_indirect_clusters(
+    adjacency: &BTreeMap<String, BTreeSet<String>>,
+    node: &str,
+    start: &str,
+    path: &mut BTreeSet<String>,
+    depth_limit: usize,
+    sample_size: usize,
+    clusters: &mut BTreeMap<String, BTreeSet<BTreeSet<String>>>,
+) {
+    // Stop exploring once this start node already has enough clusters (complexity guard).
+    if clusters.get(start).map_or(0, BTreeSet::len) > sample_size {
+        return;
+    }
+    path.insert(node.to_string());
+    let path_length = path.len();
+    let at_max_depth = path_length >= depth_limit;
+    let neighbors = adjacency.get(node);
+    let all_neighbors_visited = neighbors.is_none_or(|ns| ns.iter().all(|nb| path.contains(nb)));
+    if path_length > 1 && (at_max_depth || all_neighbors_visited) {
+        clusters
+            .entry(start.to_string())
+            .or_default()
+            .insert(path.clone());
+    } else if let Some(ns) = neighbors {
+        for neighbor in ns {
+            if !path.contains(neighbor) {
+                dfs_indirect_clusters(
+                    adjacency,
+                    neighbor,
+                    start,
+                    path,
+                    depth_limit,
+                    sample_size,
+                    clusters,
+                );
+            }
+        }
+    }
+    path.remove(node);
+}
+
 pub fn query_graph_advanced(graph: &KnowledgeGraph, query: &GraphAdvancedQuery) -> Vec<GraphNode> {
     graph
         .nodes
@@ -5964,5 +6128,122 @@ Astronomers use telescopes to observe distant galaxies and measure their redshif
                 sample.metadata
             );
         }
+    }
+
+    /// Build a graph whose edges (all of `rel_type`) are exactly the given `(source, target)` pairs.
+    fn edge_graph(rel_type: &str, edges: &[(&str, &str)]) -> KnowledgeGraph {
+        let mut ids: BTreeSet<String> = BTreeSet::new();
+        for (a, b) in edges {
+            ids.insert(a.to_string());
+            ids.insert(b.to_string());
+        }
+        let mut graph = KnowledgeGraph::new();
+        for id in &ids {
+            graph = graph.add_node(GraphNode::new(id.clone(), "chunk"));
+        }
+        for (a, b) in edges {
+            graph = graph.add_edge(GraphEdge::new(*a, *b, rel_type));
+        }
+        graph
+    }
+
+    fn cluster(ids: &[&str]) -> BTreeSet<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    #[test]
+    fn find_n_indirect_clusters_returns_superset_path_and_drops_subset() {
+        // Chain a -> b -> c: the full path {a,b,c} subsumes the {b,c} subpath, so only it survives.
+        let graph = edge_graph("rel", &[("a", "b"), ("b", "c")]);
+        let clusters = find_n_indirect_clusters(&graph, 5, 3, false, |e| e.relationship == "rel")
+            .expect("clusters");
+        assert_eq!(clusters, vec![cluster(&["a", "b", "c"])]);
+    }
+
+    #[test]
+    fn find_n_indirect_clusters_respects_depth_limit() {
+        // depth_limit = 2 caps paths at two nodes, so the chain yields the adjacent pairs.
+        let graph = edge_graph("rel", &[("a", "b"), ("b", "c"), ("c", "d")]);
+        let clusters = find_n_indirect_clusters(&graph, 10, 2, false, |e| e.relationship == "rel")
+            .expect("clusters");
+        assert_eq!(clusters.len(), 3);
+        assert!(clusters.iter().all(|c| c.len() == 2));
+        assert!(clusters.contains(&cluster(&["a", "b"])));
+        assert!(clusters.contains(&cluster(&["c", "d"])));
+    }
+
+    #[test]
+    fn find_n_indirect_clusters_bidirectional_merges_into_longer_path() {
+        // a -> b <- c: directed gives two pairs; bidirectional connects them into one 3-node path.
+        let graph = edge_graph("rel", &[("a", "b"), ("c", "b")]);
+
+        let directed = find_n_indirect_clusters(&graph, 10, 3, false, |e| e.relationship == "rel")
+            .expect("directed");
+        assert_eq!(directed.len(), 2);
+        assert!(directed.contains(&cluster(&["a", "b"])));
+        assert!(directed.contains(&cluster(&["c", "b"])));
+
+        let bidir = find_n_indirect_clusters(&graph, 10, 3, true, |e| e.relationship == "rel")
+            .expect("bidirectional");
+        assert_eq!(bidir, vec![cluster(&["a", "b", "c"])]);
+    }
+
+    #[test]
+    fn find_n_indirect_clusters_filters_by_relationship() {
+        // Only the `summary_similarity` edge is traversed; the `other` edge is ignored.
+        let graph = KnowledgeGraph::new()
+            .add_node(GraphNode::new("a", "chunk"))
+            .add_node(GraphNode::new("b", "chunk"))
+            .add_node(GraphNode::new("c", "chunk"))
+            .add_edge(GraphEdge::new("a", "b", "summary_similarity"))
+            .add_edge(GraphEdge::new("b", "c", "other"));
+        let clusters = find_n_indirect_clusters(&graph, 5, 3, false, |e| {
+            e.relationship == "summary_similarity"
+        })
+        .expect("clusters");
+        assert_eq!(clusters, vec![cluster(&["a", "b"])]);
+    }
+
+    #[test]
+    fn find_n_indirect_clusters_caps_at_n() {
+        // Three independent pairs, n = 2 -> only two clusters returned.
+        let graph = edge_graph("rel", &[("a", "b"), ("c", "d"), ("e", "f")]);
+        let clusters = find_n_indirect_clusters(&graph, 2, 3, false, |e| e.relationship == "rel")
+            .expect("clusters");
+        assert_eq!(clusters.len(), 2);
+        assert!(clusters.iter().all(|c| c.len() == 2));
+    }
+
+    #[test]
+    fn find_n_indirect_clusters_validates_args_and_empty_match() {
+        let graph = edge_graph("rel", &[("a", "b")]);
+        // depth_limit < 2.
+        assert!(matches!(
+            find_n_indirect_clusters(&graph, 1, 1, false, |_| true),
+            Err(RagasError::Parse { .. })
+        ));
+        // n < 1.
+        assert!(matches!(
+            find_n_indirect_clusters(&graph, 0, 3, false, |_| true),
+            Err(RagasError::Parse { .. })
+        ));
+        // No edge matches the condition.
+        assert!(matches!(
+            find_n_indirect_clusters(&graph, 1, 3, false, |e| e.relationship == "missing"),
+            Err(RagasError::Parse { .. })
+        ));
+    }
+
+    #[test]
+    fn find_n_indirect_clusters_branching_yields_distinct_paths() {
+        // a -> b, b -> c, b -> d: two distinct 3-node paths share the {a,b} prefix.
+        let graph = edge_graph("rel", &[("a", "b"), ("b", "c"), ("b", "d")]);
+        let clusters = find_n_indirect_clusters(&graph, 10, 3, false, |e| e.relationship == "rel")
+            .expect("clusters");
+        // {a,b,c} and {a,b,d} are both full paths; neither is a subset of the other.
+        assert!(clusters.contains(&cluster(&["a", "b", "c"])));
+        assert!(clusters.contains(&cluster(&["a", "b", "d"])));
+        // The {a,b} prefix is a subset of both, so it must not appear on its own.
+        assert!(!clusters.contains(&cluster(&["a", "b"])));
     }
 }
