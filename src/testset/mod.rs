@@ -1929,6 +1929,16 @@ impl QueryLength {
             QueryLength::Short => "short",
         }
     }
+
+    /// The enum-variant name recorded on generated samples (Python's `QueryLength.<X>.name`,
+    /// e.g. `"LONG"`) — distinct from the lowercase prompt value returned by [`as_str`](Self::as_str).
+    pub fn name(self) -> &'static str {
+        match self {
+            QueryLength::Long => "LONG",
+            QueryLength::Medium => "MEDIUM",
+            QueryLength::Short => "SHORT",
+        }
+    }
 }
 
 /// The phrasing style a generated query can take (Python ragas `QueryStyle`).
@@ -1956,6 +1966,17 @@ impl QueryStyle {
             QueryStyle::PerfectGrammar => "Perfect grammar",
             QueryStyle::PoorGrammar => "Poor grammar",
             QueryStyle::WebSearchLike => "Web search like queries",
+        }
+    }
+
+    /// The enum-variant name recorded on generated samples (Python's `QueryStyle.<X>.name`,
+    /// e.g. `"PERFECT_GRAMMAR"`) — distinct from the prompt value returned by [`as_str`](Self::as_str).
+    pub fn name(self) -> &'static str {
+        match self {
+            QueryStyle::Misspelled => "MISSPELLED",
+            QueryStyle::PerfectGrammar => "PERFECT_GRAMMAR",
+            QueryStyle::PoorGrammar => "POOR_GRAMMAR",
+            QueryStyle::WebSearchLike => "WEB_SEARCH_LIKE",
         }
     }
 }
@@ -2117,6 +2138,148 @@ fn select_entity_nodes(graph: &KnowledgeGraph) -> Vec<&GraphNode> {
         .iter()
         .filter(|node| node.node_type == wanted && has_entities(node))
         .collect()
+}
+
+/// Generate a single-hop query + grounded answer for one scenario — a faithful port of Python
+/// ragas's `QueryAnswerGenerationPrompt`. The query is phrased from the persona's perspective,
+/// incorporates the scenario's `term`, and follows the requested style/length; the answer is drawn
+/// *only* from `context`. An optional `llm_context` adds guidance on the kind of question to ask.
+/// Returns `(query, answer)`; errors if the model omits either field.
+async fn generate_single_hop_query_answer(
+    llm: &Arc<dyn LlmProvider>,
+    scenario: &SingleHopScenario,
+    context: &str,
+    llm_context: Option<&str>,
+) -> Result<(String, String), RagasError> {
+    let extra = match llm_context {
+        Some(guidance) if !guidance.trim().is_empty() => format!(
+            "\n3. **Additional Context**: Use the following guidance for the kind of question to \
+generate and how to structure the answer, while still drawing all content only from the context: \
+{guidance}"
+        ),
+        _ => String::new(),
+    };
+    let prompt = format!(
+        "Generate a single-hop query and answer based on the specified conditions (persona, term, \
+style, length) and the provided context. Ensure the answer is entirely faithful to the context, \
+using only the information directly from the provided context.\n\
+### Instructions:\n\
+1. **Generate a Query**: Based on the context, persona, term, style, and length, create a \
+question that aligns with the persona's perspective and incorporates the term.\n\
+2. **Generate an Answer**: Using only the content from the provided context, construct a detailed \
+answer to the query. Do not add any information not included in or inferable from the context.{extra}\n\n\
+PERSONA: {persona_name} — {persona_role}\n\
+TERM: {term}\n\
+STYLE: {style}\n\
+LENGTH: {length}\n\
+CONTEXT:\n{context}\n\n\
+Return ONLY JSON of the form {{\"query\": \"...\", \"answer\": \"...\"}}.",
+        persona_name = scenario.persona.name,
+        persona_role = scenario.persona.role,
+        term = scenario.term,
+        style = scenario.style.as_str(),
+        length = scenario.length.as_str(),
+    );
+    let response = llm
+        .generate(LlmRequest {
+            messages: vec![ChatMessage::user(prompt)],
+            temperature: Some(0.0),
+        })
+        .await?;
+    let value = parse_json_block(&response.content, "single-hop query/answer generation")?;
+    let field = |key: &str| -> Result<String, RagasError> {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| RagasError::Parse {
+                message: format!("single-hop query/answer generation: missing '{key}' string"),
+            })
+    };
+    Ok((field("query")?, field("answer")?))
+}
+
+/// Persona-conditioned single-hop test-set synthesizer — the runnable analog of Python ragas's
+/// `SingleHopSpecificQuerySynthesizer`. It prepares scenarios with [`prepare_single_hop_scenarios`]
+/// (entity-bearing nodes → theme/persona matching → deterministic style/length rotation) and turns
+/// each into a grounded [`SingleTurnSample`] via [`generate_single_hop_query_answer`], producing an
+/// [`EvaluationDataset`] end-to-end.
+///
+/// **Documented divergence:** Python's `_generate_sample` leaves `response`/`retrieved_contexts`
+/// empty (those are the system-under-test's job) and only fills `reference` + `reference_contexts`.
+/// This crate's [`EvaluationDataset`] requires a non-empty `response` and `retrieved_contexts`, so
+/// — matching this module's existing [`Synthesizer`] — we mirror the generated answer into
+/// `response` and the node text into `retrieved_contexts`, while *also* recording the faithful
+/// `reference`/`reference_contexts`. Scenarios whose node has no usable text are skipped (as the
+/// existing `Synthesizer` skips empty chunks) rather than emitting an unevaluatable sample.
+pub struct SingleHopSpecificSynthesizer {
+    llm: Arc<dyn LlmProvider>,
+    llm_context: Option<String>,
+}
+
+impl SingleHopSpecificSynthesizer {
+    /// Create a synthesizer over the given LLM provider.
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self {
+            llm,
+            llm_context: None,
+        }
+    }
+
+    /// Optional guidance string passed to every query/answer generation (Python's `llm_context`),
+    /// e.g. "ask comparison questions". Defaults to none.
+    pub fn with_llm_context(mut self, llm_context: impl Into<String>) -> Self {
+        self.llm_context = Some(llm_context.into());
+        self
+    }
+
+    /// Generate up to `n` grounded single-hop samples from the knowledge graph and personas.
+    ///
+    /// Prepares scenarios with [`prepare_single_hop_scenarios`], then for each scenario looks up
+    /// its node's text (the reference context) and asks the LLM for a `(query, answer)` pair
+    /// grounded in it. Each sample records `synthesis_type`/`source_node_ids`/`term`/`persona_name`/
+    /// `query_style`/`query_length` in its metadata. Returns `RagasError::EmptyDataset` when no
+    /// usable sample is produced (no matched scenario, or every scenario node lacked text), and
+    /// propagates `Err` from scenario prep or generation. Errors if the graph has no entity node.
+    pub async fn generate(
+        &self,
+        graph: &KnowledgeGraph,
+        personas: &[Persona],
+        n: usize,
+    ) -> Result<EvaluationDataset, RagasError> {
+        let scenarios = prepare_single_hop_scenarios(&self.llm, graph, personas, n).await?;
+        let mut samples = Vec::new();
+        for scenario in &scenarios {
+            // The reference context is the scenario node's text (Python: nodes[0].page_content).
+            // Skip nodes without usable text rather than emit an unevaluatable empty-context sample.
+            let context = match graph
+                .node(&scenario.node_id)
+                .and_then(|node| text_property(node, "text"))
+            {
+                Some(text) if !text.trim().is_empty() => text.to_string(),
+                _ => continue,
+            };
+            let (query, answer) = generate_single_hop_query_answer(
+                &self.llm,
+                scenario,
+                &context,
+                self.llm_context.as_deref(),
+            )
+            .await?;
+            samples.push(
+                SingleTurnSample::new(query, answer.clone(), vec![context.clone()])
+                    .with_reference(answer)
+                    .with_reference_contexts(vec![context])
+                    .with_metadata("synthesis_type", "single-hop")
+                    .with_metadata("source_node_ids", scenario.node_id.clone())
+                    .with_metadata("term", scenario.term.clone())
+                    .with_metadata("persona_name", scenario.persona.name.clone())
+                    .with_metadata("query_style", scenario.style.name())
+                    .with_metadata("query_length", scenario.length.name()),
+            );
+        }
+        EvaluationDataset::new(samples)
+    }
 }
 
 #[cfg(test)]
@@ -4864,5 +5027,242 @@ social platforms, SEO, and email campaigns.",
                 .all(|s| ["galaxy", "telescope"].contains(&s.term.as_str())),
             "terms must come from the node's entities: {scenarios:?}"
         );
+    }
+
+    fn entitied_text_chunk(id: &str, entities: &[&str], text: &str) -> GraphNode {
+        GraphNode::new(id, "chunk")
+            .with_property(
+                "entities",
+                GraphProperty::TextList(entities.iter().map(|e| e.to_string()).collect()),
+            )
+            .with_property("text", GraphProperty::Text(text.to_string()))
+    }
+
+    #[tokio::test]
+    async fn single_hop_specific_synthesizer_builds_grounded_dataset() {
+        // One chunk, two entities -> galaxy maps to the Astronomer, stew to the Chef. The
+        // mapping call comes first, then one query/answer call per scenario in term order.
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"Astronomer": ["galaxy"], "Chef": ["stew"]}}"#,
+            r#"{"query": "What is a galaxy?", "answer": "A galaxy is a system of stars."}"#,
+            r#"{"query": "How do you make stew?", "answer": "Simmer the ingredients together."}"#,
+        ]));
+        let graph = KnowledgeGraph::new().add_node(entitied_text_chunk(
+            "c1",
+            &["galaxy", "stew"],
+            "A galaxy is a system of stars. Stew is made by simmering ingredients.",
+        ));
+        let personas = [
+            persona("Astronomer", "studies space"),
+            persona("Chef", "cooks"),
+        ];
+
+        let dataset = SingleHopSpecificSynthesizer::new(llm)
+            .generate(&graph, &personas, 10)
+            .await
+            .expect("dataset");
+
+        assert_eq!(dataset.len(), 2);
+        let galaxy = dataset
+            .iter()
+            .find(|s| s.metadata.get("term").map(String::as_str) == Some("galaxy"))
+            .expect("galaxy sample");
+        assert_eq!(galaxy.user_input, "What is a galaxy?");
+        assert_eq!(
+            galaxy.reference.as_deref(),
+            Some("A galaxy is a system of stars.")
+        );
+        // Python fills reference_contexts; our EvaluationDataset also requires response +
+        // retrieved_contexts, so the answer/context are mirrored into them.
+        assert_eq!(galaxy.response, "A galaxy is a system of stars.");
+        assert_eq!(galaxy.reference_contexts.len(), 1);
+        assert_eq!(galaxy.retrieved_contexts, galaxy.reference_contexts);
+        assert!(galaxy.reference_contexts[0].contains("galaxy is a system of stars"));
+        assert_eq!(
+            galaxy.metadata.get("persona_name").map(String::as_str),
+            Some("Astronomer")
+        );
+        assert_eq!(
+            galaxy.metadata.get("synthesis_type").map(String::as_str),
+            Some("single-hop")
+        );
+        assert_eq!(
+            galaxy.metadata.get("source_node_ids").map(String::as_str),
+            Some("c1")
+        );
+
+        let stew = dataset
+            .iter()
+            .find(|s| s.metadata.get("term").map(String::as_str) == Some("stew"))
+            .expect("stew sample");
+        assert_eq!(
+            stew.metadata.get("persona_name").map(String::as_str),
+            Some("Chef")
+        );
+
+        // Style/length are recorded as the Python variant NAMEs and rotate across scenarios.
+        assert_eq!(
+            galaxy.metadata.get("query_style").map(String::as_str),
+            Some("MISSPELLED")
+        );
+        assert_eq!(
+            galaxy.metadata.get("query_length").map(String::as_str),
+            Some("LONG")
+        );
+        assert_eq!(
+            stew.metadata.get("query_style").map(String::as_str),
+            Some("PERFECT_GRAMMAR")
+        );
+        assert_eq!(
+            stew.metadata.get("query_length").map(String::as_str),
+            Some("MEDIUM")
+        );
+    }
+
+    #[tokio::test]
+    async fn single_hop_specific_synthesizer_skips_node_without_text() {
+        // Two entity chunks (so neither is skipped by node selection), but only c1 has text.
+        // n=2 -> samples_per_node=1; the c2 scenario is dropped for lacking text rather than
+        // failing the whole dataset. Mapping is called per node, then one q/a call for c1.
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"P": ["alpha"]}}"#,
+            r#"{"mapping": {"P": ["beta"]}}"#,
+            r#"{"query": "Q?", "answer": "A."}"#,
+        ]));
+        let graph = KnowledgeGraph::new()
+            .add_node(entitied_text_chunk("c1", &["alpha"], "alpha content"))
+            .add_node(entitied_chunk("c2", &["beta"]));
+
+        let dataset = SingleHopSpecificSynthesizer::new(llm)
+            .generate(&graph, &[persona("P", "r")], 2)
+            .await
+            .expect("dataset");
+
+        assert_eq!(dataset.len(), 1);
+        assert_eq!(
+            dataset.samples()[0]
+                .metadata
+                .get("source_node_ids")
+                .map(String::as_str),
+            Some("c1")
+        );
+    }
+
+    #[tokio::test]
+    async fn single_hop_specific_synthesizer_empty_when_no_persona_matches() {
+        // The mapping matches no term -> no scenarios -> no samples -> EmptyDataset (not a panic).
+        let llm: Arc<dyn LlmProvider> =
+            Arc::new(ScriptedLlm::new(vec![r#"{"mapping": {"P": []}}"#]));
+        let graph =
+            KnowledgeGraph::new().add_node(entitied_text_chunk("c1", &["alpha"], "alpha content"));
+
+        let result = SingleHopSpecificSynthesizer::new(llm)
+            .generate(&graph, &[persona("P", "r")], 5)
+            .await;
+        assert!(matches!(result, Err(RagasError::EmptyDataset)));
+    }
+
+    #[tokio::test]
+    async fn single_hop_specific_synthesizer_errors_on_missing_field() {
+        // A query/answer response missing the answer field is a parse error, not a silent blank.
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"P": ["alpha"]}}"#,
+            r#"{"query": "Q only"}"#,
+        ]));
+        let graph =
+            KnowledgeGraph::new().add_node(entitied_text_chunk("c1", &["alpha"], "alpha content"));
+
+        let result = SingleHopSpecificSynthesizer::new(llm)
+            .generate(&graph, &[persona("P", "r")], 5)
+            .await;
+        assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    #[tokio::test]
+    async fn single_hop_specific_synthesizer_passes_conditions_into_prompt() {
+        // The generation prompt carries the persona, term, context, and any llm_context guidance.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"Astronomer": ["galaxy"]}}"#,
+            r#"{"query": "What is a galaxy?", "answer": "A system of stars."}"#,
+        ]));
+        let llm_dyn: Arc<dyn LlmProvider> = llm.clone();
+        let graph = KnowledgeGraph::new().add_node(entitied_text_chunk(
+            "c1",
+            &["galaxy"],
+            "A galaxy is a system of stars.",
+        ));
+
+        SingleHopSpecificSynthesizer::new(llm_dyn)
+            .with_llm_context("ask comparison questions")
+            .generate(&graph, &[persona("Astronomer", "studies space")], 1)
+            .await
+            .expect("dataset");
+
+        // prompts[0] is the theme-persona mapping; prompts[1] is the query/answer generation.
+        let qa_prompt = &llm.prompts()[1];
+        assert!(qa_prompt.contains("galaxy"), "missing term: {qa_prompt}");
+        assert!(
+            qa_prompt.contains("Astronomer"),
+            "missing persona: {qa_prompt}"
+        );
+        assert!(
+            qa_prompt.contains("A galaxy is a system of stars."),
+            "missing context: {qa_prompt}"
+        );
+        assert!(
+            qa_prompt.contains("ask comparison questions"),
+            "missing llm_context guidance: {qa_prompt}"
+        );
+    }
+
+    /// Live gate (env-gated): the real model turns an astronomy chunk + an astronomer/chef persona
+    /// pair into a grounded single-hop testset — every sample is anchored on the astronomer and
+    /// carries a non-empty grounded answer + reference context.
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; run with --ignored"]
+    async fn live_single_hop_specific_synthesizer_generates_grounded_testset() {
+        let Some(client) = crate::ProviderConfig::from_env().chat_client() else {
+            eprintln!("skipping live single-hop synthesizer: OPENAI_API_KEY not set");
+            return;
+        };
+        let llm: Arc<dyn LlmProvider> = Arc::new(client);
+        let passage = "A galaxy is a gravitationally bound system of stars, gas, and dust. \
+Astronomers use telescopes to observe distant galaxies and measure their redshift.";
+        let graph = KnowledgeGraph::new().add_node(entitied_text_chunk(
+            "c1",
+            &["galaxy", "telescope"],
+            passage,
+        ));
+        let personas = [
+            persona("Astronomer", "Studies stars, galaxies, and telescopes."),
+            persona("Chef", "Cooks food and develops recipes."),
+        ];
+
+        let dataset = SingleHopSpecificSynthesizer::new(llm)
+            .generate(&graph, &personas, 2)
+            .await
+            .expect("live dataset");
+
+        assert!(!dataset.is_empty());
+        for sample in dataset.iter() {
+            assert!(!sample.user_input.trim().is_empty(), "empty query");
+            assert!(
+                sample
+                    .reference
+                    .as_deref()
+                    .is_some_and(|r| !r.trim().is_empty()),
+                "empty grounded answer"
+            );
+            assert!(
+                !sample.reference_contexts.is_empty(),
+                "no reference context"
+            );
+            assert_eq!(sample.reference_contexts[0], passage);
+            assert_eq!(
+                sample.metadata.get("persona_name").map(String::as_str),
+                Some("Astronomer"),
+                "astronomy terms should anchor on the astronomer, not the chef"
+            );
+        }
     }
 }
