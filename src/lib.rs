@@ -128,14 +128,14 @@ pub use runtime::{
 pub use runtime::{num_tokens_from_string, tiktoken_encoding_for_model};
 pub use schema::{Message, MessageRole, MultiTurnSample, Rubric, ToolCall};
 pub use testset::{
-    EmbeddingExtractor, ExtractionBundle, GraphAdvancedQuery, GraphCluster, GraphEdge, GraphNode,
-    GraphParityFixture, GraphProperty, KnowledgeGraph, LlmExtractor, LlmExtractorKind, Persona,
-    PersonaGenerator, RenderedSynthesizerPromptMessage, RenderedSynthesizerPromptSnapshot,
-    SynthesizedSample, Synthesizer, SynthesizerPromptMessage, SynthesizerPromptSnapshot,
-    SynthesizerSampleComparison, SynthesizerStrategy, TextChunk, attach_extractions,
-    build_chunk_relationships, build_cosine_relationships, build_overlap_relationships,
-    cluster_graph_by_property, compare_synthesized_sample_fixture, extract_bundle,
-    filter_graph_by_property, generate_testset, normalize_extraction_properties,
+    CustomNodeFilter, EmbeddingExtractor, ExtractionBundle, GraphAdvancedQuery, GraphCluster,
+    GraphEdge, GraphNode, GraphParityFixture, GraphProperty, KnowledgeGraph, LlmExtractor,
+    LlmExtractorKind, Persona, PersonaGenerator, RenderedSynthesizerPromptMessage,
+    RenderedSynthesizerPromptSnapshot, SynthesizedSample, Synthesizer, SynthesizerPromptMessage,
+    SynthesizerPromptSnapshot, SynthesizerSampleComparison, SynthesizerStrategy, TextChunk,
+    attach_extractions, build_chunk_relationships, build_cosine_relationships,
+    build_overlap_relationships, cluster_graph_by_property, compare_synthesized_sample_fixture,
+    extract_bundle, filter_graph_by_property, generate_testset, normalize_extraction_properties,
     parse_graph_parity_fixture, parse_llm_extractor_output, query_graph_advanced,
     render_synthesizer_prompt_snapshot, serialize_graph_parity_fixture, split_text_into_chunks,
     synthesize_multi_hop_sample, synthesize_pre_chunked_samples, synthesize_single_hop_sample,
