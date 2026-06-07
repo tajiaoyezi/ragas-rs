@@ -2282,6 +2282,324 @@ impl SingleHopSpecificSynthesizer {
     }
 }
 
+/// A multi-hop test-generation scenario: a small cluster of knowledge-graph nodes joined by a
+/// relationship (entity overlap for the specific synthesizer), a `combination` of themes drawn from
+/// that relationship, a [`Persona`] that cares about them, and a query style/length — the runnable
+/// analog of Python ragas's `MultiHopScenario`. Produced by [`prepare_multi_hop_specific_scenarios`]
+/// and consumed by [`MultiHopSpecificSynthesizer`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct MultiHopScenario {
+    /// The cluster's node ids, in hop order (the generated contexts are tagged `<1-hop>`, `<2-hop>`).
+    pub node_ids: Vec<String>,
+    /// The themes the query must incorporate (one entity for the specific synthesizer).
+    pub combination: Vec<String>,
+    pub persona: Persona,
+    pub style: QueryStyle,
+    pub length: QueryLength,
+}
+
+/// Prepare up to `n` multi-hop scenarios from a knowledge graph and persona list — the
+/// deterministic analog of Python ragas's `MultiHopSpecificQuerySynthesizer._generate_scenarios`.
+///
+/// Clusters are the pairs of nodes joined by an `entities_overlap` edge (built by
+/// [`build_overlap_relationships`]), normalized so the smaller node id comes first and deduped
+/// (Python's `find_two_nodes_single_rel`). Each cluster contributes up to `ceil(n / clusters)`
+/// scenarios: the edge's `overlapped_items` (`"x => y"` strings) are split into unique themes,
+/// matched to personas via [`match_themes_to_personas`], and each theme that some persona cares
+/// about and that at least one cluster node carries as an `entities` item yields one scenario
+/// (`combination = [theme]`), paired with the first such persona and the cluster nodes that
+/// actually contain the theme. Query style/length rotate deterministically. Errors if no
+/// `entities_overlap` edge exists.
+///
+/// **Documented divergence:** Python builds the full `combination × persona × style × length`
+/// product, `random.shuffle`s it, and samples with a diversity heuristic; we don't (RNG is a
+/// non-goal) — we emit one scenario per matched theme with rotating style/length, deterministically,
+/// capped at `n`. Theme extraction preserves first-seen order (Python uses an unordered `set`).
+pub async fn prepare_multi_hop_specific_scenarios(
+    llm: &Arc<dyn LlmProvider>,
+    graph: &KnowledgeGraph,
+    personas: &[Persona],
+    n: usize,
+) -> Result<Vec<MultiHopScenario>, RagasError> {
+    let clusters = entity_overlap_clusters(graph);
+    if clusters.is_empty() {
+        return Err(RagasError::Parse {
+            message: "multi-hop scenarios: no `entities_overlap` edge in the graph".to_string(),
+        });
+    }
+    let samples_per_cluster = n.div_ceil(clusters.len());
+
+    let mut scenarios = Vec::new();
+    for cluster in &clusters {
+        if scenarios.len() >= n {
+            break;
+        }
+        let themes = extract_overlap_themes(&cluster.overlapped_items);
+        if themes.is_empty() {
+            continue;
+        }
+        let mapping = match_themes_to_personas(llm, &themes, personas).await?;
+        let cluster_nodes = [cluster.node_a.as_str(), cluster.node_b.as_str()];
+
+        let mut per_cluster = 0;
+        for theme in &themes {
+            if scenarios.len() >= n || per_cluster >= samples_per_cluster {
+                break;
+            }
+            // First persona whose matched themes include this theme (case-insensitive).
+            let persona = personas.iter().find(|persona| {
+                mapping
+                    .get(&persona.name)
+                    .is_some_and(|themes| themes.iter().any(|t| t.eq_ignore_ascii_case(theme)))
+            });
+            let Some(persona) = persona else { continue };
+            // Cluster nodes that actually carry this theme as an `entities` item (Python's
+            // `valid_nodes`); skip the theme if neither node does.
+            let node_ids: Vec<String> = cluster_nodes
+                .iter()
+                .filter(|id| node_has_entity(graph, id, theme))
+                .map(|id| id.to_string())
+                .collect();
+            if node_ids.is_empty() {
+                continue;
+            }
+            let index = scenarios.len();
+            scenarios.push(MultiHopScenario {
+                node_ids,
+                combination: vec![theme.clone()],
+                persona: persona.clone(),
+                style: QueryStyle::ALL[index % QueryStyle::ALL.len()],
+                length: QueryLength::ALL[index % QueryLength::ALL.len()],
+            });
+            per_cluster += 1;
+        }
+    }
+    Ok(scenarios)
+}
+
+/// A normalized entity-overlap cluster: two node ids (smaller first) and the edge's overlap items.
+struct OverlapCluster {
+    node_a: String,
+    node_b: String,
+    overlapped_items: Vec<String>,
+}
+
+/// Find the `entities_overlap` clusters: each edge between two distinct nodes, normalized so the
+/// smaller node id is first and deduped by the unordered node pair (Python `find_two_nodes_single_rel`).
+fn entity_overlap_clusters(graph: &KnowledgeGraph) -> Vec<OverlapCluster> {
+    let mut seen = BTreeSet::new();
+    let mut clusters = Vec::new();
+    for edge in graph.edges_by_relationship("entities_overlap") {
+        if edge.source_id == edge.target_id {
+            continue;
+        }
+        let (node_a, node_b) = if edge.source_id <= edge.target_id {
+            (edge.source_id.clone(), edge.target_id.clone())
+        } else {
+            (edge.target_id.clone(), edge.source_id.clone())
+        };
+        if !seen.insert((node_a.clone(), node_b.clone())) {
+            continue;
+        }
+        let overlapped_items = match edge.properties.get("overlapped_items") {
+            Some(GraphProperty::TextList(items)) => items.clone(),
+            _ => Vec::new(),
+        };
+        clusters.push(OverlapCluster {
+            node_a,
+            node_b,
+            overlapped_items,
+        });
+    }
+    clusters
+}
+
+/// Extract the unique theme names from `overlapped_items` (`"x => y"` strings → both `x` and `y`),
+/// preserving first-seen order — the analog of Python's `_extract_themes_from_overlaps`.
+fn extract_overlap_themes(overlapped_items: &[String]) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut themes = Vec::new();
+    for item in overlapped_items {
+        for side in item.split(" => ") {
+            let side = side.trim();
+            if !side.is_empty() && seen.insert(side.to_string()) {
+                themes.push(side.to_string());
+            }
+        }
+    }
+    themes
+}
+
+/// Whether `node_id`'s `entities` list contains `theme` (case-insensitive).
+fn node_has_entity(graph: &KnowledgeGraph, node_id: &str, theme: &str) -> bool {
+    matches!(
+        graph.node(node_id).and_then(|node| node.properties.get("entities")),
+        Some(GraphProperty::TextList(items))
+            if items.iter().any(|item| item.eq_ignore_ascii_case(theme))
+    )
+}
+
+/// Generate a multi-hop query + grounded answer for one scenario — a faithful port of Python ragas's
+/// multi-hop `QueryAnswerGenerationPrompt`. The query must combine information across the hop-tagged
+/// `contexts` and explicitly incorporate the scenario's themes; the answer is drawn *only* from the
+/// contexts. An optional `llm_context` adds guidance. Returns `(query, answer)`.
+async fn generate_multi_hop_query_answer(
+    llm: &Arc<dyn LlmProvider>,
+    scenario: &MultiHopScenario,
+    contexts: &[String],
+    llm_context: Option<&str>,
+) -> Result<(String, String), RagasError> {
+    let extra = match llm_context {
+        Some(guidance) if !guidance.trim().is_empty() => format!(
+            "\n4. **Additional Context**: Use the following guidance for the kind of question to \
+generate and how to structure the answer, while still drawing all content only from the contexts: \
+{guidance}"
+        ),
+        _ => String::new(),
+    };
+    let prompt = format!(
+        "Generate a multi-hop query and answer based on the specified conditions (persona, themes, \
+style, length) and the provided context. The themes are phrases extracted from the context that \
+highlight its suitability for multi-hop query creation; ensure the query explicitly incorporates \
+them.\n\
+### Instructions:\n\
+1. **Generate a Multi-Hop Query**: Use the provided context segments and themes to form a query \
+that requires combining information from multiple segments (e.g. <1-hop> and <2-hop>). Ensure the \
+query explicitly incorporates one or more themes and reflects their relevance to the context.\n\
+2. **Generate an Answer**: Use only the content from the provided context to create a detailed and \
+faithful answer. Do not add any information not directly present or inferable from the context.\n\
+3. **Multi-Hop Context Tags**: each context segment is tagged <1-hop>, <2-hop>, etc.; the query \
+must use information from at least two segments and connect them meaningfully.{extra}\n\n\
+PERSONA: {persona_name} — {persona_role}\n\
+THEMES: {themes}\n\
+STYLE: {style}\n\
+LENGTH: {length}\n\
+CONTEXT:\n{context}\n\n\
+Return ONLY JSON of the form {{\"query\": \"...\", \"answer\": \"...\"}}.",
+        persona_name = scenario.persona.name,
+        persona_role = scenario.persona.role,
+        themes = scenario.combination.join(", "),
+        style = scenario.style.as_str(),
+        length = scenario.length.as_str(),
+        context = contexts.join("\n\n"),
+    );
+    let response = llm
+        .generate(LlmRequest {
+            messages: vec![ChatMessage::user(prompt)],
+            temperature: Some(0.0),
+        })
+        .await?;
+    let value = parse_json_block(&response.content, "multi-hop query/answer generation")?;
+    let field = |key: &str| -> Result<String, RagasError> {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| RagasError::Parse {
+                message: format!("multi-hop query/answer generation: missing '{key}' string"),
+            })
+    };
+    Ok((field("query")?, field("answer")?))
+}
+
+/// Build the hop-tagged reference contexts for a multi-hop scenario: each node's text prefixed with
+/// `<{i+1}-hop>` — a faithful port of Python's `make_contexts`. The hop number is the node's
+/// position in the cluster (`enumerate`, never renumbered), and a node with missing/empty text still
+/// yields its tag-only `"<N-hop>\n\n"` entry (matching Python's `.get("page_content", "")`); the tag
+/// prefix keeps every context non-blank, so the dataset's non-empty-context invariant still holds.
+fn multi_hop_contexts(graph: &KnowledgeGraph, scenario: &MultiHopScenario) -> Vec<String> {
+    scenario
+        .node_ids
+        .iter()
+        .enumerate()
+        .map(|(i, node_id)| {
+            let text = graph
+                .node(node_id)
+                .and_then(|node| text_property(node, "text"))
+                .unwrap_or("");
+            format!("<{hop}-hop>\n\n{text}", hop = i + 1)
+        })
+        .collect()
+}
+
+/// Entity-overlap multi-hop test-set synthesizer — the runnable analog of Python ragas's
+/// `MultiHopSpecificQuerySynthesizer`. It prepares scenarios with
+/// [`prepare_multi_hop_specific_scenarios`] (entity-overlap clusters → theme/persona matching →
+/// deterministic style/length rotation) and turns each into a grounded [`SingleTurnSample`] whose
+/// query combines the cluster's hop-tagged contexts, producing an [`EvaluationDataset`].
+///
+/// **Documented divergence (same as [`SingleHopSpecificSynthesizer`]):** Python's `_generate_sample`
+/// sets only `reference` + `reference_contexts`; this crate's [`EvaluationDataset`] requires a
+/// non-empty `response`/`retrieved_contexts`, so the generated answer and contexts are mirrored into
+/// them. Contexts follow Python's `make_contexts` exactly (one tag per node, hop = node position), so
+/// a textless node keeps its tag-only slot rather than being dropped.
+pub struct MultiHopSpecificSynthesizer {
+    llm: Arc<dyn LlmProvider>,
+    llm_context: Option<String>,
+}
+
+impl MultiHopSpecificSynthesizer {
+    /// Create a synthesizer over the given LLM provider.
+    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self {
+            llm,
+            llm_context: None,
+        }
+    }
+
+    /// Optional guidance string passed to every query/answer generation (Python's `llm_context`),
+    /// e.g. "ask cause-effect questions". Defaults to none.
+    pub fn with_llm_context(mut self, llm_context: impl Into<String>) -> Self {
+        self.llm_context = Some(llm_context.into());
+        self
+    }
+
+    /// Generate up to `n` grounded multi-hop samples from the knowledge graph and personas.
+    ///
+    /// Prepares scenarios with [`prepare_multi_hop_specific_scenarios`], then for each scenario
+    /// builds the hop-tagged contexts and asks the LLM for a `(query, answer)` pair that combines
+    /// them. Each sample records `synthesis_type`/`source_node_ids`/`themes`/`persona_name`/
+    /// `query_style`/`query_length` metadata. Returns `RagasError::EmptyDataset` when no usable
+    /// sample is produced, and propagates `Err` from scenario prep or generation. Errors if the
+    /// graph has no `entities_overlap` edge.
+    pub async fn generate(
+        &self,
+        graph: &KnowledgeGraph,
+        personas: &[Persona],
+        n: usize,
+    ) -> Result<EvaluationDataset, RagasError> {
+        let scenarios = prepare_multi_hop_specific_scenarios(&self.llm, graph, personas, n).await?;
+        let mut samples = Vec::new();
+        for scenario in &scenarios {
+            // Hop-tagged contexts (one per cluster node). Empty only if a scenario somehow has no
+            // nodes, which scenario prep prevents; guarded defensively so it can't poison the dataset.
+            let contexts = multi_hop_contexts(graph, scenario);
+            if contexts.is_empty() {
+                continue;
+            }
+            let (query, answer) = generate_multi_hop_query_answer(
+                &self.llm,
+                scenario,
+                &contexts,
+                self.llm_context.as_deref(),
+            )
+            .await?;
+            samples.push(
+                SingleTurnSample::new(query, answer.clone(), contexts.clone())
+                    .with_reference(answer)
+                    .with_reference_contexts(contexts)
+                    .with_metadata("synthesis_type", "multi-hop")
+                    .with_metadata("source_node_ids", scenario.node_ids.join(","))
+                    .with_metadata("themes", scenario.combination.join(", "))
+                    .with_metadata("persona_name", scenario.persona.name.clone())
+                    .with_metadata("query_style", scenario.style.name())
+                    .with_metadata("query_length", scenario.length.name()),
+            );
+        }
+        EvaluationDataset::new(samples)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5284,6 +5602,366 @@ Astronomers use telescopes to observe distant galaxies and measure their redshif
                 ),
                 "term must come from the node entities: {:?}",
                 sample.metadata.get("term")
+            );
+        }
+    }
+
+    /// Build a two-node entity-overlap cluster: two entity+text chunks joined by an
+    /// `entities_overlap` edge carrying the given `"x => y"` overlap items.
+    fn overlap_cluster_graph(
+        a: (&str, &[&str], &str),
+        b: (&str, &[&str], &str),
+        overlapped: &[&str],
+    ) -> KnowledgeGraph {
+        KnowledgeGraph::new()
+            .add_node(entitied_text_chunk(a.0, a.1, a.2))
+            .add_node(entitied_text_chunk(b.0, b.1, b.2))
+            .add_edge(GraphEdge::new(a.0, b.0, "entities_overlap").with_property(
+                "overlapped_items",
+                GraphProperty::TextList(overlapped.iter().map(|s| s.to_string()).collect()),
+            ))
+    }
+
+    #[test]
+    fn extract_overlap_themes_splits_pairs_and_dedupes_first_seen() {
+        let items = vec![
+            "Einstein => Einstein".to_string(),
+            "Bohr => Bohr".to_string(),
+            "Einstein => Einstein".to_string(),
+            "Microsoft => Microsft".to_string(),
+        ];
+        assert_eq!(
+            extract_overlap_themes(&items),
+            vec![
+                "Einstein".to_string(),
+                "Bohr".to_string(),
+                "Microsoft".to_string(),
+                "Microsft".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn entity_overlap_clusters_normalize_smaller_id_first_and_dedup() {
+        // Reverse-direction edge (c2 -> c1) is normalized to (c1, c2); a duplicate pair is deduped.
+        let graph = KnowledgeGraph::new()
+            .add_node(entitied_chunk("c1", &["x"]))
+            .add_node(entitied_chunk("c2", &["x"]))
+            .add_edge(
+                GraphEdge::new("c2", "c1", "entities_overlap").with_property(
+                    "overlapped_items",
+                    GraphProperty::TextList(vec!["x => x".to_string()]),
+                ),
+            )
+            .add_edge(
+                GraphEdge::new("c1", "c2", "entities_overlap").with_property(
+                    "overlapped_items",
+                    GraphProperty::TextList(vec!["x => x".to_string()]),
+                ),
+            );
+        let clusters = entity_overlap_clusters(&graph);
+        assert_eq!(clusters.len(), 1);
+        assert_eq!(clusters[0].node_a, "c1");
+        assert_eq!(clusters[0].node_b, "c2");
+    }
+
+    #[tokio::test]
+    async fn multi_hop_specific_synthesizer_builds_grounded_dataset() {
+        // Two chunks sharing the entity "Einstein" -> the theme matches the Historian persona, and
+        // both nodes carry it, so the scenario spans both hops.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"Historian": ["Einstein"]}}"#,
+            r#"{"query": "How did Einstein's relativity get confirmed?", "answer": "Einstein developed relativity, and the 1919 eclipse confirmed it."}"#,
+        ]));
+        let llm_dyn: Arc<dyn LlmProvider> = llm.clone();
+        let graph = overlap_cluster_graph(
+            (
+                "c1",
+                &["Einstein", "relativity"],
+                "Einstein developed the theory of relativity.",
+            ),
+            (
+                "c2",
+                &["Einstein", "eclipse"],
+                "The 1919 solar eclipse confirmed Einstein's theory.",
+            ),
+            &["Einstein => Einstein"],
+        );
+
+        let dataset = MultiHopSpecificSynthesizer::new(llm_dyn)
+            .generate(
+                &graph,
+                &[persona("Historian", "studies science milestones")],
+                5,
+            )
+            .await
+            .expect("dataset");
+
+        assert_eq!(dataset.len(), 1);
+        // Exactly one theme-persona mapping call + one query/answer generation call.
+        assert_eq!(llm.prompts().len(), 2);
+        let sample = &dataset.samples()[0];
+        assert_eq!(
+            sample.user_input,
+            "How did Einstein's relativity get confirmed?"
+        );
+        assert_eq!(
+            sample.reference.as_deref(),
+            Some("Einstein developed relativity, and the 1919 eclipse confirmed it.")
+        );
+        // Two hop-tagged reference contexts, mirrored into retrieved_contexts.
+        assert_eq!(sample.reference_contexts.len(), 2);
+        assert!(sample.reference_contexts[0].starts_with("<1-hop>"));
+        assert!(sample.reference_contexts[1].starts_with("<2-hop>"));
+        assert!(sample.reference_contexts[0].contains("developed the theory of relativity"));
+        assert_eq!(sample.retrieved_contexts, sample.reference_contexts);
+        assert_eq!(sample.response, sample.reference.clone().unwrap());
+        assert_eq!(
+            sample.metadata.get("synthesis_type").map(String::as_str),
+            Some("multi-hop")
+        );
+        assert_eq!(
+            sample.metadata.get("source_node_ids").map(String::as_str),
+            Some("c1,c2")
+        );
+        assert_eq!(
+            sample.metadata.get("themes").map(String::as_str),
+            Some("Einstein")
+        );
+        assert_eq!(
+            sample.metadata.get("persona_name").map(String::as_str),
+            Some("Historian")
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_multi_hop_specific_scenarios_errors_without_overlap_edge() {
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![]));
+        let graph = KnowledgeGraph::new()
+            .add_node(entitied_text_chunk("c1", &["x"], "text one"))
+            .add_node(entitied_text_chunk("c2", &["x"], "text two"));
+        let result =
+            prepare_multi_hop_specific_scenarios(&llm, &graph, &[persona("P", "r")], 5).await;
+        assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    #[tokio::test]
+    async fn prepare_multi_hop_specific_scenarios_skips_theme_no_cluster_node_carries() {
+        // The overlap items name themes that neither node actually lists in `entities` -> no
+        // scenario can be anchored, so the result is empty (Python's valid_nodes filter).
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"mapping": {"P": ["X", "Y"]}}"#]));
+        let llm_dyn: Arc<dyn LlmProvider> = llm.clone();
+        let graph = overlap_cluster_graph(
+            ("c1", &["A"], "text one"),
+            ("c2", &["B"], "text two"),
+            &["X => Y"],
+        );
+        let scenarios =
+            prepare_multi_hop_specific_scenarios(&llm_dyn, &graph, &[persona("P", "r")], 5)
+                .await
+                .expect("scenarios");
+        assert!(scenarios.is_empty());
+        // The theme-persona mapping WAS performed (the cluster's themes were extracted); the
+        // scenarios are empty only because no node carries them, not because matching was skipped.
+        assert_eq!(llm.prompts().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn prepare_multi_hop_specific_scenarios_distributes_across_clusters_and_rotates() {
+        // Two clusters, n=2 -> ceil(2/2)=1 per cluster -> one scenario each; style rotates.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"P": ["alpha"]}}"#,
+            r#"{"mapping": {"P": ["beta"]}}"#,
+        ]));
+        let llm_dyn: Arc<dyn LlmProvider> = llm.clone();
+        let graph = KnowledgeGraph::new()
+            .add_node(entitied_chunk("c1", &["alpha"]))
+            .add_node(entitied_chunk("c2", &["alpha"]))
+            .add_node(entitied_chunk("c3", &["beta"]))
+            .add_node(entitied_chunk("c4", &["beta"]))
+            .add_edge(
+                GraphEdge::new("c1", "c2", "entities_overlap").with_property(
+                    "overlapped_items",
+                    GraphProperty::TextList(vec!["alpha => alpha".to_string()]),
+                ),
+            )
+            .add_edge(
+                GraphEdge::new("c3", "c4", "entities_overlap").with_property(
+                    "overlapped_items",
+                    GraphProperty::TextList(vec!["beta => beta".to_string()]),
+                ),
+            );
+        let scenarios =
+            prepare_multi_hop_specific_scenarios(&llm_dyn, &graph, &[persona("P", "r")], 2)
+                .await
+                .expect("scenarios");
+        assert_eq!(scenarios.len(), 2);
+        // Each scenario spans both nodes of its cluster.
+        assert_eq!(
+            scenarios[0].node_ids,
+            vec!["c1".to_string(), "c2".to_string()]
+        );
+        assert_eq!(
+            scenarios[1].node_ids,
+            vec!["c3".to_string(), "c4".to_string()]
+        );
+        // Style rotates across the produced scenarios.
+        assert_ne!(scenarios[0].style, scenarios[1].style);
+        // Two mapping calls (one per cluster), no generation in prep.
+        assert_eq!(llm.prompts().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn multi_hop_specific_synthesizer_passes_hops_and_themes_into_prompt() {
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"Historian": ["Einstein"]}}"#,
+            r#"{"query": "q", "answer": "a"}"#,
+        ]));
+        let llm_dyn: Arc<dyn LlmProvider> = llm.clone();
+        let graph = overlap_cluster_graph(
+            ("c1", &["Einstein"], "Einstein developed relativity."),
+            ("c2", &["Einstein"], "The eclipse confirmed it."),
+            &["Einstein => Einstein"],
+        );
+
+        MultiHopSpecificSynthesizer::new(llm_dyn)
+            .with_llm_context("ask cause-effect questions")
+            .generate(&graph, &[persona("Historian", "studies science")], 1)
+            .await
+            .expect("dataset");
+
+        // Exactly one mapping call + one generation call; prompts[1] is the generation prompt.
+        assert_eq!(llm.prompts().len(), 2);
+        let qa_prompt = &llm.prompts()[1];
+        assert!(
+            qa_prompt.contains("<1-hop>"),
+            "missing hop tag: {qa_prompt}"
+        );
+        assert!(
+            qa_prompt.contains("<2-hop>"),
+            "missing hop tag: {qa_prompt}"
+        );
+        assert!(qa_prompt.contains("Einstein"), "missing theme: {qa_prompt}");
+        assert!(
+            qa_prompt.contains("Historian"),
+            "missing persona: {qa_prompt}"
+        );
+        assert!(
+            qa_prompt.contains("ask cause-effect questions"),
+            "missing llm_context: {qa_prompt}"
+        );
+    }
+
+    #[tokio::test]
+    async fn multi_hop_specific_synthesizer_errors_on_missing_field() {
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"P": ["alpha"]}}"#,
+            r#"{"query": "q only"}"#,
+        ]));
+        let llm_dyn: Arc<dyn LlmProvider> = llm.clone();
+        let graph = overlap_cluster_graph(
+            ("c1", &["alpha"], "text one"),
+            ("c2", &["alpha"], "text two"),
+            &["alpha => alpha"],
+        );
+        let result = MultiHopSpecificSynthesizer::new(llm_dyn)
+            .generate(&graph, &[persona("P", "r")], 5)
+            .await;
+        assert!(matches!(result, Err(RagasError::Parse { .. })));
+        // The error came from parsing the generation response, after both the mapping call and the
+        // (malformed) generation call were made — not from skipping the LLM entirely.
+        assert_eq!(llm.prompts().len(), 2);
+    }
+
+    /// Live gate (env-gated): the real model turns an entity-overlap cluster (two chunks sharing
+    /// "Einstein") + a historian/chef persona pair into a grounded multi-hop testset — every sample
+    /// spans both hop-tagged contexts, is anchored on the historian, and has a grounded answer.
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; run with --ignored"]
+    async fn live_multi_hop_specific_synthesizer_generates_grounded_testset() {
+        let Some(client) = crate::ProviderConfig::from_env().chat_client() else {
+            eprintln!("skipping live multi-hop synthesizer: OPENAI_API_KEY not set");
+            return;
+        };
+        let llm: Arc<dyn LlmProvider> = Arc::new(client);
+        let graph = overlap_cluster_graph(
+            (
+                "c1",
+                &["Einstein", "relativity"],
+                "Albert Einstein developed the theory of relativity, introducing the concept of spacetime.",
+            ),
+            (
+                "c2",
+                &["Einstein", "eclipse"],
+                "The bending of light by gravity was confirmed during the 1919 solar eclipse, supporting Einstein's theory.",
+            ),
+            &["Einstein => Einstein"],
+        );
+        let personas = [
+            persona(
+                "Historian",
+                "Focuses on scientific milestones and their global impact.",
+            ),
+            persona("Chef", "Cooks food and develops recipes."),
+        ];
+
+        let dataset = MultiHopSpecificSynthesizer::new(llm)
+            .generate(&graph, &personas, 2)
+            .await
+            .expect("live dataset");
+
+        assert!(!dataset.is_empty());
+        for sample in dataset.iter() {
+            assert!(!sample.user_input.trim().is_empty(), "empty query");
+            assert!(
+                sample
+                    .reference
+                    .as_deref()
+                    .is_some_and(|r| !r.trim().is_empty()),
+                "empty grounded answer"
+            );
+            // Spans both hops.
+            assert_eq!(
+                sample.reference_contexts.len(),
+                2,
+                "expected two hop contexts"
+            );
+            assert!(sample.reference_contexts[0].starts_with("<1-hop>"));
+            assert!(sample.reference_contexts[1].starts_with("<2-hop>"));
+            assert_eq!(
+                sample.metadata.get("persona_name").map(String::as_str),
+                Some("Historian"),
+                "the shared entity should anchor on the historian, not the chef"
+            );
+            // The answer must be grounded in the source contexts — a no-op/echo generator that
+            // just emitted hop tags would not reproduce these facts. (We ground-check the answer,
+            // not the query: the query's style may be "misspelled", which mangles theme words.)
+            let answer = sample
+                .reference
+                .as_deref()
+                .unwrap_or_default()
+                .to_lowercase();
+            assert!(
+                ["1919", "eclipse", "relativity", "spacetime", "gravity"]
+                    .iter()
+                    .any(|kw| answer.contains(kw)),
+                "answer should be grounded in the contexts: {:?}",
+                sample.reference
+            );
+            // Full synthesizer contract: synthesis type + theme + style/length metadata recorded.
+            assert_eq!(
+                sample.metadata.get("synthesis_type").map(String::as_str),
+                Some("multi-hop")
+            );
+            assert_eq!(
+                sample.metadata.get("themes").map(String::as_str),
+                Some("Einstein")
+            );
+            assert!(
+                sample.metadata.contains_key("query_style")
+                    && sample.metadata.contains_key("query_length"),
+                "missing style/length metadata: {:?}",
+                sample.metadata
             );
         }
     }
