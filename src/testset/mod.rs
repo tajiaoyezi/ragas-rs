@@ -4156,6 +4156,116 @@ free vacation!!!",
         );
         // The first cluster's prompt carried the LONGER summary (n1), not n0's "Cats.".
         assert!(llm.prompts()[0].contains("Cats are domestic felines kept as pets."));
+        // The second cluster (n2) used its own summary, and produced the second persona.
+        assert!(llm.prompts()[1].contains("The stock market fell."));
+        assert_eq!(personas[1].name, "Investor");
+    }
+
+    #[tokio::test]
+    async fn generate_personas_from_kg_clusters_are_anchor_based_not_transitive() {
+        // Angles 0deg / 40deg / 80deg: cos40 ~= 0.766 > 0.75 so a~b and b~c, but cos80 ~= 0.174
+        // so a !~ c. Anchor-based clustering groups c separately (it is only compared to anchor a),
+        // -> 2 clusters. A *transitive* (union-find) clustering would merge all three into one.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"name": "A", "role_description": "a"}"#,
+            r#"{"name": "C", "role_description": "c"}"#,
+        ]));
+        let graph = KnowledgeGraph::new()
+            .add_node(summarized_node("a", "anchor a", vec![1.0, 0.0]))
+            .add_node(summarized_node("b", "mid b", vec![0.766, 0.643]))
+            .add_node(summarized_node("c", "far c", vec![0.174, 0.985]));
+        let personas = generate_personas_from_kg(llm.clone(), &graph, 3)
+            .await
+            .expect("personas");
+        assert_eq!(
+            personas.len(),
+            2,
+            "non-transitive: {{a,b}} and {{c}}, not one merged cluster"
+        );
+        // First persona from cluster {a,b} (rep = longer of "anchor a"/"mid b" = "anchor a"),
+        // second from {c}.
+        assert!(llm.prompts()[1].contains("far c"));
+    }
+
+    #[tokio::test]
+    async fn generate_personas_from_kg_num_personas_zero_returns_empty() {
+        let llm = Arc::new(ScriptedLlm::new(vec![]));
+        let graph = KnowledgeGraph::new().add_node(summarized_node("n0", "s", vec![1.0, 0.0]));
+        let personas = generate_personas_from_kg(llm.clone(), &graph, 0)
+            .await
+            .expect("personas");
+        assert!(personas.is_empty());
+        assert!(
+            llm.prompts().is_empty(),
+            "num_personas=0 makes no LLM calls"
+        );
+    }
+
+    #[tokio::test]
+    async fn generate_personas_from_kg_ignores_a_goals_field_in_output() {
+        // Even if the model volunteers a `goals` array, KG personas keep goals empty.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"name": "N", "role_description": "R", "goals": ["x", "y"]}"#,
+        ]));
+        let graph = KnowledgeGraph::new().add_node(summarized_node("n0", "s", vec![1.0, 0.0]));
+        let personas = generate_personas_from_kg(llm, &graph, 1)
+            .await
+            .expect("personas");
+        assert_eq!(personas[0].name, "N");
+        assert!(
+            personas[0].goals.is_empty(),
+            "the volunteered goals field is ignored"
+        );
+    }
+
+    #[tokio::test]
+    async fn generate_personas_from_kg_requires_role_description_key() {
+        // The parser expects `role_description`, not `role`; the wrong key is a parse error.
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"name": "N", "role": "R"}"#]));
+        let graph = KnowledgeGraph::new().add_node(summarized_node("n0", "s", vec![1.0, 0.0]));
+        let Err(RagasError::Parse { message }) = generate_personas_from_kg(llm, &graph, 1).await
+        else {
+            panic!("expected a Parse error for the wrong role key");
+        };
+        assert!(message.contains("role_description"), "message: {message}");
+    }
+
+    #[tokio::test]
+    async fn generate_personas_from_kg_skips_embedding_without_summary() {
+        // Both nodes are ineligible — one has a summary but no embedding, the other an embedding
+        // but no summary — so the function errors (no eligible node).
+        let llm = Arc::new(ScriptedLlm::new(vec![]));
+        let graph = KnowledgeGraph::new()
+            .add_node(
+                GraphNode::new("n0", "chunk")
+                    .with_property("summary", GraphProperty::Text("no embedding".to_string())),
+            )
+            .add_node(
+                GraphNode::new("n1", "chunk")
+                    .with_property("summary_embedding", GraphProperty::Vector(vec![1.0, 0.0])),
+            );
+        let result = generate_personas_from_kg(llm, &graph, 3).await;
+        assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    #[tokio::test]
+    async fn generate_personas_from_kg_longest_summary_tie_keeps_first() {
+        // Two same-embedding nodes with equal-length summaries -> one cluster; the FIRST is the
+        // representative (strict `>` keeps the earliest on a length tie).
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"name": "N", "role_description": "R"}"#,
+        ]));
+        let graph = KnowledgeGraph::new()
+            .add_node(summarized_node("first", "AAAA", vec![1.0, 0.0]))
+            .add_node(summarized_node("second", "BBBB", vec![1.0, 0.0]));
+        generate_personas_from_kg(llm.clone(), &graph, 1)
+            .await
+            .expect("personas");
+        assert!(
+            llm.prompts()[0].contains("AAAA") && !llm.prompts()[0].contains("BBBB"),
+            "tie -> first summary is the representative, got: {}",
+            llm.prompts()[0]
+        );
     }
 
     #[tokio::test]
