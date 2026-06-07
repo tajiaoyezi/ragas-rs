@@ -943,6 +943,47 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
+    async fn live_agent_goal_accuracy_without_reference_discriminates_achieved_from_failed() {
+        let Some(client) = live_client() else {
+            return;
+        };
+        // No reference: the goal is inferred from the conversation and compared to the inferred
+        // end-state. Achieved (table booked) must score strictly higher than failed (no availability).
+        let metric = AgentGoalAccuracyWithoutReferenceMetric::new(client);
+        let achieved = MultiTurnSample::new(vec![
+            Message::user("Book a table for two at an Italian restaurant tonight at 8pm."),
+            Message::assistant("").with_tool_call(ToolCall::new(
+                "c1",
+                "book_table",
+                json!({ "cuisine": "Italian", "party": 2, "time": "8:00pm" }),
+            )),
+            Message::tool(
+                "c1",
+                "Reservation confirmed at Bella Italia for 2 at 8:00pm.",
+            ),
+            Message::assistant("Your table for two at Bella Italia is booked for 8pm tonight."),
+        ]);
+        let failed = MultiTurnSample::new(vec![
+            Message::user("Book a table for two at an Italian restaurant tonight at 8pm."),
+            Message::assistant("").with_tool_call(ToolCall::new(
+                "c1",
+                "book_table",
+                json!({ "cuisine": "Italian", "party": 2, "time": "8:00pm" }),
+            )),
+            Message::tool("c1", "No availability tonight at any Italian restaurant."),
+            Message::assistant("Sorry, I couldn't find any availability tonight."),
+        ]);
+
+        let achieved_score = numeric(&metric.score_multi_turn(&achieved).await.expect("achieved"));
+        let failed_score = numeric(&metric.score_multi_turn(&failed).await.expect("failed"));
+        assert!(
+            achieved_score > failed_score,
+            "achieved={achieved_score} failed={failed_score}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; live LLM discrimination gate"]
     async fn live_topic_adherence_scores_adherent_above_non_adherent() {
         let Some(client) = live_client() else {
             return;

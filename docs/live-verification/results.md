@@ -152,9 +152,18 @@ adversarial one. Until such a run exists, the honest status of an LLM metric is
   `{"value": 42}` JSON — proving the second-stage repair recovers the correct value, not just any
   parse. Every LLM metric now routes through this path.
 
+### Follow-up run — AgentGoalAccuracy without reference (audit gap)
+
+- **Date:** 2026-06-07
+- **Provider:** DeepSeek (chat), same configuration.
+- **Command:** `cargo test --lib live_agent_goal_accuracy_without_reference_discriminates_achieved_from_failed -- --ignored`
+- **Result:** **1 passed, 0 failed** (~14s) — closes an audit-found gap: the without-reference
+  variant (the goal is **inferred** from the conversation, not supplied) previously had only an
+  offline test. The real model scores an achieved booking strictly higher than a failed one.
+
 ## Gates (all PASS)
 
-LLM metric discrimination gates (20):
+LLM metric discrimination gates (22):
 
 | metric | gate |
 |---|---|
@@ -176,7 +185,8 @@ LLM metric discrimination gates (20):
 | RubricsScore | `live_rubrics_score_scores_better_answer_higher` |
 | SummarizationScore | `live_summarization_score_scores_faithful_summary_above_off_topic` |
 | NoiseSensitivity | `live_noise_sensitivity_flags_noisy_response_above_clean` |
-| AgentGoalAccuracy (multi-turn) **(P4)** | `live_agent_goal_accuracy_discriminates_achieved_from_failed` |
+| AgentGoalAccuracy, with reference (multi-turn) **(P4)** | `live_agent_goal_accuracy_discriminates_achieved_from_failed` |
+| AgentGoalAccuracy, without reference (multi-turn) | `live_agent_goal_accuracy_without_reference_discriminates_achieved_from_failed` |
 | TopicAdherence (multi-turn) **(P4)** | `live_topic_adherence_scores_adherent_above_non_adherent` |
 | InstanceSpecificRubrics **(P4)** | `live_instance_specific_rubrics_scores_better_answer_higher` |
 
