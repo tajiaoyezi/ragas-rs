@@ -75,6 +75,15 @@ adversarial one. Until such a run exists, the honest status of an LLM metric is
   below: the real model turns a clustered KG node summary into a usable persona (non-empty name +
   role description).
 
+### Follow-up run — single-hop scenario prep (Phase 6)
+
+- **Date:** 2026-06-07
+- **Provider:** DeepSeek (chat), same configuration.
+- **Command:** `cargo test --lib live_prepare_single_hop_scenarios_matches_relevant_persona -- --ignored`
+- **Result:** **1 passed, 0 failed** (~4s) — the `prepare_single_hop_scenarios` gate marked **(SH)**
+  below: the real model matches a node's astronomy entities (galaxy/telescope) to the astronomer
+  persona, not the chef, so every produced scenario is anchored on the relevant persona.
+
 ## Gates (all PASS)
 
 LLM metric discrimination gates (20):
@@ -106,7 +115,7 @@ LLM metric discrimination gates (20):
 `*` also exercises the embedding endpoint. **(P4)** = Phase-4 agentic metrics, run in the
 follow-up above.
 
-End-to-end / testset gates (8):
+End-to-end / testset gates (9):
 
 - CLI `evaluate` with a live provider — `live_evaluate_command_runs_llm_metrics`
 - LLM test-set synthesizer, single-hop — `test_31_2_7_live_synthesizer_generates_from_real_model`
@@ -116,6 +125,7 @@ End-to-end / testset gates (8):
 - CustomNodeFilter **(NF)** — `live_custom_node_filter_drops_irrelevant_chunk`
 - Transforms engine **(TE)** — `live_apply_transforms_embed_then_cosine_pipeline`
 - KG persona generation **(PG)** — `live_generate_personas_from_kg_builds_a_persona`
+- Single-hop scenario prep **(SH)** — `live_prepare_single_hop_scenarios_matches_relevant_persona`
 
 ## What this proves — and what it does NOT
 

@@ -1909,6 +1909,216 @@ Return ONLY JSON of the form {{\"name\": \"...\", \"role_description\": \"...\"}
     })
 }
 
+/// The length variants a generated query can take (Python ragas `QueryLength`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryLength {
+    Long,
+    Medium,
+    Short,
+}
+
+impl QueryLength {
+    /// All variants, in the order used for deterministic rotation.
+    pub const ALL: [QueryLength; 3] = [QueryLength::Long, QueryLength::Medium, QueryLength::Short];
+
+    /// The string passed to the generation prompt (matches the Python enum values).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            QueryLength::Long => "long",
+            QueryLength::Medium => "medium",
+            QueryLength::Short => "short",
+        }
+    }
+}
+
+/// The phrasing style a generated query can take (Python ragas `QueryStyle`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryStyle {
+    Misspelled,
+    PerfectGrammar,
+    PoorGrammar,
+    WebSearchLike,
+}
+
+impl QueryStyle {
+    /// All variants, in the order used for deterministic rotation.
+    pub const ALL: [QueryStyle; 4] = [
+        QueryStyle::Misspelled,
+        QueryStyle::PerfectGrammar,
+        QueryStyle::PoorGrammar,
+        QueryStyle::WebSearchLike,
+    ];
+
+    /// The string passed to the generation prompt (matches the Python enum values).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            QueryStyle::Misspelled => "Misspelled queries",
+            QueryStyle::PerfectGrammar => "Perfect grammar",
+            QueryStyle::PoorGrammar => "Poor grammar",
+            QueryStyle::WebSearchLike => "Web search like queries",
+        }
+    }
+}
+
+/// A single-hop test-generation scenario: one knowledge-graph node, a `term` (theme) drawn from
+/// the node, a [`Persona`] that cares about that term, and a query style/length — the runnable
+/// analog of Python ragas's `SingleHopScenario`. Produced by [`prepare_single_hop_scenarios`]
+/// and consumed by the (forthcoming) sample generator.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SingleHopScenario {
+    pub node_id: String,
+    pub term: String,
+    pub persona: Persona,
+    pub style: QueryStyle,
+    pub length: QueryLength,
+}
+
+/// Ask the LLM which themes each persona cares about, a faithful port of Python ragas's
+/// `ThemesPersonasMatchingPrompt`. Returns a `{persona_name: [relevant_themes]}` map.
+pub async fn match_themes_to_personas(
+    llm: &Arc<dyn LlmProvider>,
+    themes: &[String],
+    personas: &[Persona],
+) -> Result<BTreeMap<String, Vec<String>>, RagasError> {
+    let theme_lines = themes
+        .iter()
+        .map(|theme| format!("- {theme}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let persona_lines = personas
+        .iter()
+        .map(|persona| format!("- {}: {}", persona.name, persona.role))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let prompt = format!(
+        "Given a list of themes and personas with their roles, associate each persona with the \
+relevant themes based on their role description. Return ONLY JSON of the form {{\"mapping\": \
+{{\"<persona name>\": [\"<theme>\", ...]}}}}.\n\nTHEMES:\n{theme_lines}\n\nPERSONAS:\n{persona_lines}"
+    );
+    let response = llm
+        .generate(LlmRequest {
+            messages: vec![ChatMessage::user(prompt)],
+            temperature: Some(0.0),
+        })
+        .await?;
+    let value = parse_json_block(&response.content, "theme-persona matching")?;
+    let mapping = value
+        .get("mapping")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| RagasError::Parse {
+            message: "theme-persona matching: missing 'mapping' object".to_string(),
+        })?;
+    let mut result = BTreeMap::new();
+    for (name, themes) in mapping {
+        // Each value must be a list of strings (Python's pydantic `Dict[str, List[str]]` rejects
+        // a non-array); erroring beats silently dropping a malformed mapping into an empty list.
+        let themes = themes
+            .as_array()
+            .ok_or_else(|| RagasError::Parse {
+                message: format!("theme-persona matching: themes for '{name}' is not an array"),
+            })?
+            .iter()
+            .filter_map(|theme| theme.as_str().map(str::to_string))
+            .collect();
+        result.insert(name.clone(), themes);
+    }
+    Ok(result)
+}
+
+/// Prepare up to `n` single-hop scenarios from a knowledge graph and a persona list — the
+/// deterministic analog of Python ragas's `SingleHopSpecificQuerySynthesizer._generate_scenarios`.
+///
+/// Nodes are selected by majority type among those carrying an `entities`
+/// [`GraphProperty::TextList`] (chunks vs documents; ties favor documents, as in Python). Each
+/// selected node contributes up to `ceil(n / nodes)` scenarios: its entities are matched to
+/// personas via [`match_themes_to_personas`], and each term that some persona cares about yields
+/// one scenario paired with the first such persona. Query style/length rotate deterministically
+/// across the produced scenarios.
+///
+/// **Documented divergence:** Python builds the full `term × persona × style × length` Cartesian
+/// product and `random.shuffle`s it before sampling; we don't (RNG is a non-goal and the style/
+/// length axes are query-phrasing variety) — we emit one scenario per matched `(node, term)` with
+/// rotating style/length, deterministically, capped at `n`. Errors if no node has entities.
+pub async fn prepare_single_hop_scenarios(
+    llm: &Arc<dyn LlmProvider>,
+    graph: &KnowledgeGraph,
+    personas: &[Persona],
+    n: usize,
+) -> Result<Vec<SingleHopScenario>, RagasError> {
+    let nodes = select_entity_nodes(graph);
+    if nodes.is_empty() {
+        return Err(RagasError::Parse {
+            message: "single-hop scenarios: no node has an `entities` property".to_string(),
+        });
+    }
+    let samples_per_node = n.div_ceil(nodes.len());
+
+    let mut scenarios = Vec::new();
+    for node in nodes {
+        if scenarios.len() >= n {
+            break;
+        }
+        let themes = match node.properties.get("entities") {
+            Some(GraphProperty::TextList(themes)) if !themes.is_empty() => themes,
+            _ => continue,
+        };
+        let mapping = match_themes_to_personas(llm, themes, personas).await?;
+
+        let mut per_node = 0;
+        for term in themes {
+            if scenarios.len() >= n || per_node >= samples_per_node {
+                break;
+            }
+            // The first persona whose matched themes include this term (case-insensitive).
+            let matched = personas.iter().find(|persona| {
+                mapping
+                    .get(&persona.name)
+                    .is_some_and(|themes| themes.iter().any(|t| t.eq_ignore_ascii_case(term)))
+            });
+            if let Some(persona) = matched {
+                let index = scenarios.len();
+                scenarios.push(SingleHopScenario {
+                    node_id: node.id.clone(),
+                    term: term.clone(),
+                    persona: persona.clone(),
+                    style: QueryStyle::ALL[index % QueryStyle::ALL.len()],
+                    length: QueryLength::ALL[index % QueryLength::ALL.len()],
+                });
+                per_node += 1;
+            }
+        }
+    }
+    Ok(scenarios)
+}
+
+/// Select the nodes to draw single-hop scenarios from: those carrying an `entities`
+/// [`GraphProperty::TextList`], restricted to the majority node type (chunks vs documents; ties
+/// favor documents, matching Python's `get_node_clusters`).
+fn select_entity_nodes(graph: &KnowledgeGraph) -> Vec<&GraphNode> {
+    let has_entities = |node: &GraphNode| matches!(node.properties.get("entities"), Some(GraphProperty::TextList(items)) if !items.is_empty());
+    let mut chunks = 0usize;
+    let mut documents = 0usize;
+    for node in &graph.nodes {
+        if has_entities(node) {
+            match node.node_type.as_str() {
+                "chunk" => chunks += 1,
+                "document" => documents += 1,
+                _ => {}
+            }
+        }
+    }
+    let wanted = if chunks > documents {
+        "chunk"
+    } else {
+        "document"
+    };
+    graph
+        .nodes
+        .iter()
+        .filter(|node| node.node_type == wanted && has_entities(node))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4350,6 +4560,309 @@ social platforms, SEO, and email campaigns.",
         assert!(
             !personas[0].role.trim().is_empty(),
             "persona needs a role description"
+        );
+    }
+
+    fn persona(name: &str, role: &str) -> Persona {
+        Persona {
+            name: name.to_string(),
+            role: role.to_string(),
+            goals: Vec::new(),
+        }
+    }
+
+    fn entitied_chunk(id: &str, entities: &[&str]) -> GraphNode {
+        GraphNode::new(id, "chunk").with_property(
+            "entities",
+            GraphProperty::TextList(entities.iter().map(|e| e.to_string()).collect()),
+        )
+    }
+
+    #[tokio::test]
+    async fn match_themes_to_personas_parses_mapping() {
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"Chef": ["cooking"], "Coder": ["rust", "apis"]}}"#,
+        ]));
+        let llm_dyn: Arc<dyn LlmProvider> = llm.clone();
+        let mapping = match_themes_to_personas(
+            &llm_dyn,
+            &["cooking".to_string(), "rust".to_string()],
+            &[persona("Chef", "cooks"), persona("Coder", "writes code")],
+        )
+        .await
+        .expect("mapping");
+        assert_eq!(mapping.get("Chef"), Some(&vec!["cooking".to_string()]));
+        assert_eq!(
+            mapping.get("Coder"),
+            Some(&vec!["rust".to_string(), "apis".to_string()])
+        );
+        // The prompt carried the themes and persona roles.
+        assert!(llm.prompts()[0].contains("cooking") && llm.prompts()[0].contains("writes code"));
+    }
+
+    #[tokio::test]
+    async fn match_themes_to_personas_malformed_errors() {
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![r#"{"no_mapping": 1}"#]));
+        let result = match_themes_to_personas(&llm, &["a".to_string()], &[persona("P", "r")]).await;
+        assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    #[tokio::test]
+    async fn prepare_single_hop_scenarios_pairs_terms_with_matching_personas() {
+        // One chunk with two entities; mapping sends "galaxy" -> Astronomer, "stew" -> Chef.
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"Astronomer": ["galaxy"], "Chef": ["stew"]}}"#,
+        ]));
+        let graph = KnowledgeGraph::new().add_node(entitied_chunk("c1", &["galaxy", "stew"]));
+        let personas = [
+            persona("Astronomer", "studies space"),
+            persona("Chef", "cooks"),
+        ];
+
+        let scenarios = prepare_single_hop_scenarios(&llm, &graph, &personas, 10)
+            .await
+            .expect("scenarios");
+        assert_eq!(scenarios.len(), 2);
+        let galaxy = scenarios
+            .iter()
+            .find(|s| s.term == "galaxy")
+            .expect("galaxy");
+        assert_eq!(galaxy.persona.name, "Astronomer");
+        assert_eq!(galaxy.node_id, "c1");
+        let stew = scenarios.iter().find(|s| s.term == "stew").expect("stew");
+        assert_eq!(stew.persona.name, "Chef");
+        // Style/length rotate across the produced scenarios (first two differ in style).
+        assert_eq!(scenarios[0].style, QueryStyle::ALL[0]);
+        assert_eq!(scenarios[1].style, QueryStyle::ALL[1]);
+    }
+
+    #[tokio::test]
+    async fn prepare_single_hop_scenarios_skips_unmatched_terms() {
+        // Only "rust" is matched; "weather" maps to nobody -> no scenario for it.
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"Coder": ["rust"]}}"#,
+        ]));
+        let graph = KnowledgeGraph::new().add_node(entitied_chunk("c1", &["rust", "weather"]));
+        let scenarios =
+            prepare_single_hop_scenarios(&llm, &graph, &[persona("Coder", "codes")], 10)
+                .await
+                .expect("scenarios");
+        assert_eq!(scenarios.len(), 1);
+        assert_eq!(scenarios[0].term, "rust");
+    }
+
+    #[tokio::test]
+    async fn prepare_single_hop_scenarios_selects_majority_node_type() {
+        // Two chunks-with-entities vs one doc-with-entities -> chunks win; the doc is ignored.
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"P": ["a"]}}"#,
+            r#"{"mapping": {"P": ["b"]}}"#,
+        ]));
+        let graph = KnowledgeGraph::new()
+            .add_node(entitied_chunk("c1", &["a"]))
+            .add_node(entitied_chunk("c2", &["b"]))
+            .add_node(
+                GraphNode::new("d1", "document")
+                    .with_property("entities", GraphProperty::TextList(vec!["z".to_string()])),
+            );
+        let scenarios = prepare_single_hop_scenarios(&llm, &graph, &[persona("P", "r")], 10)
+            .await
+            .expect("scenarios");
+        assert!(
+            scenarios
+                .iter()
+                .all(|s| s.node_id == "c1" || s.node_id == "c2")
+        );
+        assert!(scenarios.iter().all(|s| s.node_id != "d1"));
+    }
+
+    #[tokio::test]
+    async fn prepare_single_hop_scenarios_caps_at_n_and_per_node() {
+        // n = 1 over a single 2-entity node -> samples_per_node = 1 -> exactly one scenario, and
+        // only one theme-matching call.
+        let llm = Arc::new(ScriptedLlm::new(vec![r#"{"mapping": {"P": ["a", "b"]}}"#]));
+        let llm_dyn: Arc<dyn LlmProvider> = llm.clone();
+        let graph = KnowledgeGraph::new().add_node(entitied_chunk("c1", &["a", "b"]));
+        let scenarios = prepare_single_hop_scenarios(&llm_dyn, &graph, &[persona("P", "r")], 1)
+            .await
+            .expect("scenarios");
+        assert_eq!(scenarios.len(), 1);
+        assert_eq!(llm.prompts().len(), 1);
+        // The single scenario is well-formed, not just present.
+        assert_eq!(scenarios[0].node_id, "c1");
+        assert_eq!(scenarios[0].term, "a");
+        assert_eq!(scenarios[0].persona.name, "P");
+    }
+
+    #[tokio::test]
+    async fn prepare_single_hop_scenarios_distributes_across_nodes_and_rotates() {
+        // n=5 over two 3-entity nodes: samples_per_node = ceil(5/2) = 3, so c1 contributes 3 and
+        // c2 contributes 2 (global cap), total 5. Style/length rotate (and wrap) across all five.
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"P": ["a", "b", "c"]}}"#,
+            r#"{"mapping": {"P": ["d", "e", "f"]}}"#,
+        ]));
+        let graph = KnowledgeGraph::new()
+            .add_node(entitied_chunk("c1", &["a", "b", "c"]))
+            .add_node(entitied_chunk("c2", &["d", "e", "f"]));
+        let scenarios = prepare_single_hop_scenarios(&llm, &graph, &[persona("P", "r")], 5)
+            .await
+            .expect("scenarios");
+        assert_eq!(scenarios.len(), 5, "total capped at n");
+        assert_eq!(
+            scenarios.iter().filter(|s| s.node_id == "c1").count(),
+            3,
+            "first node fills ceil(5/2)=3"
+        );
+        assert_eq!(
+            scenarios.iter().filter(|s| s.node_id == "c2").count(),
+            2,
+            "second node gets the remaining 2"
+        );
+        // Style wraps at 4 (4 variants), length cycles every 3.
+        assert_eq!(scenarios[0].style, QueryStyle::Misspelled);
+        assert_eq!(scenarios[4].style, QueryStyle::Misspelled);
+        assert_eq!(scenarios[3].length, QueryLength::Long);
+        assert_eq!(scenarios[4].length, QueryLength::Medium);
+    }
+
+    #[tokio::test]
+    async fn prepare_single_hop_scenarios_matches_terms_case_insensitively() {
+        // Node entity "Galaxy" vs lowercase mapping "galaxy" still matches (eq_ignore_ascii_case).
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"Astro": ["galaxy"]}}"#,
+        ]));
+        let graph = KnowledgeGraph::new().add_node(entitied_chunk("c1", &["Galaxy"]));
+        let scenarios = prepare_single_hop_scenarios(&llm, &graph, &[persona("Astro", "r")], 5)
+            .await
+            .expect("scenarios");
+        assert_eq!(scenarios.len(), 1);
+        assert_eq!(scenarios[0].term, "Galaxy");
+        assert_eq!(scenarios[0].persona.name, "Astro");
+    }
+
+    #[tokio::test]
+    async fn prepare_single_hop_scenarios_tie_favors_documents() {
+        // Equal chunk/document counts (1 each) -> documents win (per get_node_clusters).
+        let llm: Arc<dyn LlmProvider> =
+            Arc::new(ScriptedLlm::new(vec![r#"{"mapping": {"P": ["d"]}}"#]));
+        let graph = KnowledgeGraph::new()
+            .add_node(entitied_chunk("c1", &["x"]))
+            .add_node(
+                GraphNode::new("doc1", "document")
+                    .with_property("entities", GraphProperty::TextList(vec!["d".to_string()])),
+            );
+        let scenarios = prepare_single_hop_scenarios(&llm, &graph, &[persona("P", "r")], 5)
+            .await
+            .expect("scenarios");
+        assert!(
+            scenarios.iter().all(|s| s.node_id == "doc1"),
+            "ties favor documents"
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_single_hop_scenarios_skips_empty_entities_node() {
+        // A chunk with an empty entities list is not eligible; only the non-empty one is used.
+        let llm: Arc<dyn LlmProvider> =
+            Arc::new(ScriptedLlm::new(vec![r#"{"mapping": {"P": ["a"]}}"#]));
+        let graph = KnowledgeGraph::new()
+            .add_node(entitied_chunk("c1", &["a"]))
+            .add_node(entitied_chunk("empty", &[]));
+        let scenarios = prepare_single_hop_scenarios(&llm, &graph, &[persona("P", "r")], 5)
+            .await
+            .expect("scenarios");
+        assert!(scenarios.iter().all(|s| s.node_id == "c1"));
+    }
+
+    #[tokio::test]
+    async fn prepare_single_hop_scenarios_picks_first_matching_persona_on_tie() {
+        // Both personas map to the same term -> the first in the list is chosen.
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"First": ["shared"], "Second": ["shared"]}}"#,
+        ]));
+        let graph = KnowledgeGraph::new().add_node(entitied_chunk("c1", &["shared"]));
+        let scenarios = prepare_single_hop_scenarios(
+            &llm,
+            &graph,
+            &[persona("First", "r"), persona("Second", "r")],
+            5,
+        )
+        .await
+        .expect("scenarios");
+        assert_eq!(scenarios.len(), 1);
+        assert_eq!(scenarios[0].persona.name, "First");
+    }
+
+    #[tokio::test]
+    async fn prepare_single_hop_scenarios_reuses_persona_across_a_nodes_terms() {
+        // One persona matched to two of a node's terms -> both scenarios use that persona.
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"Astro": ["galaxy", "telescope"]}}"#,
+        ]));
+        let graph = KnowledgeGraph::new().add_node(entitied_chunk("c1", &["galaxy", "telescope"]));
+        let scenarios = prepare_single_hop_scenarios(&llm, &graph, &[persona("Astro", "r")], 5)
+            .await
+            .expect("scenarios");
+        assert_eq!(scenarios.len(), 2);
+        assert!(scenarios.iter().all(|s| s.persona.name == "Astro"));
+    }
+
+    #[tokio::test]
+    async fn match_themes_to_personas_non_array_value_errors() {
+        // A persona value that is a bare string (not a list) is rejected, matching Python's
+        // pydantic Dict[str, List[str]] validation rather than silently dropping it.
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+            r#"{"mapping": {"Chef": "cooking"}}"#,
+        ]));
+        let result =
+            match_themes_to_personas(&llm, &["cooking".to_string()], &[persona("Chef", "r")]).await;
+        assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    #[tokio::test]
+    async fn prepare_single_hop_scenarios_errors_without_entity_nodes() {
+        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![]));
+        let graph = KnowledgeGraph::new().add_node(text_node("c1", "no entities"));
+        let result = prepare_single_hop_scenarios(&llm, &graph, &[persona("P", "r")], 5).await;
+        assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    /// Live gate (env-gated): the real model matches a node's astronomy entities to the
+    /// astronomer persona (not the chef), producing scenarios anchored on the relevant persona.
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY; run with --ignored"]
+    async fn live_prepare_single_hop_scenarios_matches_relevant_persona() {
+        let Some(client) = crate::ProviderConfig::from_env().chat_client() else {
+            eprintln!("skipping live scenario prep: OPENAI_API_KEY not set");
+            return;
+        };
+        let llm: Arc<dyn LlmProvider> = Arc::new(client);
+        let graph = KnowledgeGraph::new().add_node(entitied_chunk("c1", &["galaxy", "telescope"]));
+        let personas = [
+            persona("Astronomer", "Studies stars, galaxies, and telescopes."),
+            persona("Chef", "Cooks food and develops recipes."),
+        ];
+        let scenarios = prepare_single_hop_scenarios(&llm, &graph, &personas, 5)
+            .await
+            .expect("live scenarios");
+        assert!(
+            !scenarios.is_empty(),
+            "expected scenarios from the matched persona"
+        );
+        assert!(
+            scenarios.iter().all(|s| s.persona.name == "Astronomer"),
+            "astronomy terms should match the astronomer, not the chef: {scenarios:?}"
+        );
+        // Each scenario is well-formed: capped at n, anchored on the input node, term drawn from
+        // its entities.
+        assert!(scenarios.len() <= 5);
+        assert!(scenarios.iter().all(|s| s.node_id == "c1"));
+        assert!(
+            scenarios
+                .iter()
+                .all(|s| ["galaxy", "telescope"].contains(&s.term.as_str())),
+            "terms must come from the node's entities: {scenarios:?}"
         );
     }
 }
