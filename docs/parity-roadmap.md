@@ -11,8 +11,8 @@ A prioritized plan to maximize **functional replication** of the Python
 (7/7) — all LLM metrics live-verified vs DeepSeek; `context_utilization` wired into the
 `ragas evaluate` CLI default. Phase 4 ✅ (7/7) — DataCompy + deterministic tool-call metrics plus the
 LLM agentic metrics (`AgentGoalAccuracy` with/without reference, `TopicAdherence`,
-`InstanceSpecificRubrics`), all live-verified vs DeepSeek (2026-06-06). Phase 5 🔶 (retry/timeout +
-caching decorators; all 3 critical bugs fixed — incl. the FixOutputFormat repair half (PR #20); plus `evaluate()` options — `column_map`,
+`InstanceSpecificRubrics`), all live-verified vs DeepSeek (2026-06-06). Phase 5 ✅ (parity-complete with an honest N/A/deferred tail — closed PR #22; retry/timeout +
+caching decorators incl. a persistent `DiskCacheBackend`; all 3 critical bugs fixed — incl. the FixOutputFormat repair half (PR #20); plus `evaluate()` options — `column_map`,
 `raise_exceptions`, `usage_summary` on `EvaluationReport`, per-token cost API, optional tiktoken
 token counts; `LLMDidNotFinish` truncation detection; lifecycle callbacks). Added
 `SemanticSimilarityMetric` (ragas `answer_similarity` — embedding cosine of response vs reference,
@@ -200,7 +200,7 @@ additions (`reference_topics`) + transcript renderers. Share a transcript render
 | **TopicAdherenceScore** | L | medium | 3-stage pipeline (topic extraction, refusal detection, in-scope classification) + P/R/F1, plus `reference_topics` on `MultiTurnSample`. |
 | **DataCompyScore** | M | medium | Parse reference/response as CSV strings, on-index row equality + per-column unequal count, P/R/F1 modes. Needs a `csv` crate (already a dep). |
 
-## Phase 5 — Runtime/backend hardening + prompt-system fidelity 🔶 IN PROGRESS
+## Phase 5 — Runtime/backend hardening + prompt-system fidelity ✅ DONE (parity-complete; honest N/A/deferred tail)
 
 *Makes the existing pipeline robust and faithful rather than adding metrics. Several are **CRITICAL
 latent bugs** — high value because they affect every metric.*
@@ -286,18 +286,38 @@ latent bugs** — high value because they affect every metric.*
 > follow-up). Also added an agentic repair test + `prompts().len()==2` assertions on the four
 > unparseable-output gates to prove the repair path actually runs.
 
-> **Still TODO (Phase 5):** `token_usage_parser`/`metric.init` hooks, per-provider usage parsers,
-> caching-into-eval, PydanticPrompt renderer + Loss.
+> ✅ **Phase 5 closed 2026-06-07 (PR #22).** The remaining `evaluate()`-option items are **N/A by
+> Rust design**, not unfinished work — documenting them honestly rather than adding redundant/dead code:
+> - **`token_usage_parser` / per-provider `TokenUsageParser`** — Python needs a caller-supplied
+>   parser because its LLM abstraction returns a raw `LLMResult` whose usage shape varies. ragas-rs
+>   parses usage at the **provider boundary** (`parse_chat_response` → `LlmResponse.usage`), so the
+>   OpenAI-compatible shape (every provider this crate targets) is parsed by default and any other
+>   provider parses its own usage in its `LlmProvider` impl — there is no raw-output layer for an
+>   external parser to sit on. Cost is already on the report (`UsageSummary::estimated_cost`).
+> - **`metric.init(run_config)`** — Python injects the run config / LLM into each metric just before
+>   scoring; ragas-rs metrics are constructed **ready** with their providers (`FaithfulnessMetric::new(llm)`),
+>   so there is no separate init step.
+> - **`batch_size`** — Python chunks the dataset to bound concurrency; ragas-rs bounds it directly via
+>   `RunConfig` concurrency in the `AsyncExecutor` (functional equivalent).
+> - **PydanticPrompt renderer + `Loss`** — explicitly "build just-ahead-of the optimizer to avoid dead
+>   code", and the real 4-LLM-stage optimizer is in the **deferred/infeasible** tail (needs a metric
+>   prompt-set abstraction with no Rust equivalent). Building Loss now would be dead code → **deferred
+>   with the optimizer**.
+>
+> Everything else in Phase 5 is done: retry/timeout, response caching incl. the persistent
+> `DiskCacheBackend`, FixOutputFormat repair + `LLMDidNotFinish`, `column_map`, `raise_exceptions`,
+> usage + cost on the `EvaluationReport`, lifecycle callbacks, and tiktoken token counts behind the
+> `tokenizer` feature. **Phase 5 ✅.**
 
 | Item | Effort | Value | Approach |
 |---|---|---|---|
 | **RunConfig retry/backoff + per-op timeout** | M | high | **CRITICAL:** retry & timeout are currently *dead config* (only concurrency is consumed). Add exponential-backoff wrapper + `tokio::time::timeout` per job. |
 | **Provider response caching** ✅ | M | medium | ✅ DONE — `CachingLlmProvider`/`CachingEmbeddingProvider` decorators (PR #5) **plus** a pluggable `CacheBackend` trait with `InMemoryCacheBackend` (default) and **`DiskCacheBackend`** (PR #21): JSON-file-per-entry persistence; filename = FNV-1a of the key (a fully specified algorithm → stable across runs/machines/Rust releases, unlike std `DefaultHasher`), full key stored in-file + verified on read → collisions degrade to a miss, never a wrong value; **atomic writes** (temp file + rename) so concurrent readers never see a torn file; an unserializable request bypasses the cache (no empty-key collision); all I/O best-effort + mutex-poison-recovering (cache failure never breaks eval). Re-running an eval over the same inputs serves cached responses instead of re-calling the model — faithful analog of Python's `DiskCacheBackend` minus the `diskcache` dep. Deterministic (cross-instance persistence tests for both LLM and embedding paths + corrupt/key-mismatch/fall-through gates, no live gate). |
 | **FixOutputFormat repair + `LLMDidNotFinishException`** ✅ | M | high | ✅ DONE — `LLMDidNotFinishException` (PR #3, truncation in `parse_chat_response`) **and** the second-stage LLM repair (PR #20): `generate_and_parse` + `fix_output_format` route all ~26 metric/agentic `generate`+`parse_json` sites through a `FixOutputFormat`-style repair-on-parse-failure pass. Live-verified (FX). |
-| **`evaluate()` options: column_map, raise_exceptions, token_usage_parser, metric.init** | M | high | Core `evaluate()` lacks column remapping, raise-vs-swallow toggle, per-provider token parsers, and an init lifecycle hook. |
-| **Per-provider TokenUsageParser + cost on report** | M | medium | Only OpenAI's response shape is parsed; add a trait + per-provider impls, attach total_tokens/cost to `EvaluationReport`. |
+| **`evaluate()` options: column_map, raise_exceptions, token_usage_parser, metric.init** | M | high | ✅ `column_map` + `raise_exceptions` shipped (`evaluate_with_config`). **N/A by Rust design:** `token_usage_parser` (usage is parsed at the provider boundary into `LlmResponse.usage`, not via a raw-output layer) and `metric.init` (metrics are constructed ready with their providers — no separate init step). |
+| **Per-provider TokenUsageParser + cost on report** | M | medium | ✅ Cost on report (`UsageSummary::estimated_cost`). Per-provider parsing is **N/A by Rust design** — each `LlmProvider` impl parses its own usage into `LlmResponse.usage`; the OpenAI-compatible shape (every targeted provider) is parsed by default in `parse_chat_response`. |
 | **`num_tokens_from_string` via tiktoken-rs + real Tokenizer trait** | M | low | `LazyTokenizer` is a whitespace stub; real BPE counts feed cost + testset bins. (HF-vocab path is model-dependent — mark it.) |
-| **PydanticPrompt-equivalent renderer + Loss types (foundation)** | L | medium | Deterministic `to_string()` renderer + `Loss` trait (MSE/Binary). Build Loss *just-ahead-of* the optimizer to avoid dead code. |
+| **PydanticPrompt-equivalent renderer + Loss types (foundation)** ⏸️ | L | medium | **Deferred with the optimizer.** Loss is to be built *just-ahead-of* the optimizer to avoid dead code, and the real 4-LLM-stage `GeneticOptimizer` is in the deferred/infeasible tail (needs a metric prompt-set abstraction with no Rust equivalent). Building Loss now = dead code, so it moves with the optimizer. |
 
 ## Phase 6 — Testset generation stack (heaviest portable subsystem)
 
