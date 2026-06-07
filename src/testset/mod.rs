@@ -5124,16 +5124,17 @@ social platforms, SEO, and email campaigns.",
         // Two entity chunks (so neither is skipped by node selection), but only c1 has text.
         // n=2 -> samples_per_node=1; the c2 scenario is dropped for lacking text rather than
         // failing the whole dataset. Mapping is called per node, then one q/a call for c1.
-        let llm: Arc<dyn LlmProvider> = Arc::new(ScriptedLlm::new(vec![
+        let llm = Arc::new(ScriptedLlm::new(vec![
             r#"{"mapping": {"P": ["alpha"]}}"#,
             r#"{"mapping": {"P": ["beta"]}}"#,
             r#"{"query": "Q?", "answer": "A."}"#,
         ]));
+        let llm_dyn: Arc<dyn LlmProvider> = llm.clone();
         let graph = KnowledgeGraph::new()
             .add_node(entitied_text_chunk("c1", &["alpha"], "alpha content"))
             .add_node(entitied_chunk("c2", &["beta"]));
 
-        let dataset = SingleHopSpecificSynthesizer::new(llm)
+        let dataset = SingleHopSpecificSynthesizer::new(llm_dyn)
             .generate(&graph, &[persona("P", "r")], 2)
             .await
             .expect("dataset");
@@ -5146,6 +5147,9 @@ social platforms, SEO, and email campaigns.",
                 .map(String::as_str),
             Some("c1")
         );
+        // Both nodes' theme-persona mappings are requested (c1 + c2), then exactly one query/answer
+        // call for the surviving c1 scenario — pins that c2 is still mapped, only its sample dropped.
+        assert_eq!(llm.prompts().len(), 3);
     }
 
     #[tokio::test]
@@ -5262,6 +5266,24 @@ Astronomers use telescopes to observe distant galaxies and measure their redshif
                 sample.metadata.get("persona_name").map(String::as_str),
                 Some("Astronomer"),
                 "astronomy terms should anchor on the astronomer, not the chef"
+            );
+            // Full synthesizer contract: style/length recorded and the term drawn from the node.
+            assert!(
+                sample.metadata.contains_key("query_style")
+                    && sample.metadata.contains_key("query_length"),
+                "missing style/length metadata: {:?}",
+                sample.metadata
+            );
+            assert!(
+                ["galaxy", "telescope"].contains(
+                    &sample
+                        .metadata
+                        .get("term")
+                        .map(String::as_str)
+                        .unwrap_or("")
+                ),
+                "term must come from the node entities: {:?}",
+                sample.metadata.get("term")
             );
         }
     }
