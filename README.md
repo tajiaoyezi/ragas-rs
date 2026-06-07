@@ -33,12 +33,13 @@ Honest caveats:
 
 ## Features
 
-- **Metrics (real):** ~33 metrics on the `Metric` / `MultiTurnMetric` traits.
+- **Metrics (real):** ~35 metrics on the `Metric` / `MultiTurnMetric` traits.
   - *13 deterministic (no provider):* `ExactMatch`, `StringPresence`, `NonLLMStringSimilarity`
     (Levenshtein/Hamming/Jaro/Jaro-Winkler), `BleuScore`, `ChrfScore`, `RougeScore`
     (rouge1/2/L × precision/recall/F), `NonLLM`/`IDBased` context precision & recall,
     `DataCompyScore`, `ToolCallAccuracy`/`ToolCallF1` — unit-tested offline.
-  - *20 LLM/embedding (live-verified, see above):* Faithfulness, ResponseRelevancy, Context
+  - *22 LLM/embedding (live-verified, see above):* Faithfulness, ResponseRelevancy,
+    SemanticSimilarity (answer_similarity — embedding cosine of response vs reference), Context
     Precision/Recall/Utilization/Relevance/EntityRecall, FactualCorrectness,
     AnswerCorrectness/Accuracy, AspectCritic, SimpleCriteria, SqlSemanticEquivalence,
     ResponseGroundedness, RubricsScore, SummarizationScore, NoiseSensitivity, and the agentic
