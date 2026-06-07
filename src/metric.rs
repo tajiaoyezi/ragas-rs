@@ -210,6 +210,19 @@ CONTEXT:\n{}\n\nSTATEMENTS:\n{numbered}",
             "faithfulness statement verification",
         )
         .await?;
+        // The prompt requires exactly one verdict per statement. A count mismatch would make the
+        // score (supported / statements.len()) mix two denominators, so fail loudly instead.
+        // (Documented divergence: Python ragas scores over the returned subset; we treat a partial
+        // classification as an unreliable score and error.)
+        if parsed.verdicts.len() != statements.len() {
+            return Err(RagasError::Parse {
+                message: format!(
+                    "faithfulness statement verification: expected {} verdicts (one per statement), got {}",
+                    statements.len(),
+                    parsed.verdicts.len()
+                ),
+            });
+        }
         Ok(parsed.verdicts)
     }
 }
@@ -815,6 +828,17 @@ QUESTION: {}\n\nCONTEXT:\n{}\n\nANSWER SENTENCES:\n{numbered}",
             "context recall classification",
         )
         .await?;
+        // Require one classification per sentence so `attributed / sentences.len()` is consistent
+        // (same documented divergence as faithfulness: error rather than score over a subset).
+        if parsed.classifications.len() != sentences.len() {
+            return Err(RagasError::Parse {
+                message: format!(
+                    "context recall classification: expected {} classifications (one per sentence), got {}",
+                    sentences.len(),
+                    parsed.classifications.len()
+                ),
+            });
+        }
         Ok(parsed.classifications)
     }
 }
@@ -2029,6 +2053,17 @@ statement, in order.\n\nCONTEXT:\n{context}\n\nSTATEMENTS:\n{numbered}",
         label,
     )
     .await?;
+    // The caller looks these verdicts up positionally (verdicts.get(index)); a short list would
+    // silently mis-classify the trailing statements, so require one verdict per statement.
+    if parsed.verdicts.len() != statements.len() {
+        return Err(RagasError::Parse {
+            message: format!(
+                "{label}: expected {} verdicts (one per statement), got {}",
+                statements.len(),
+                parsed.verdicts.len()
+            ),
+        });
+    }
     Ok(parsed
         .verdicts
         .iter()
@@ -2094,6 +2129,18 @@ entry per context, in order.\n\nGROUND TRUTH: {reference}\n\nCONTEXTS:\n{numbere
             "noise sensitivity context relevance",
         )
         .await?;
+        // Require one verdict per context: the verdicts are looked up positionally by context
+        // index, so a short list would silently mis-classify the trailing contexts (same
+        // documented divergence: error rather than guess).
+        if parsed.verdicts.len() != contexts.len() {
+            return Err(RagasError::Parse {
+                message: format!(
+                    "noise sensitivity context relevance: expected {} verdicts (one per context), got {}",
+                    contexts.len(),
+                    parsed.verdicts.len()
+                ),
+            });
+        }
         Ok(parsed
             .verdicts
             .iter()
@@ -2810,10 +2857,13 @@ impl Metric for DataCompyScoreMetric {
 }
 
 pub fn cosine_similarity(left: &[f32], right: &[f32]) -> f64 {
-    let len = left.len().min(right.len());
-    if len == 0 {
+    // Cosine similarity is only defined for equal-dimension vectors. Mismatched lengths (a provider
+    // bug / misconfiguration) are treated as no similarity (0.0) rather than silently computing over
+    // a truncated prefix — which could fabricate a misleadingly high score.
+    if left.len() != right.len() || left.is_empty() {
         return 0.0;
     }
+    let len = left.len();
 
     let mut dot = 0.0f64;
     let mut left_norm = 0.0f64;
@@ -3472,6 +3522,62 @@ mod tests {
         assert!(error.to_string().contains("statement generation"));
         // The repair path actually ran (first call + one repair call), not a provider exhaustion.
         assert_eq!(llm.prompts().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn faithfulness_errors_on_verdict_count_mismatch() {
+        // The model returns fewer verdicts than statements: the score would mix denominators
+        // (supported over verdicts / statements.len()), so the metric errors instead of
+        // silently miscomputing. The JSON is valid, so no repair is attempted.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"statements":["a","b"]}"#,
+            r#"{"verdicts":[{"verdict":1}]}"#,
+        ]));
+        let error = FaithfulnessMetric::new(llm)
+            .score(&faithfulness_sample())
+            .await
+            .expect_err("verdict count mismatch");
+        assert!(error.to_string().contains("expected 2 verdicts"));
+    }
+
+    #[tokio::test]
+    async fn context_recall_errors_on_classification_count_mismatch() {
+        // Fewer classifications than reference sentences -> error, not a silently low recall.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"classifications":[{"verdict":1}]}"#,
+        ]));
+        let error = LlmContextRecallMetric::new(llm)
+            .score(&context_recall_sample())
+            .await
+            .expect_err("classification count mismatch");
+        assert!(error.to_string().contains("expected 2 classifications"));
+    }
+
+    #[tokio::test]
+    async fn noise_sensitivity_errors_on_verdict_count_mismatch() {
+        // The correctness call returns only one verdict for two statements; the positional matrix
+        // lookup would mis-classify the trailing claim, so the metric errors.
+        let sample =
+            SingleTurnSample::new("q", "resp", vec!["ctx1".to_string(), "ctx2".to_string()])
+                .with_reference("ref");
+        let metric = NoiseSensitivityMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"statements":["a","b"]}"#,
+            r#"{"verdicts":[{"verdict":1}]}"#,
+        ])));
+        let error = metric
+            .score(&sample)
+            .await
+            .expect_err("verdict count mismatch");
+        assert!(error.to_string().contains("expected 2 verdicts"));
+    }
+
+    #[test]
+    fn cosine_similarity_mismatched_lengths_is_zero() {
+        // Different-dimension vectors have no defined cosine similarity: return 0.0 rather than
+        // silently computing over a truncated prefix.
+        assert_eq!(cosine_similarity(&[1.0, 0.0, 0.0], &[1.0, 0.0]), 0.0);
+        // Sanity: equal-length identical vectors are still 1.0.
+        assert!((cosine_similarity(&[1.0, 2.0], &[1.0, 2.0]) - 1.0).abs() < 1e-9);
     }
 
     fn relevancy_sample() -> SingleTurnSample {
