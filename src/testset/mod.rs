@@ -7537,7 +7537,15 @@ Astronomers use telescopes to observe distant galaxies and measure their redshif
 
         let chunks = split.nodes_by_type("chunk");
         assert_eq!(chunks.len(), 3);
-        assert!(chunks[0].id.starts_with("doc-1::h"));
+        // Deterministic ids + traceability properties (source_id back to the doc, ordered index).
+        for (i, chunk) in chunks.iter().enumerate() {
+            assert_eq!(chunk.id, format!("doc-1::h{i}"));
+            assert_eq!(text_property(chunk, "source_id"), Some("doc-1"));
+            assert_eq!(
+                chunk.properties.get("chunk_index"),
+                Some(&GraphProperty::Number(i as f64))
+            );
+        }
         // child edges: document -> each chunk; next edges: chunk -> chunk in order.
         assert_eq!(split.edges_by_relationship("child").len(), 3);
         assert_eq!(split.edges_by_relationship("next").len(), 2);
