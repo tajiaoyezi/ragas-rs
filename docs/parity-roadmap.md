@@ -279,6 +279,12 @@ latent bugs** — high value because they affect every metric.*
 > repair-via-wrapper, direct-json fallback, repair-still-fails → context error) + a live gate
 > (**FX**: a real model repairs a malformed `{"value": 42}` output). The testset synthesizers'
 > `parse_json_block` (Value) path is a separate, optional follow-up (not in the "~24").
+> **Review fix:** the first-parse helper `extract_json_block` was rewritten to mirror Python's
+> `prompt/utils.py::extract_json` — ` ```json ` fence preference + first **balanced** `{...}`/`[...]`
+> structure via bracket-matching (was first-`{` to last-`}`), so multi-object / array / prose-with-
+> braces outputs parse like Python (the testset twin `parse_json_block` keeps the old logic — same
+> follow-up). Also added an agentic repair test + `prompts().len()==2` assertions on the four
+> unparseable-output gates to prove the repair path actually runs.
 
 > **Still TODO (Phase 5):** `token_usage_parser`/`metric.init` hooks, per-provider usage parsers,
 > caching-into-eval, PydanticPrompt renderer + Loss.

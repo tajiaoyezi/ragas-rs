@@ -243,11 +243,37 @@ pub(crate) fn parse_json<T: serde::de::DeserializeOwned>(
     })
 }
 
+/// Extract the first complete JSON structure from an LLM response — a faithful port of Python
+/// ragas's `prompt/utils.py::extract_json`: prefer a ` ```json ` markdown fence, then take the
+/// FIRST balanced `{...}` or `[...]` structure by bracket-matching (not first-`{` to last-`}`), so
+/// a response carrying multiple objects, a top-level array, or prose-with-braces parses the same
+/// way it does in Python. Falls back to the trimmed text when no delimiter is found or it never
+/// balances.
 fn extract_json_block(content: &str) -> &str {
-    match (content.find('{'), content.rfind('}')) {
-        (Some(start), Some(end)) if end >= start => &content[start..=end],
-        _ => content.trim(),
+    let text = match content.find("```json") {
+        Some(idx) => &content[idx..],
+        None => content,
+    };
+    let start = match (text.find('['), text.find('{')) {
+        (Some(bracket), Some(brace)) => bracket.min(brace),
+        (Some(bracket), None) => bracket,
+        (None, Some(brace)) => brace,
+        (None, None) => return text.trim(),
+    };
+    let open = text.as_bytes()[start];
+    let close = if open == b'[' { b']' } else { b'}' };
+    let mut depth = 0i32;
+    for (index, &byte) in text.as_bytes().iter().enumerate().skip(start) {
+        if byte == open {
+            depth += 1;
+        } else if byte == close {
+            depth -= 1;
+        }
+        if depth == 0 {
+            return &text[start..=index];
+        }
     }
+    text.trim()
 }
 
 /// The `{ "text": ... }` wrapper returned by the [`fix_output_format`] repair prompt — the
@@ -3366,6 +3392,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn generate_and_parse_repair_with_empty_text_payload_surfaces_context_error() {
+        // The repair wrapper parses but carries an empty payload; re-parsing "" as the target fails
+        // with the (context-tagged) parse error — not a provider-exhaustion error.
+        let llm = Arc::new(ScriptedLlm::new(vec!["no json", r#"{"text":""}"#]));
+        let result: Result<Probe, _> = generate_and_parse(
+            llm.as_ref(),
+            LlmRequest {
+                messages: vec![ChatMessage::user("x".to_string())],
+                temperature: Some(0.0),
+            },
+            "probe value",
+        )
+        .await;
+
+        let error = result.expect_err("empty repaired payload");
+        assert!(error.to_string().contains("probe value"));
+        assert_eq!(llm.prompts().len(), 2);
+    }
+
+    #[test]
+    fn extract_json_block_takes_first_complete_object_like_python() {
+        // Two objects with prose between: first-`{` to last-`}` would yield malformed text, but the
+        // bracket-matching port (Python `extract_json`) picks the first complete object.
+        let parsed: Probe = parse_json(r#"{"value": 1} and then later {"value": 2}"#, "probe")
+            .expect("first object");
+        assert_eq!(parsed, Probe { value: 1 });
+    }
+
+    #[test]
+    fn extract_json_block_prefers_json_fence_over_earlier_braces() {
+        // Prose containing braces precedes a ```json fence; Python jumps to the fence first.
+        let parsed: Probe = parse_json(
+            "Here is {not the answer} then:\n```json\n{\"value\": 3}\n```",
+            "probe",
+        )
+        .expect("fenced object");
+        assert_eq!(parsed, Probe { value: 3 });
+    }
+
+    #[tokio::test]
     async fn generate_and_parse_surfaces_context_error_when_repair_also_fails() {
         // The repair call returns valid `{text: ...}` but its payload still isn't the target type,
         // so the final parse fails and the original (context-tagged) error is surfaced.
@@ -3391,11 +3457,12 @@ mod tests {
     #[tokio::test]
     async fn faithfulness_surfaces_unparseable_model_output_as_error() {
         // First output is unparseable; the repair call also fails to produce valid JSON, so the
-        // typed (context-tagged) parse error is surfaced.
-        let metric = FaithfulnessMetric::new(Arc::new(ScriptedLlm::new(vec![
+        // typed (context-tagged) parse error is surfaced — after exactly one repair attempt.
+        let llm = Arc::new(ScriptedLlm::new(vec![
             "I cannot break this into statements.",
             r#"{"text":"still not valid json"}"#,
-        ])));
+        ]));
+        let metric = FaithfulnessMetric::new(llm.clone());
 
         let error = metric
             .score(&faithfulness_sample())
@@ -3403,6 +3470,8 @@ mod tests {
             .expect_err("malformed statement output");
 
         assert!(error.to_string().contains("statement generation"));
+        // The repair path actually ran (first call + one repair call), not a provider exhaustion.
+        assert_eq!(llm.prompts().len(), 2);
     }
 
     fn relevancy_sample() -> SingleTurnSample {
@@ -3517,13 +3586,11 @@ mod tests {
 
     #[tokio::test]
     async fn response_relevancy_surfaces_unparseable_model_output_as_error() {
-        let metric = ResponseRelevancyMetric::new(
-            Arc::new(ScriptedLlm::new(vec![
-                "I cannot turn this into questions.",
-                r#"{"text":"still not valid json"}"#,
-            ])),
-            Arc::new(PanicEmbeddingProvider),
-        );
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            "I cannot turn this into questions.",
+            r#"{"text":"still not valid json"}"#,
+        ]));
+        let metric = ResponseRelevancyMetric::new(llm.clone(), Arc::new(PanicEmbeddingProvider));
 
         let error = metric
             .score(&relevancy_sample())
@@ -3531,6 +3598,7 @@ mod tests {
             .expect_err("malformed question output");
 
         assert!(error.to_string().contains("question generation"));
+        assert_eq!(llm.prompts().len(), 2);
     }
 
     fn context_precision_sample(contexts: Vec<&str>) -> SingleTurnSample {
@@ -3630,10 +3698,11 @@ mod tests {
 
     #[tokio::test]
     async fn context_precision_surfaces_unparseable_model_output_as_error() {
-        let metric = ContextPrecisionMetric::new(Arc::new(ScriptedLlm::new(vec![
+        let llm = Arc::new(ScriptedLlm::new(vec![
             "This context is somewhat related I think.",
             r#"{"text":"still not valid json"}"#,
-        ])));
+        ]));
+        let metric = ContextPrecisionMetric::new(llm.clone());
         let sample = context_precision_sample(vec!["ctx-a"]);
 
         let error = metric
@@ -3642,6 +3711,7 @@ mod tests {
             .expect_err("malformed verdict output");
 
         assert!(error.to_string().contains("context precision verdict"));
+        assert_eq!(llm.prompts().len(), 2);
     }
 
     fn context_recall_sample() -> SingleTurnSample {
@@ -3733,10 +3803,11 @@ mod tests {
 
     #[tokio::test]
     async fn context_recall_surfaces_unparseable_model_output_as_error() {
-        let metric = LlmContextRecallMetric::new(Arc::new(ScriptedLlm::new(vec![
+        let llm = Arc::new(ScriptedLlm::new(vec![
             "I think both sentences are kind of supported.",
             r#"{"text":"still not valid json"}"#,
-        ])));
+        ]));
+        let metric = LlmContextRecallMetric::new(llm.clone());
 
         let error = metric
             .score(&context_recall_sample())
@@ -3744,6 +3815,7 @@ mod tests {
             .expect_err("malformed classification output");
 
         assert!(error.to_string().contains("context recall classification"));
+        assert_eq!(llm.prompts().len(), 2);
     }
 
     // ---------------------------------------------------------------------
@@ -3971,6 +4043,8 @@ mod tests {
         .expect("real model repaired the malformed output");
 
         assert_eq!(parsed, Probe { value: 42 });
+        // Exactly the injected malformed call + one real repair call — the repair path ran.
+        assert_eq!(*provider.calls.lock().expect("calls"), 2);
     }
 
     #[tokio::test]

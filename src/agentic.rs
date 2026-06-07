@@ -722,6 +722,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn agent_goal_accuracy_repairs_malformed_inference_via_second_call() {
+        // The first inference output is unparseable; the FixOutputFormat repair recovers it through
+        // the {text: ...} wrapper, so the metric still scores. Proves the repair path (shared
+        // `generate_and_parse`) reaches the agentic call sites, not just src/metric.rs.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            "Sorry, no JSON — but the goal was to book a table and it was booked.",
+            r#"{"text":"{\"user_goal\":\"book a table\",\"end_state\":\"a table is booked\"}"}"#,
+            r#"{"reason":"matches the reference","verdict":"1"}"#,
+        ]));
+        let sample = MultiTurnSample::new(vec![
+            Message::user("book a table"),
+            Message::assistant("done, table booked"),
+        ])
+        .with_reference("a table is booked");
+        let metric = AgentGoalAccuracyWithReferenceMetric::new(llm.clone());
+        let result = metric
+            .score_multi_turn(&sample)
+            .await
+            .expect("score after repair");
+        assert_eq!(numeric(&result), 1.0);
+        // infer (malformed) + repair + compare = 3 calls.
+        assert_eq!(llm.call_count(), 3);
+    }
+
+    #[tokio::test]
     async fn agent_goal_accuracy_with_reference_scores_zero_on_mismatch() {
         let llm = Arc::new(ScriptedLlm::new(vec![
             r#"{"user_goal":"book a table","end_state":"no table available"}"#,
