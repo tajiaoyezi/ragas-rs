@@ -95,6 +95,17 @@ adversarial one. Until such a run exists, the honest status of an LLM metric is
   answer drawn from the passage (mirrored into `reference`), the source passage as its
   `reference_contexts`, and is anchored on the astronomer persona (not the chef).
 
+### Follow-up run — multi-hop specific synthesizer (Phase 6)
+
+- **Date:** 2026-06-07
+- **Provider:** DeepSeek (chat), same configuration.
+- **Command:** `cargo test --lib live_multi_hop_specific_synthesizer_generates_grounded_testset -- --ignored`
+- **Result:** **1 passed, 0 failed** (~17s) — the `MultiHopSpecificSynthesizer::generate` gate
+  marked **(MHS)** below: the real model turns an entity-overlap cluster (two chunks sharing the
+  "Einstein" entity, joined by an `entities_overlap` edge) + a historian/chef persona pair into a
+  grounded multi-hop test set end-to-end — every sample spans both hop-tagged contexts
+  (`<1-hop>`/`<2-hop>`), carries a grounded answer, and is anchored on the historian (not the chef).
+
 ## Gates (all PASS)
 
 LLM metric discrimination gates (20):
@@ -126,7 +137,7 @@ LLM metric discrimination gates (20):
 `*` also exercises the embedding endpoint. **(P4)** = Phase-4 agentic metrics, run in the
 follow-up above.
 
-End-to-end / testset gates (10):
+End-to-end / testset gates (11):
 
 - CLI `evaluate` with a live provider — `live_evaluate_command_runs_llm_metrics`
 - LLM test-set synthesizer, single-hop — `test_31_2_7_live_synthesizer_generates_from_real_model`
@@ -138,6 +149,7 @@ End-to-end / testset gates (10):
 - KG persona generation **(PG)** — `live_generate_personas_from_kg_builds_a_persona`
 - Single-hop scenario prep **(SH)** — `live_prepare_single_hop_scenarios_matches_relevant_persona`
 - Single-hop specific synthesizer **(SHS)** — `live_single_hop_specific_synthesizer_generates_grounded_testset`
+- Multi-hop specific synthesizer **(MHS)** — `live_multi_hop_specific_synthesizer_generates_grounded_testset`
 
 ## What this proves — and what it does NOT
 
