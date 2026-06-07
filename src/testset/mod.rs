@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::metric::generate_and_parse;
 use crate::{
     ChatMessage, DistanceMeasure, EmbeddingProvider, EmbeddingRequest, EvaluationDataset,
     LlmProvider, LlmRequest, RagasError, SingleTurnSample, cosine_similarity,
@@ -1115,17 +1116,10 @@ struct SynthesizedQa {
     answer: String,
 }
 
-/// Deserialize a `{"question": "...", "answer": "..."}` object from an LLM response,
-/// tolerating markdown fences or surrounding prose by extracting the outermost `{ .. }`
-/// block (the JSON-repair path, mirroring `metric::parse_json`/`extract_json_block`).
-fn parse_synthesized_qa(content: &str, context: &str) -> Result<SynthesizedQa, RagasError> {
-    let block = match (content.find('{'), content.rfind('}')) {
-        (Some(start), Some(end)) if end >= start => &content[start..=end],
-        _ => content.trim(),
-    };
-    let qa: SynthesizedQa = serde_json::from_str(block).map_err(|error| RagasError::Parse {
-        message: format!("{context}: {error}"),
-    })?;
+/// Reject a parsed Q/A pair with an empty question or answer. This is a **semantic** check, not a
+/// parse failure, so it deliberately runs *after* [`generate_and_parse`] (it does not — and should
+/// not — trigger the `FixOutputFormat` repair, which only re-tries malformed JSON).
+fn nonempty_qa(qa: SynthesizedQa, context: &str) -> Result<SynthesizedQa, RagasError> {
     if qa.question.trim().is_empty() || qa.answer.trim().is_empty() {
         return Err(RagasError::Parse {
             message: format!("{context}: empty question or answer"),
@@ -1258,14 +1252,16 @@ and write ONE self-contained question that is fully answerable using ONLY that c
 together with its correct answer. Do not ask about anything not present in the context. \
 Return ONLY JSON of the form {{\"question\": \"...\", \"answer\": \"...\"}}.\n\nCONTEXT:\n{context}"
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let qa: SynthesizedQa = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        parse_synthesized_qa(&response.content, "single-hop testset synthesis")
+            },
+            "single-hop testset synthesis",
+        )
+        .await?;
+        nonempty_qa(qa, "single-hop testset synthesis")
     }
 
     /// Ask the LLM to write a multi-hop Q/A pair that requires combining two chunks.
@@ -1281,14 +1277,16 @@ BOTH passages, together with its correct answer. Use ONLY information present in
 passages. Return ONLY JSON of the form {{\"question\": \"...\", \"answer\": \"...\"}}.\n\n\
 CONTEXT A:\n{first_context}\n\nCONTEXT B:\n{second_context}"
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let qa: SynthesizedQa = generate_and_parse(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        parse_synthesized_qa(&response.content, "multi-hop testset synthesis")
+            },
+            "multi-hop testset synthesis",
+        )
+        .await?;
+        nonempty_qa(qa, "multi-hop testset synthesis")
     }
 }
 
@@ -1402,8 +1400,8 @@ entities. Ensure the number of entities does not exceed {max_num}."
 /// This is the runnable analog of Python `ragas`'s `LLMBasedExtractor` family: it reads the
 /// node's `text` property, splits it into chunks (a char-based substitute for ragas's tiktoken
 /// `split_text_by_token_limit` — token parity is an explicit non-goal), prompts a real
-/// [`LlmProvider`] for the requested property as JSON, and parses the response with the same
-/// outermost-`{ .. }` JSON-repair path used by the synthesizer.
+/// [`LlmProvider`] for the requested property as JSON, and parses the response through the shared
+/// [`generate_and_parse`] path (faithful bracket-matching extraction + `FixOutputFormat` self-heal).
 ///
 /// Single-value kinds (Summary/Title/TopicDescription) use only the first chunk (matching
 /// Python's `chunks[0]`); list kinds (Keyphrases/Headlines/NER/Themes) call the model per chunk
@@ -1489,8 +1487,12 @@ impl LlmExtractor {
 
     async fn extract_list_chunk(&self, chunk: &str) -> Result<Vec<String>, RagasError> {
         let context = self.context();
-        let block = self.generate_block(chunk).await?;
-        let value = parse_json_block(&block, &context)?;
+        let value = generate_and_parse::<serde_json::Value>(
+            self.llm.as_ref(),
+            self.build_request(chunk),
+            &context,
+        )
+        .await?;
         let items = value
             .get(self.kind.json_key())
             .and_then(serde_json::Value::as_array)
@@ -1506,8 +1508,12 @@ impl LlmExtractor {
 
     async fn extract_single_chunk(&self, chunk: &str) -> Result<String, RagasError> {
         let context = self.context();
-        let block = self.generate_block(chunk).await?;
-        let value = parse_json_block(&block, &context)?;
+        let value = generate_and_parse::<serde_json::Value>(
+            self.llm.as_ref(),
+            self.build_request(chunk),
+            &context,
+        )
+        .await?;
         let text = value
             .get(self.kind.json_key())
             .and_then(serde_json::Value::as_str)
@@ -1517,7 +1523,7 @@ impl LlmExtractor {
         Ok(text.trim().to_string())
     }
 
-    async fn generate_block(&self, chunk: &str) -> Result<String, RagasError> {
+    fn build_request(&self, chunk: &str) -> LlmRequest {
         let instruction = self.kind.instruction(self.max_num);
         let key = self.kind.json_key();
         let shape = if self.kind.is_list() {
@@ -1527,31 +1533,15 @@ impl LlmExtractor {
         };
         let prompt =
             format!("{instruction}\nReturn ONLY JSON of the form {shape}.\n\nTEXT:\n{chunk}");
-        let response = self
-            .llm
-            .generate(LlmRequest {
-                messages: vec![ChatMessage::user(prompt)],
-                temperature: Some(0.0),
-            })
-            .await?;
-        Ok(response.content)
+        LlmRequest {
+            messages: vec![ChatMessage::user(prompt)],
+            temperature: Some(0.0),
+        }
     }
 
     fn context(&self) -> String {
         format!("llm extractor '{}'", self.kind.property_name())
     }
-}
-
-/// Extract the outermost `{ .. }` block from an LLM response (tolerating prose / markdown
-/// fences) and parse it as JSON — the JSON-repair path shared with [`parse_synthesized_qa`].
-fn parse_json_block(content: &str, context: &str) -> Result<serde_json::Value, RagasError> {
-    let block = match (content.find('{'), content.rfind('}')) {
-        (Some(start), Some(end)) if end >= start => &content[start..=end],
-        _ => content.trim(),
-    };
-    serde_json::from_str(block).map_err(|error| RagasError::Parse {
-        message: format!("{context}: {error}"),
-    })
 }
 
 /// Drive a real [`LlmProvider`] to extract the `{entities, themes, summary}` triple from a
@@ -1956,14 +1946,15 @@ impl CustomNodeFilter {
 5 range using the rubric. Return ONLY JSON of the form {{\"score\": N}} where N is an integer \
 1-5.\n\nRUBRIC:\n{rubric}\n\nDOCUMENT SUMMARY:\n{summary}\n\nNODE CONTENT:\n{content}"
         );
-        let response = self
-            .llm
-            .generate(LlmRequest {
+        let value = generate_and_parse::<serde_json::Value>(
+            self.llm.as_ref(),
+            LlmRequest {
                 messages: vec![ChatMessage::user(prompt)],
                 temperature: Some(0.0),
-            })
-            .await?;
-        let value = parse_json_block(&response.content, "custom node filter")?;
+            },
+            "custom node filter",
+        )
+        .await?;
         value
             .get("score")
             // Lenient: accept an integer, or a float (e.g. 3.0) rounded to the nearest integer.
@@ -2244,14 +2235,16 @@ async fn generate_persona(
 benefit from the content. Include a unique name and a concise role description of who they are. \
 Return ONLY JSON of the form {{\"name\": \"...\", \"role_description\": \"...\"}}.\n\nSUMMARY:\n{summary}"
     );
-    let response = llm
-        .generate(LlmRequest {
+    let value = generate_and_parse::<serde_json::Value>(
+        llm.as_ref(),
+        LlmRequest {
             messages: vec![ChatMessage::user(prompt)],
             // Python uses temperature 1.0 here for persona diversity.
             temperature: Some(1.0),
-        })
-        .await?;
-    let value = parse_json_block(&response.content, "persona generation")?;
+        },
+        "persona generation",
+    )
+    .await?;
     let field = |key: &str| -> Result<String, RagasError> {
         value
             .get(key)
@@ -2377,13 +2370,15 @@ pub async fn match_themes_to_personas(
 relevant themes based on their role description. Return ONLY JSON of the form {{\"mapping\": \
 {{\"<persona name>\": [\"<theme>\", ...]}}}}.\n\nTHEMES:\n{theme_lines}\n\nPERSONAS:\n{persona_lines}"
     );
-    let response = llm
-        .generate(LlmRequest {
+    let value = generate_and_parse::<serde_json::Value>(
+        llm.as_ref(),
+        LlmRequest {
             messages: vec![ChatMessage::user(prompt)],
             temperature: Some(0.0),
-        })
-        .await?;
-    let value = parse_json_block(&response.content, "theme-persona matching")?;
+        },
+        "theme-persona matching",
+    )
+    .await?;
     let mapping = value
         .get("mapping")
         .and_then(serde_json::Value::as_object)
@@ -2541,13 +2536,15 @@ Return ONLY JSON of the form {{\"query\": \"...\", \"answer\": \"...\"}}.",
         style = scenario.style.as_str(),
         length = scenario.length.as_str(),
     );
-    let response = llm
-        .generate(LlmRequest {
+    let value = generate_and_parse::<serde_json::Value>(
+        llm.as_ref(),
+        LlmRequest {
             messages: vec![ChatMessage::user(prompt)],
             temperature: Some(0.0),
-        })
-        .await?;
-    let value = parse_json_block(&response.content, "single-hop query/answer generation")?;
+        },
+        "single-hop query/answer generation",
+    )
+    .await?;
     let field = |key: &str| -> Result<String, RagasError> {
         value
             .get(key)
@@ -2844,13 +2841,15 @@ Return ONLY JSON of the form {{\"query\": \"...\", \"answer\": \"...\"}}.",
         length = scenario.length.as_str(),
         context = contexts.join("\n\n"),
     );
-    let response = llm
-        .generate(LlmRequest {
+    let value = generate_and_parse::<serde_json::Value>(
+        llm.as_ref(),
+        LlmRequest {
             messages: vec![ChatMessage::user(prompt)],
             temperature: Some(0.0),
-        })
-        .await?;
-    let value = parse_json_block(&response.content, "multi-hop query/answer generation")?;
+        },
+        "multi-hop query/answer generation",
+    )
+    .await?;
     let field = |key: &str| -> Result<String, RagasError> {
         value
             .get(key)
@@ -3005,13 +3004,15 @@ async fn generate_concept_combinations(
 NODE CONCEPTS:\n{lists}\n\n\
 Return ONLY JSON of the form {{\"combinations\": [[\"<concept>\", \"<concept>\"], ...]}}."
     );
-    let response = llm
-        .generate(LlmRequest {
+    let value = generate_and_parse::<serde_json::Value>(
+        llm.as_ref(),
+        LlmRequest {
             messages: vec![ChatMessage::user(prompt)],
             temperature: Some(0.0),
-        })
-        .await?;
-    let value = parse_json_block(&response.content, "concept combination")?;
+        },
+        "concept combination",
+    )
+    .await?;
     let combinations = value
         .get("combinations")
         .and_then(serde_json::Value::as_array)
@@ -4444,9 +4445,13 @@ mod tests {
     #[tokio::test]
     async fn test_31_2_4_malformed_llm_json_propagates_parse_error() {
         // Adversarial: a non-JSON LLM reply surfaces as a parse error rather than a fake
-        // sample.
-        let llm = Arc::new(ScriptedLlm::new(vec!["this is not json at all"]));
-        let error = generate_testset(llm, "doc-1", "Ragas evaluates retrieval.")
+        // sample. The FixOutputFormat repair call also fails to produce valid JSON, so the typed
+        // (context-tagged) parse error is still surfaced.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            "this is not json at all",
+            r#"{"text":"still not valid json"}"#,
+        ]));
+        let error = generate_testset(llm.clone(), "doc-1", "Ragas evaluates retrieval.")
             .await
             .expect_err("malformed JSON should error");
         match error {
@@ -4455,12 +4460,14 @@ mod tests {
             }
             other => panic!("expected parse error, got {other:?}"),
         }
+        // The repair path actually ran (synthesis call + one repair call), not provider exhaustion.
+        assert_eq!(llm.prompts().len(), 2);
     }
 
     #[tokio::test]
     async fn test_31_2_5_json_repair_path_recovers_fenced_output() {
-        // The repair path extracts the outermost { .. } block from prose/markdown fences,
-        // mirroring metric::extract_json_block.
+        // The valid fenced JSON parses on the first try (no repair call): the initial parse and
+        // the repair both extract the first balanced { .. } block via metric::extract_json_block.
         let llm = Arc::new(ScriptedLlm::new(vec![
             "Sure! Here is the data:\n```json\n{\"question\": \"What is RAG?\", \"answer\": \"Retrieval augmented generation.\"}\n```\nHope that helps.",
         ]));
@@ -4473,6 +4480,25 @@ mod tests {
             dataset.iter().next().unwrap().response,
             "Retrieval augmented generation."
         );
+    }
+
+    #[tokio::test]
+    async fn synthesizer_repairs_malformed_qa_via_second_call() {
+        // The first synthesis reply is unparseable; the FixOutputFormat repair recovers a valid
+        // Q/A pair (carried in the {text: ...} wrapper), so the dataset is still produced — the
+        // synthesizer path (generate_and_parse::<SynthesizedQa>) self-heals end-to-end.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            "Sorry, no JSON. Q: what is Ragas? A: an eval framework.",
+            r#"{"text":"{\"question\": \"What is Ragas?\", \"answer\": \"An evaluation framework.\"}"}"#,
+        ]));
+        let dataset = generate_testset(llm.clone(), "doc-1", "Ragas evaluates retrieval.")
+            .await
+            .expect("repaired synthesis");
+
+        assert_eq!(dataset.len(), 1);
+        assert_eq!(dataset.iter().next().unwrap().user_input, "What is Ragas?");
+        // First (malformed) synthesis call + one repair call.
+        assert_eq!(llm.prompts().len(), 2);
     }
 
     #[tokio::test]
@@ -4601,7 +4627,8 @@ binaries that run without a Python runtime.";
 
     #[tokio::test]
     async fn llm_extractor_recovers_fenced_json() {
-        // The repair path extracts the outermost { .. } block from prose/markdown fences.
+        // The valid fenced JSON parses on the first try (no repair call): extract_json_block
+        // takes the first balanced { .. } block from the markdown fence.
         let llm = Arc::new(ScriptedLlm::new(vec![
             "Sure!\n```json\n{\"output\": [\"AI\", \"Automation\"]}\n```\n",
         ]));
@@ -4666,12 +4693,40 @@ binaries that run without a Python runtime.";
 
     #[tokio::test]
     async fn llm_extractor_malformed_json_errors() {
-        let llm = Arc::new(ScriptedLlm::new(vec!["not json at all"]));
+        // The first reply is non-JSON and the repair reply also fails to parse -> Parse error.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            "not json at all",
+            r#"{"text":"still not valid json"}"#,
+        ]));
         let node = text_node("n1", "Some text.");
         let result = LlmExtractor::new(llm, LlmExtractorKind::Ner)
             .extract(&node)
             .await;
         assert!(matches!(result, Err(RagasError::Parse { .. })));
+    }
+
+    #[tokio::test]
+    async fn llm_extractor_repairs_malformed_json_via_second_call() {
+        // First reply is unparseable; the shared FixOutputFormat repair recovers it through the
+        // {text: ...} wrapper, so the extractor still yields entities — testset parsing now
+        // self-heals like the metric/agentic path.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            "Sorry, here are the entities but no JSON: Tesla, Musk.",
+            r#"{"text":"{\"entities\": [\"Tesla\", \"Musk\"]}"}"#,
+        ]));
+        let node = text_node("n1", "Tesla was founded; Musk leads it.");
+        let (name, property) = LlmExtractor::new(llm.clone(), LlmExtractorKind::Ner)
+            .extract(&node)
+            .await
+            .expect("repaired extraction");
+
+        assert_eq!(name, "entities");
+        match property {
+            GraphProperty::TextList(items) => assert!(items.contains(&"Tesla".to_string())),
+            other => panic!("expected an entity list, got {other:?}"),
+        }
+        // First (malformed) call + one repair call.
+        assert_eq!(llm.prompts().len(), 2);
     }
 
     #[tokio::test]
@@ -5459,7 +5514,11 @@ like Berlin and Shanghai.";
 
     #[tokio::test]
     async fn custom_node_filter_malformed_score_errors() {
-        let llm = Arc::new(ScriptedLlm::new(vec!["not json"]));
+        // The first reply is non-JSON and the repair reply also fails to parse -> Parse error.
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            "not json",
+            r#"{"text":"still not valid json"}"#,
+        ]));
         let graph = doc_with_chunks("S", &[("c1", "text")]);
         let result = CustomNodeFilter::new(llm).filter(graph).await;
         assert!(matches!(result, Err(RagasError::Parse { .. })));

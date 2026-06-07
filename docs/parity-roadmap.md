@@ -286,6 +286,19 @@ latent bugs** — high value because they affect every metric.*
 > follow-up). Also added an agentic repair test + `prompts().len()==2` assertions on the four
 > unparseable-output gates to prove the repair path actually runs.
 
+> ✅ **Follow-up closed 2026-06-07 (PR #23)** — the testset module's two local parse helpers are
+> now unified onto the shared path. `parse_json_block` (8 LLM-call sites: the two `LlmExtractor`
+> chunks, `CustomNodeFilter`, persona generation, theme↔persona matching, single/multi-hop
+> query-answer, concept combination) and `parse_synthesized_qa` (the legacy `Synthesizer`'s
+> single/multi-hop QA) were both **removed**; every site now routes through
+> `generate_and_parse::<serde_json::Value>` (or `::<SynthesizedQa>`), so the whole testset
+> generation pipeline gets the **faithful bracket-matching extraction AND the FixOutputFormat
+> self-heal** — one malformed model reply no longer aborts an expensive multi-call run. The Q/A
+> empty-field check became a post-parse `nonempty_qa` (a semantic check that correctly does *not*
+> trigger repair); the extractor's `generate_block` became a pure `build_request`. Offline tests:
+> a testset repair-via-wrapper success gate + the three malformed-output gates updated to traverse
+> the repair path. **No metric/agentic/testset parse path now diverges.**
+
 > ✅ **Phase 5 closed 2026-06-07 (PR #22).** The remaining `evaluate()`-option items are **N/A by
 > Rust design**, not unfinished work — documenting them honestly rather than adding redundant/dead code:
 > - **`token_usage_parser` / per-provider `TokenUsageParser`** — Python needs a caller-supplied
