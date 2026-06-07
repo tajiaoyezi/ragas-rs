@@ -3537,6 +3537,11 @@ mod tests {
             .score(&faithfulness_sample())
             .await
             .expect_err("verdict count mismatch");
+        assert!(
+            error
+                .to_string()
+                .contains("faithfulness statement verification")
+        );
         assert!(error.to_string().contains("expected 2 verdicts"));
     }
 
@@ -3550,13 +3555,14 @@ mod tests {
             .score(&context_recall_sample())
             .await
             .expect_err("classification count mismatch");
+        assert!(error.to_string().contains("context recall classification"));
         assert!(error.to_string().contains("expected 2 classifications"));
     }
 
     #[tokio::test]
-    async fn noise_sensitivity_errors_on_verdict_count_mismatch() {
-        // The correctness call returns only one verdict for two statements; the positional matrix
-        // lookup would mis-classify the trailing claim, so the metric errors.
+    async fn noise_sensitivity_errors_on_correctness_count_mismatch() {
+        // The correctness call (verify_statements_against) returns one verdict for two statements;
+        // the positional matrix lookup would mis-classify the trailing claim, so the metric errors.
         let sample =
             SingleTurnSample::new("q", "resp", vec!["ctx1".to_string(), "ctx2".to_string()])
                 .with_reference("ref");
@@ -3567,7 +3573,53 @@ mod tests {
         let error = metric
             .score(&sample)
             .await
-            .expect_err("verdict count mismatch");
+            .expect_err("correctness verdict count mismatch");
+        assert!(error.to_string().contains("noise sensitivity correctness"));
+        assert!(error.to_string().contains("expected 2 verdicts"));
+    }
+
+    #[tokio::test]
+    async fn noise_sensitivity_errors_on_relevance_count_mismatch() {
+        // statements + correctness match; the per-context relevance call returns one verdict for
+        // two contexts -> error (the relevance lookup is positional by context index).
+        let sample =
+            SingleTurnSample::new("q", "resp", vec!["ctx1".to_string(), "ctx2".to_string()])
+                .with_reference("ref");
+        let metric = NoiseSensitivityMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"statements":["a","b"]}"#,
+            r#"{"verdicts":[{"verdict":1},{"verdict":0}]}"#,
+            r#"{"verdicts":[{"verdict":1}]}"#,
+        ])));
+        let error = metric
+            .score(&sample)
+            .await
+            .expect_err("relevance verdict count mismatch");
+        assert!(
+            error
+                .to_string()
+                .contains("noise sensitivity context relevance")
+        );
+        assert!(error.to_string().contains("expected 2 verdicts"));
+    }
+
+    #[tokio::test]
+    async fn noise_sensitivity_errors_on_grounding_count_mismatch() {
+        // statements + correctness + relevance match (ctx1 relevant -> non-empty target subset),
+        // but the grounding call returns one verdict for two statements -> error.
+        let sample =
+            SingleTurnSample::new("q", "resp", vec!["ctx1".to_string(), "ctx2".to_string()])
+                .with_reference("ref");
+        let metric = NoiseSensitivityMetric::new(Arc::new(ScriptedLlm::new(vec![
+            r#"{"statements":["a","b"]}"#,
+            r#"{"verdicts":[{"verdict":1},{"verdict":0}]}"#,
+            r#"{"verdicts":[{"verdict":1},{"verdict":0}]}"#,
+            r#"{"verdicts":[{"verdict":1}]}"#,
+        ])));
+        let error = metric
+            .score(&sample)
+            .await
+            .expect_err("grounding verdict count mismatch");
+        assert!(error.to_string().contains("noise sensitivity grounding"));
         assert!(error.to_string().contains("expected 2 verdicts"));
     }
 
