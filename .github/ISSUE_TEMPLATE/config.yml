@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Questions & discussion
+    url: https://github.com/tajiaoyezi/ragas-rs/discussions
+    about: Open-ended questions, ideas, and design discussion — please start here, not in an issue.
+  - name: 🔐 Security vulnerability
+    url: https://github.com/tajiaoyezi/ragas-rs/security/advisories/new
+    about: Report security issues privately via GitHub Security Advisory — do NOT open a public issue.
+  - name: 📖 Scope & roadmap
+    url: https://github.com/tajiaoyezi/ragas-rs/blob/main/docs/parity-roadmap.md
+    about: What's implemented, what's deferred/infeasible, and the project's parity goals.
