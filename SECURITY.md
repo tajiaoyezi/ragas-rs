@@ -50,7 +50,7 @@ realistic timeline in the first response.
 
 - **Provider secrets.** API keys come from environment variables or a git-ignored `.env`
   (see `.env.example`). The provider layer is designed to keep keys out of its outbound
-  request path: the request plan's `safe_debug` masks them and auth headers are redacted.
+  request path: the request plan's `safe_debug` omits them and auth headers are redacted.
   Any path that leaks a key into logs, errors, or a `Debug` output is a vulnerability —
   please report it.
 - **Outbound HTTP / SSRF.** The OpenAI-compatible client calls a **caller-configured**
