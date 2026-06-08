@@ -18,11 +18,12 @@ This is an early (`0.1`) library. What it does, it does for real:
   etc.
 - **Tested** with mock LLMs covering discrimination (good vs. bad), JSON-repair, and
   malformed-output paths, plus deterministic-metric unit tests.
-- **Verified live** (2026-06-06) against an OpenAI-compatible provider: all 20 LLM/embedding
-  metrics (including the Phase-4 agentic metrics) plus the LLM test-set synthesizer were each run
-  against a real model and asserted to discriminate correctly (a good sample scores strictly above
-  an adversarial one). Evidence:
-  [`docs/live-verification/results.md`](docs/live-verification/results.md) — 23 gates, 0 failures.
+- **Verified live** (runs through 2026-06-07) against an OpenAI-compatible provider: the 22
+  LLM/embedding metrics (including the Phase-4 agentic metrics) plus the full test-set generation
+  stack were each run against a real model and asserted to discriminate correctly (a good sample
+  scores strictly above an adversarial one). Evidence:
+  [`docs/live-verification/results.md`](docs/live-verification/results.md) — 37 gates
+  (22 LLM/embedding + 14 end-to-end / testset + 1 runtime), 0 failures.
 
 Honest caveats:
 
@@ -46,8 +47,11 @@ Honest caveats:
     multi-turn `AgentGoalAccuracy` (with/without reference), `TopicAdherence`
     (precision/recall/F1), and `InstanceSpecificRubrics`.
   - Some lexical metrics use a simplified tokenizer (a documented divergence from Python).
-- **Test-set generation:** an LLM-driven `Synthesizer` (single- and multi-hop) over a
-  knowledge graph, with a deterministic fallback.
+- **Test-set generation:** a full `TestsetGenerator` stack over a knowledge graph — LLM
+  extractors, a transforms engine (`apply_transforms` / `default_transforms`), embedding /
+  cosine / overlap relationship builders, KG persona generation, and three named synthesizers
+  (single-hop, multi-hop specific, multi-hop abstract); raw text → tagged test set, with a
+  deterministic fallback.
 - **Runtime:** an async `evaluate()` with bounded concurrency and per-sample failure isolation.
 - **Providers:** an OpenAI-compatible HTTP client (`generate` / `embed`) with key redaction,
   plus mock providers for tests.
@@ -142,7 +146,7 @@ The endpoint must be OpenAI-compatible (`{base}/chat/completions`, `{base}/embed
 This library implements a real subset of ragas. The following are **out of scope / not
 implemented**, by design:
 
-- Most of ragas' ~45-metric catalog (only the metrics listed above are full implementations).
+- Most of ragas' ~39-metric catalog (only the metrics listed above are full implementations).
 - Framework integrations (LangChain, LlamaIndex, etc.) — no Rust equivalent.
 - DSPy / MIPROv2 prompt optimizers.
 - Multimodal and model-download metrics (HHEM, cross-encoder).
@@ -155,6 +159,13 @@ cargo test              # unit + binary tests (offline, deterministic)
 cargo clippy
 cargo test -- --ignored # live tests — require provider keys (env or .env)
 ```
+
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup, the CI
+checks, and the project's live-discrimination-gate rule for new metrics. By participating you
+agree to the [Code of Conduct](CODE_OF_CONDUCT.md). Report security issues privately per
+[SECURITY.md](SECURITY.md). Notable changes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
