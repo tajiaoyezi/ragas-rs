@@ -1,0 +1,77 @@
+name: 🐛 Bug Report
+description: Report a defect in ragas-rs (a crash, a wrong score, a parse failure, etc.)
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Please do **not** report security vulnerabilities here —
+        use a [private Security Advisory](https://github.com/tajiaoyezi/ragas-rs/security/advisories/new) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you observe, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: >
+        The smallest code / CLI invocation + input that reproduces it. A minimal dataset
+        line or a short Rust snippet is ideal.
+      render: rust
+    validations:
+      required: true
+  - type: dropdown
+    id: path
+    attributes:
+      label: Which path?
+      options:
+        - A metric score / behavior
+        - Test-set generation
+        - The evaluation runtime (evaluate / concurrency / caching / retry)
+        - Provider / HTTP client
+        - The `ragas` CLI
+        - Dataset loading (JSONL / CSV)
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    id: metric
+    attributes:
+      label: Metric name (if applicable)
+      placeholder: e.g. FaithfulnessMetric
+  - type: dropdown
+    id: provider-involved
+    attributes:
+      label: Does it involve a live provider?
+      options:
+        - "No — offline / deterministic"
+        - "Yes — an OpenAI-compatible provider"
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Provider (if live)
+      description: Which OpenAI-compatible endpoint / model — please DO NOT paste API keys.
+      placeholder: e.g. DeepSeek chat / SiliconFlow embeddings
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / error output
+      description: Paste the relevant output. Redact any secrets.
+      render: shell
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: |
+        - ragas-rs version or commit:
+        - Rust version (`rustc --version`):
+        - OS:
+        - Features enabled (e.g. `tokenizer`):
+    validations:
+      required: true

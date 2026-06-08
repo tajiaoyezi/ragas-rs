@@ -1,0 +1,43 @@
+name: ✨ Feature Request
+description: Suggest a new metric, feature, or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ragas-rs targets **functional parity** with Python ragas (not numeric parity).
+        Before filing, please skim
+        [`docs/parity-roadmap.md`](https://github.com/tajiaoyezi/ragas-rs/blob/main/docs/parity-roadmap.md) —
+        some items are intentionally **deferred or infeasible** (downloaded-model &
+        multimodal metrics, DSPy/MIPROv2, framework integrations, cloud backends).
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What are you trying to do that ragas-rs can't do today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should it do? For a new metric, describe the scoring behavior.
+    validations:
+      required: true
+  - type: input
+    id: ragas-parity
+    attributes:
+      label: Python ragas equivalent (if any)
+      description: Link the ragas metric / feature this mirrors, if it exists.
+      placeholder: e.g. https://docs.ragas.io/en/stable/concepts/metrics/...
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: I've checked this isn't already in the deferred / infeasible tail of the parity roadmap.
+        - label: I understand a new metric must ship as a real `impl Metric` + a live discrimination gate (see CONTRIBUTING.md).
